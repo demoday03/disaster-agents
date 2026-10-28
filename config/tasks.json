@@ -1,0 +1,9 @@
+{
+  "_note": "작업 유형은 설계안. 안전 수치는 공식 운영지침 확인 전이라 null이며, null이면 해당 규칙은 적용하지 않고 '기준 미확정'으로 표시한다(제안서 6.8).",
+  "task_types": {
+    "토사 제거":    {"keywords": ["토사", "흙", "진흙"], "skills": ["토사"], "equipment": ["삽"], "people": 3, "hours": 3},
+    "가재도구 세척": {"keywords": ["세척", "씻", "가재도구"], "skills": ["청소"], "equipment": ["고무장갑"], "people": 2, "hours": 2},
+    "침수 가구 정리": {"keywords": ["정리", "운반", "옮"], "skills": ["운반"], "equipment": [], "people": 2, "hours": 2}
+  },
+  "safety": {"max_continuous_min": null, "heat_warn_c": null, "checkin_overdue_min": null}
+}

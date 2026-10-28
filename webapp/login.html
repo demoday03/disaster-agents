@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>담당자 로그인</title>
+<style>
+:root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#172033;background:#f4f6fa}*{box-sizing:border-box}body{margin:0}.top{background:#14213d;color:#fff;padding:24px max(20px,calc((100vw - 480px)/2))}.top h1{margin:0 0 8px;font-size:1.5rem}.top p{margin:0;color:#d5deee}.nav{margin-top:14px}.nav a{color:#fff;margin-right:16px}.wrap{max-width:480px;margin:24px auto;padding:0 16px}.warning{background:#fff4d8;border:1px solid #e7c66c;border-radius:12px;padding:13px 15px;margin-bottom:18px}.card{background:#fff;border:1px solid #e0e5ee;border-radius:14px;padding:20px;box-shadow:0 2px 7px #1d355710}label{display:block;font-weight:600;margin:12px 0 6px}input{width:100%;font:inherit;padding:11px;border:1px solid #cbd3df;border-radius:9px}button{font:inherit;font-weight:650;background:#2157c5;color:white;border:0;border-radius:9px;padding:11px 16px;cursor:pointer;margin-top:16px;width:100%}button:disabled{opacity:.6;cursor:wait}.err{color:#a42121;margin-top:12px;min-height:1.2em}.muted{color:#667085;font-size:.9rem}
+</style></head><body>
+<header class="top"><h1>담당자 로그인</h1><p>관리자 화면은 담당자 계정으로만 쓸 수 있습니다.</p><div class="nav"><a href="/report">접수 사이트</a></div></header>
+<main class="wrap"><div class="warning"><b>교육용 시연 시스템</b><br>실제 재난 대응에 쓰지 마세요. 실제로 쓰는 다른 서비스의 비밀번호를 여기에 쓰지 마세요.</div>
+<section class="card"><form id="loginForm"><label for="username">사용자 이름</label><input id="username" autocomplete="username" maxlength="50" required autofocus><label for="password">비밀번호</label><input id="password" type="password" autocomplete="current-password" maxlength="200" required><button id="submit" type="submit">로그인</button><div id="msg" class="err" role="alert"></div></form>
+<p class="muted">계정이 없으면 서버를 실행하는 PC에서 <code>python scripts/create_user.py 이름 --role operator</code>로 만드세요.</p></section></main>
+<script>
+const $=id=>document.getElementById(id);
+function nextPath(){const n=new URLSearchParams(location.search).get('next')||'/admin';return /^\/(?!\/)/.test(n)?n:'/admin'}
+$('loginForm').addEventListener('submit',async e=>{e.preventDefault();const b=$('submit');b.disabled=true;$('msg').textContent='';try{const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:$('username').value,password:$('password').value})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||`HTTP ${r.status}`);location.href=nextPath()}catch(err){$('msg').textContent=err.message;$('password').value=''}finally{b.disabled=false}});
+</script></body></html>

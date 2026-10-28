@@ -1,0 +1,12 @@
+{
+  "_note": "가중치는 설계값(제안서 5.7). 가상 데이터로 시험해 보정하고 사람이 조정한다(자동 학습 없음).",
+  "weights": {
+    "volunteer": {"capability": 0.30, "distance": 0.25, "equipment": 0.25, "time": 0.20},
+    "public":    {"capability": 0.35, "distance": 0.25, "load": 0.20, "urgency_fit": 0.20},
+    "shelter":   {"capacity": 0.30, "amenity": 0.25, "distance": 0.25, "avoid_control": 0.20},
+    "goods":     {"quantity": 0.35, "distance": 0.25, "expiry_fit": 0.20, "remaining": 0.20}
+  },
+  "max_travel_min": 60,
+  "max_hours_per_volunteer": null,
+  "_max_hours_note": "활동 시간 상한은 공식 운영지침 확인 전이라 비워 둔다(제안서 6.8). 값이 null이면 시간 상한 제약은 적용하지 않는다."
+}

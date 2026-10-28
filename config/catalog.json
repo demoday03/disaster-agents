@@ -1,0 +1,22 @@
+{
+  "_note": "물품 분류·취급 규칙은 설계안(제안서 5.3). 실제 구호물품 접수 기준을 확인한 뒤 확정하고 D16(7분류·30품목)으로 확장한다.",
+  "urgency": {"base": 3},
+  "merge_window_h": 6,
+  "shortage_threshold_h": 12,
+  "consumption_window_h": 6,
+  "items": {
+    "생수":     {"category": "식수·식량", "units": ["병", "박스"], "needs_expiry": true,  "hh_cap": 24, "rate_per_h": 10, "water_item": true,  "aliases": ["물", "식수"]},
+    "즉석밥":   {"category": "식수·식량", "units": ["개", "박스"], "needs_expiry": true,  "hh_cap": 12, "rate_per_h": 6,  "aliases": ["밥", "햇반", "컵밥"]},
+    "기저귀":   {"category": "영유아·돌봄", "units": ["개", "팩"], "needs_expiry": false, "hh_cap": 30, "rate_per_h": 4,  "infant_item": true, "aliases": ["기저귀"]},
+    "분유":     {"category": "영유아·돌봄", "units": ["통", "개"], "needs_expiry": true,  "hh_cap": 3,  "rate_per_h": 1,  "infant_item": true, "aliases": ["분유"]},
+    "마스크":   {"category": "위생용품", "units": ["개", "박스"], "needs_expiry": false, "hh_cap": 20, "rate_per_h": 5,  "aliases": ["마스크"]},
+    "세정제":   {"category": "위생용품", "units": ["개"], "needs_expiry": false, "hh_cap": 5,  "rate_per_h": 1,  "aliases": ["손세정제", "세정제"]},
+    "담요":     {"category": "침구·의류", "units": ["장"], "needs_expiry": false, "hh_cap": 6,  "rate_per_h": 2,  "aliases": ["담요", "이불"]},
+    "양말":     {"category": "침구·의류", "units": ["켤레"], "needs_expiry": false, "hh_cap": 10, "rate_per_h": 2,  "aliases": ["양말"]},
+    "손전등":   {"category": "전기·조명", "units": ["개"], "needs_expiry": false, "hh_cap": 3,  "rate_per_h": 1,  "aliases": ["손전등", "랜턴"]},
+    "보조배터리": {"category": "전기·조명", "units": ["개"], "needs_expiry": false, "hh_cap": 3,  "rate_per_h": 1,  "aliases": ["보조배터리", "배터리"]},
+    "삽":       {"category": "청소·복구 장비", "units": ["개"], "needs_expiry": false, "hh_cap": 3,  "rate_per_h": 1,  "aliases": ["삽"]},
+    "고무장갑": {"category": "청소·복구 장비", "units": ["켤레"], "needs_expiry": false, "hh_cap": 6,  "rate_per_h": 1,  "aliases": ["고무장갑", "장갑"]},
+    "처방약":   {"category": "의약품", "units": ["개"], "needs_expiry": true, "hh_cap": 0, "rate_per_h": 0, "aliases": ["처방약", "약", "의료기기"]}
+  }
+}

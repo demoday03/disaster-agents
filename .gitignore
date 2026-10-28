@@ -1,0 +1,20 @@
+# 실행 중 생기는 데이터(접수·승인·계정·세션). 평가 세트(data/eval/)는 올린다.
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.db-journal
+
+# 비밀 값
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+
+# 백업·편집기
+disaster_agents_backup_*/
+.vscode/
+.idea/
+Thumbs.db

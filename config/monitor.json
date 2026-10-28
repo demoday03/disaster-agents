@@ -1,0 +1,19 @@
+{
+  "calibrated": false,
+  "_note": "임계값은 임시값. 제안서 8.6의 설치 점검에서 측정해 확정하고 D14에 기록한다.",
+  "sustain_n": 3,
+  "window_sec": 10,
+  "stale_sec": 30,
+  "danger_rain_stage": 3,
+  "nodes": ["A", "B"],
+  "sensors": {
+    "A.water_low":  {"threshold": 400},
+    "A.water_high": {"threshold": 400},
+    "B.tilt":       {"threshold": 0},
+    "B.vibration":  {"threshold": 300}
+  },
+  "rules": {
+    "flood": {"keys": ["A.water_low", "A.water_high"], "mode": "sustained"},
+    "slope": {"keys": ["B.tilt", "B.vibration"], "mode": "window"}
+  }
+}

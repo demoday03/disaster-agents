@@ -1,0 +1,25 @@
+{
+  "_note": "제안서 7.3의 초기 항목. '확인됨'만 근거가 확정된 것이고 '확인 필요'는 보도 기반이라 원문 재확인 전. as_of(기준일)는 확인 전이라 null. display=false는 확인 전 화면에 표시하지 않는다.",
+  "area_designation": {"거제시": "특별재난지역"},
+  "rules": [
+    {"id": "R1", "title": "주택 침수 재난지원금", "content": "주택 침수 세대당 재난지원금 350만원", "source": "행정안전부 자료(KDI)", "as_of": null, "status": "확인됨", "display": true,
+     "conditions": {"damage_types_any": ["주택침수"]}},
+    {"id": "R2", "title": "특별재난지역 간접지원", "content": "국세·지방세 납부유예, 공공요금 감면 등 간접지원", "source": "행정안전부 자료(KDI)", "as_of": null, "status": "확인됨", "display": true,
+     "conditions": {"area_in": ["거제시"]}},
+    {"id": "R3", "title": "간접지원 항목", "content": "일반재난지역 간접지원 25가지, 특별재난지역은 13가지 추가", "source": "행정안전부 자료(KDI)", "as_of": null, "status": "확인됨", "display": true,
+     "conditions": {"area_in": ["거제시"]}},
+    {"id": "R4", "title": "사면 유실 공동주택 월세 지원(사례)", "content": "사면 유실로 공동주택 피해를 본 가구에 복구를 마칠 때까지 월세 지원(거제시 54가구 사례)", "source": "경향신문 보도", "as_of": null, "status": "확인 필요", "display": true,
+     "conditions": {"damage_types_any": ["사면유실"], "housing": ["공동주택"], "area_in": ["거제시"]}},
+    {"id": "R5", "title": "주택 침수·파손 임시 거처 지원(사례)", "content": "월세 또는 친인척집 체재비 일부 지원(거제시 31가구 사례)", "source": "경향신문 보도", "as_of": null, "status": "확인 필요", "display": true,
+     "conditions": {"damage_types_any": ["주택침수", "주택파손"], "area_in": ["거제시"]}},
+    {"id": "R6", "title": "임차료 지원(사례)", "content": "이재민이 임대차 계약 후 청구하면 월평균 50만원 수준 지급", "source": "경향신문 보도", "as_of": null, "status": "확인 필요", "display": true,
+     "conditions": {"long_term_evacuation": true, "lease_signed": true}},
+    {"id": "R7", "title": "피해 신고 기한", "content": "재난 종료 후 10일(블로그 안내)", "source": "공식 문서(정부24) 확인 필요", "as_of": null, "status": "확인 필요", "display": false,
+     "conditions": {}}
+  ],
+  "checklists": {
+    "주택침수": ["피해 사진", "피해 확인서", "주택 소유 또는 임대차 확인 서류"],
+    "주택파손": ["피해 사진", "피해 확인서", "주택 소유 또는 임대차 확인 서류"],
+    "사면유실": ["피해 사진", "피해 확인서", "주택 소유 또는 임대차 확인 서류"]
+  }
+}
