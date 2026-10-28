@@ -14,6 +14,10 @@ class TestPipeline(ServerBase):
         self.assertEqual(code, 201, d)
         return d["output"]
 
+    def staff_view(self, iid):
+        """담당자용 신고 목록의 한 건(공개 응답에서 빠지는 메모·처리자까지 들어 있음)."""
+        return next(x["output"] for x in self.get("/api/incidents")[1]["items"] if x["output"]["id"] == iid)
+
     def supply_requests(self, iid):
         _, s = self.get("/api/supply")
         return [r for r in s["requests"] if r.get("incident_id") == iid]
@@ -49,7 +53,8 @@ class TestPipeline(ServerBase):
         self.assertEqual(sorted(r["item"] for r in reqs), ["기저귀", "담요"])
         self.assertTrue(all(r["review_reason"] == "수량 미확인" and r["state"] == "검토" for r in reqs))
         self.assertEqual(self.pending(o["id"]), [])
-        self.assertIn("물품 담당자 검토 필요", o["notes"][0])
+        self.assertIn("물품 담당자 검토 필요", self.staff_view(o["id"])["notes"][0])
+        self.assertNotIn("notes", o)                                         # 내부 메모는 공개 응답에 없음
 
     def test_missing_location_asks_reporter_then_continues(self):
         o = self.report("생수 10병 보내 주세요")
@@ -127,7 +132,24 @@ class TestPipeline(ServerBase):
         again = self.report("Z1 반지하 쪽 침수 계속돼요")
         self.assertEqual(self.dispatches(again["id"]), [])
         self.assertEqual(again["linked"]["dispatch"], [a["id"]])
-        self.assertIn("이미 진행 중", again["notes"][0])
+        self.assertIn("이미 진행 중", self.staff_view(again["id"])["notes"][0])
+
+    def test_linked_report_recovers_when_host_dispatch_goes_away(self):
+        host = self.report("Z9 반지하 집에 물이 차요 할머니 계세요")
+        [a] = self.dispatches(host["id"])
+        linked = self.report("Z9 반지하 침수 계속 심해져요")
+        self.assertEqual(linked["linked"]["dispatch"], [a["id"]])
+        _, r = self.post(f"/api/incidents/{host['id']}/invalidate", {"reason": "장난 신고로 확인"})
+        self.assertEqual(r["relinked_incidents"], [linked["id"]])
+        [b] = self.dispatches(linked["id"])                                  # 진짜 신고에 배치 추천을 새로 만듦
+        self.assertEqual(self.staff_view(linked["id"])["linked"]["dispatch"], [b["id"]])
+        third = self.report("Z9 반지하 침수 아직이에요")
+        self.assertEqual(third["linked"]["dispatch"], [b["id"]])
+        self.post(f"/api/approvals/{b['id']}/resolve", {"approved": False, "reason": "현장 이미 정리"})
+        v = self.staff_view(third["id"])                                     # 연결만 해 둔 신고는 연결을 풀고 알림
+        self.assertNotIn(b["id"], v["linked"].get("dispatch", []))
+        self.assertIn("반려됨", v["notes"][-1])                               # 반려는 사람 판단이라 새로 만들지 않음
+        self.assertEqual(self.dispatches(third["id"]), [])
 
     def test_low_urgency_and_missing_zone_wait(self):
         road = self.report("Z4 공원 벤치가 부서졌어요")
@@ -137,6 +159,34 @@ class TestPipeline(ServerBase):
         code, d = Client(self.base).post(f"/api/incidents/{o['id']}/supplement", {"text": "Z8 구역 마트 지하예요"})
         self.assertEqual(code, 200, d)
         self.assertEqual(len(self.dispatches(o["id"])), 1)                   # 보완되면 그때 추천
+
+    def test_invalidation_details_not_public(self):
+        o = self.report("Z3 구역 담요 2장 필요해요 (공개 범위 시험)")
+        self.post(f"/api/incidents/{o['id']}/invalidate", {"reason": "내부 메모: 같은 번호 반복"})
+        _, pub = Client(self.base).get(f"/api/incidents/{o['id']}")
+        out = pub["result"]["output"]
+        self.assertEqual(out["state"], "오접수")
+        for k in ("invalidated_by", "invalid_reason", "notes"):
+            self.assertNotIn(k, out)                                         # 담당자 이름·사유는 공개하지 않음
+        self.assertEqual(self.staff_view(o["id"])["invalidated_by"], "담당자")
+
+    def test_unknown_zone_does_not_break_agents(self):
+        o = self.report("Z99 구역 산사태가 났어요 할머니 혼자 계세요")
+        self.assertEqual(o["state"], "보완 필요")
+        self.assertIn("위치(구역): 없는 구역 번호", o["missing"])
+        _, a = self.get("/api/agents")
+        self.assertFalse([x["id"] for x in a["items"] if x["status"] == "manual"])   # 입력 문제로 수동 전환하지 않음
+
+    def test_supplement_resolves_ambiguous_zone_and_long_text(self):
+        o = self.report("2구역인지 3구역인지 모르겠는데 반지하에 물이 차고 있어요")
+        self.assertEqual((o["state"], o["zone"]), ("보완 필요", "미상"))
+        code, d = Client(self.base).post(f"/api/incidents/{o['id']}/supplement", {"text": "3구역입니다"})
+        self.assertEqual((code, d["output"]["zone"], d["output"]["state"]), (200, "Z3", "접수"))
+        long = self.report("Z5 " + "어제부터 비가 많이 와서 마을 사람들이 다 같이 모여 있어요. " * 20 + "물품이 필요해요")
+        self.assertEqual(long["missing"], ["필요한 물품"])
+        code, d = Client(self.base).post(f"/api/incidents/{long['id']}/supplement", {"text": "생수 10병이요"})
+        self.assertEqual((code, d["output"]["state"]), (200, "접수"))      # 긴 원문 뒤에 붙은 품목도 읽음
+        self.assertEqual([r["item"] for r in self.supply_requests(long["id"])], ["생수"])
 
     def test_manual_mode_shown_and_cleared_on_success(self):
         old = db.DB_PATH

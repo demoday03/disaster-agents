@@ -256,6 +256,9 @@ class TestSolarPathJudgeFallback(SolarPathBase):
         self.assertEqual(STATE["calls"], ["fake-solar", "fake-solar"])   # 안내문 다듬기 + 판정
         self.assertEqual(g["output"]["verdict"], "grounded")
         self.assertIn("approval_id", g)
+        _, q = self.get("/api/approvals")
+        item = next(a for a in q["items"] if a["id"] == g["approval_id"])["item"]
+        self.assertEqual(item["verifier"], {"model": "fake-solar", "mode": "judge"})   # 담당자에게 같은 모델 판정임을 표시
         STATE.update(verdict="notGrounded", label="사")
         status, g = self.guidance(iid, "f-judge-ng")
         self.assertEqual(status, 200)

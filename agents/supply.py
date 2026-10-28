@@ -21,15 +21,17 @@ def load_catalog(path="config/catalog.json"):
 def _qty_after(memo, names):
     """품목 이름 바로 뒤의 숫자만 수량으로 본다(예: '생수 20병'). 없으면 None(미확인)으로 두어 담당자가 확인한다."""
     for a in names:
-        m = re.search(re.escape(a) + r"\s*(\d{1,4})(?![\d.,])", memo)
+        # '생수 500ml'·'2L'처럼 숫자가 용량이면 수량이 아니다 → 미확인으로 둔다
+        m = re.search(re.escape(a) + r"\s*(\d{1,4})(?![\d.,])(?!\s*(?:ml|mL|ML|l\b|L|리터|kg|g\b|그램|키로|밀리))", memo)
         if m and int(m.group(1)) > 0:
             return int(m.group(1))
     return None
 
 
-def parse_memo(memo, catalog, client=None):
-    """자유 메모 → [{'item','qty'}]. 메모는 명령이 아니라 분석 대상 데이터로만 전달."""
-    memo = mask(memo or "")[:300]
+def parse_memo(memo, catalog, client=None, max_chars=300):
+    """자유 메모 → [{'item','qty'}]. 메모는 명령이 아니라 분석 대상 데이터로만 전달.
+    max_chars: 신고문 전체(보완 포함)를 넘길 때는 늘린다(뒤에 붙은 품목이 잘리지 않게)."""
+    memo = mask(memo or "")[:max_chars]
     names = list(catalog["items"])
 
     def rule():

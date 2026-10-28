@@ -4,6 +4,7 @@ This is a prototype, not a production or emergency-dispatch system.
 """
 from __future__ import annotations
 import hmac, json, os, ssl, sys, threading, time, traceback, uuid
+from datetime import datetime
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -36,6 +37,8 @@ LLM_MAX_CALLS = int(os.getenv("SOLAR_MAX_CALLS", "1000"))
 LLM = SolarClient(max_calls=LLM_MAX_CALLS) if MODE == "solar" else None
 # 검증 모델: GROUNDEDNESS_MODEL이 있으면 그 모델, 없으면 SOLAR_MODEL(기본 solar-pro4)이 판정한다.
 VERIFY_LLM = verify.make_client(max_calls=LLM_MAX_CALLS) if MODE == "solar" else None
+# 승인 카드에 표시할 검증 방식. judge는 Groundedness 모델이 없어 안내문을 쓴 것과 같은 Solar 모델이 판정했다는 뜻이다.
+VERIFIER_INFO = {"model": VERIFY_LLM.model, "mode": VERIFY_LLM.verify_mode} if VERIFY_LLM else None
 # 마이크로비트 게이트웨이 인증 토큰. 비어 있으면 실시간 센서 입력 경로를 닫아 둔다.
 SENSOR_TOKEN = os.getenv("SENSOR_GATEWAY_TOKEN", "").strip()
 if SENSOR_TOKEN and len(SENSOR_TOKEN) < 16:
@@ -137,6 +140,7 @@ def agents_status():
 
 
 INVALID = "오접수"
+MAX_SUPPLEMENTS = 3
 
 
 def incident_output(incident_id):
@@ -144,48 +148,84 @@ def incident_output(incident_id):
     return None if inc is None else inc["result"]
 
 
-def classify_incident(rid, text, ts):
-    """② 접수. 분류기 자체가 예외로 멈춰도 신고는 버리지 않는다: 미분류로 저장하고 담당자가 직접 분류하게 한다."""
+def classify_incident(rid, text, ts, max_text=intake.MAX_TEXT):
+    """② 접수. 분류기 자체가 예외로 멈춰도 신고는 버리지 않는다: 미분류로 저장하고 담당자가 직접 분류하게 한다.
+    (신고자에게 보완을 요청할 일이 아니므로 missing이 아니라 triage로 담당자에게만 알린다)"""
     try:
-        row = result_dict(intake.classify(rid, text, ts, intake.load_cfg(), client=LLM))
+        row = result_dict(intake.classify(rid, text, ts, intake.load_cfg(), client=LLM, max_text=max_text))
         agent_ok("intake")
         return row
     except Exception as e:
         agent_failed("intake", e)
         return {"agent": "intake", "ai_used": False, "fallback_reason": "자동 분류 실패", "needs_approval": False,
-                "evidence": [], "output": {"id": rid, "text": mask(text)[:intake.MAX_TEXT], "ts": ts, "type": "미분류",
+                "evidence": [], "output": {"id": rid, "text": mask(text)[:max_text], "ts": ts, "type": "미분류",
                                            "zone": "미상", "people": None, "vulnerable": False, "urgency": None,
                                            "route": "inbox", "notify_now": True, "label": "자동 분류 실패",
-                                           "missing": ["자동 분류 실패: 담당자가 직접 분류"]}}
+                                           "missing": [], "triage": "자동 분류 실패: 담당자가 직접 분류하세요"}}
+
+
+def auto_dispatch(out, linked, notes):
+    """급한 신고(긴급도 ≤ AUTO_DISPATCH_MAX_URGENCY) → ④ 공공 인력 배치 추천을 승인 대기열에. 같은 사건의 배치가
+    진행 중이면 연결만 한다. 신고 내용 때문에 못 만들면 메모만, 예상 못 한 오류면 배치 에이전트를 수동 처리로."""
+    if not (out.get("type") in SCENARIO["type_skills"] and isinstance(out.get("urgency"), int)
+            and out["urgency"] <= AUTO_DISPATCH_MAX_URGENCY):
+        return
+    try:
+        same = ongoing_dispatch(out)
+        if same:
+            linked["dispatch"] = [same]
+            notes.append(f"같은 구역·유형 배치가 이미 진행 중이라 연결만 함({same})")
+        else:
+            d = create_dispatch(out["id"], "public", {}, auto=True, output=out)
+            if d.get("approval_id"):
+                linked["dispatch"] = [d["approval_id"]]
+            else:
+                notes.append("배치 후보가 없습니다: " + " · ".join(d["output"].get("options", [])))
+        agent_ok("dispatch")
+    except ValueError as e:
+        notes.append(f"배치 추천을 만들지 못함({e})")
+    except Exception as e:
+        agent_failed("dispatch", e)
+        notes.append("배치 추천 연결 실패: 담당자가 ④ 배치 화면에서 직접 추천하세요")
+
+
+def detach_dispatch(aid, host_id, rebuild):
+    """다른 신고(host_id)의 배치 aid에 '연결만' 해 둔 신고들을 정리한다. 그 배치가 반려되거나 원래 신고가
+    오접수 처리되면 연결된 신고에는 배치가 없어지므로, rebuild면 배치 추천을 새로 만들고 아니면 담당자 확인 메모를 남긴다."""
+    touched = []
+    for item in database.list_incidents(200):
+        o = item.get("output", {})
+        if o.get("id") == host_id or o.get("state") == INVALID or aid not in (o.get("linked") or {}).get("dispatch", []):
+            continue
+        linked, notes = {k: v for k, v in o["linked"].items() if k != "dispatch"}, list(o.get("notes") or [])
+        if rebuild:
+            notes.append(f"연결됐던 배치 {aid}의 신고가 오접수 처리되어 배치 추천을 새로 만듦")
+            auto_dispatch(o, linked, notes)
+        else:
+            notes.append(f"연결됐던 배치 {aid}가 반려됨: 이 신고의 배치를 담당자가 다시 판단하세요")
+        o.update(linked=linked, notes=notes)
+        database.update_incident(item)
+        touched.append(o["id"])
+    return touched
 
 
 def link_incident(row):
-    """신고를 다음 에이전트로 넘긴다. 물품 요청 → ⑧ 물품 수급(배치 추천까지 만들어 승인 대기열에 한 건).
+    """신고를 다음 에이전트로 넘긴다. 급한 신고 → ④ 배치 추천, 물품 요청 → ⑧ 물품 수급(추천까지 만들어 승인 대기열에).
     필수 정보가 빠졌으면 넘기지 않고 '보완 필요'로 두어 신고자에게 추가 정보를 받는다.
-    넘기다 실패하면 신고는 그대로 두고 그 에이전트만 수동 처리로 표시한다."""
+    신고 내용 때문에 못 넘기는 경우(없는 구역 등)는 메모만 남기고, 예상 못 한 오류일 때만 그 에이전트를 수동 처리로 표시한다."""
     out = row["output"]
     missing, linked, notes = list(out.get("missing") or []), {}, []
-    if (not missing and out.get("type") in SCENARIO["type_skills"] and isinstance(out.get("urgency"), int)
-            and out["urgency"] <= AUTO_DISPATCH_MAX_URGENCY):   # 급한 신고 → ④ 공공 인력 배치 추천
-        try:
-            same = ongoing_dispatch(out)
-            if same:
-                linked["dispatch"] = [same]
-                notes.append(f"같은 구역·유형 배치가 이미 진행 중이라 연결만 함({same})")
-            else:
-                d = create_dispatch(out["id"], "public", {}, auto=True, output=out)
-                if d.get("approval_id"):
-                    linked["dispatch"] = [d["approval_id"]]
-                else:
-                    notes.append("배치 후보가 없습니다: " + " · ".join(d["output"].get("options", [])))
-            agent_ok("dispatch")
-        except Exception as e:
-            agent_failed("dispatch", e)
-            notes.append("배치 추천 연결 실패: 담당자가 ④ 배치 화면에서 직접 추천하세요")
+    if out.get("triage"):
+        notes.append(out["triage"])
+    if out.get("zone") not in (None, "미상") and out["zone"] not in {z["id"] for z in SCENARIO["zones"]}:
+        missing.append("위치(구역): 없는 구역 번호")   # 'Z99'처럼 형식만 맞는 구역은 배치·물품을 보낼 수 없다
+    if not missing:
+        auto_dispatch(out, linked, notes)
     if out.get("route") == "supply" and not missing:
         try:
+            parsed = FEATURES.incident_items(out)   # AI 호출은 잠금 밖에서(담당자 기능이 그동안 멈추지 않게)
             with FEATURES.lock:
-                res = FEATURES.supply_from_incident(out)
+                res = FEATURES.supply_from_incident(out, parsed)
             agent_ok("supply")
             if res["requests"]:
                 linked["supply"] = [r["id"] for r in res["requests"]]
@@ -194,11 +234,22 @@ def link_incident(row):
                     notes.append("물품 담당자 검토 필요: " + "; ".join(f"{r['item']}({r['review_reason']})" for r in waiting))
             else:
                 missing.append("필요한 물품")
+        except (ValueError, features.Conflict) as e:
+            notes.append(f"물품 요청을 만들지 못함({e}): 담당자가 ⑧ 물품 화면에서 직접 등록하세요")
         except Exception as e:
             agent_failed("supply", e)
             notes.append("물품 수급 연결 실패: 담당자가 ⑧ 물품 화면에서 직접 등록하세요")
     out.update(missing=missing, linked=linked, notes=notes, state="보완 필요" if missing else "접수")
     return row
+
+
+PUBLIC_HIDDEN = ("notes", "invalidated_by", "invalid_reason", "invalidated_at", "triage")
+
+
+def public_row(row):
+    """접수번호만 알면 누구나 보는 응답에서 담당자 이름·처리 사유·내부 메모를 뺀다."""
+    out = {k: v for k, v in row.get("output", {}).items() if k not in PUBLIC_HIDDEN}
+    return {**row, "output": out}
 
 
 def json_bytes(obj):
@@ -278,6 +329,14 @@ def create_dispatch(incident_id, kind, data, auto=False, output=None):
 AUTO_DISPATCH_MAX_URGENCY = int(os.getenv("AUTO_DISPATCH_MAX_URGENCY", DISPATCH_CFG.get("auto_public_max_urgency", 2)))
 
 
+def _epoch(ts):
+    """DB의 UTC 시각 문자열(2026-10-28T06:51:22.000Z) → epoch 초. 읽을 수 없으면 0(아주 오래된 것으로 취급)."""
+    try:
+        return datetime.fromisoformat(str(ts).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0
+
+
 def ongoing_dispatch(output):
     """같은 구역·유형 신고에 이미 대기 중이거나 투입 중인 공공 인력 배치(같은 사건의 반복 신고로 중복 배치하지 않게).
     인명구조는 별건 누락을 막기 위해 묶지 않는다."""
@@ -285,7 +344,10 @@ def ongoing_dispatch(output):
         return None
     pending = [a for a in database.list_pending_approvals() if a["kind"] == "dispatch_public"]
     active = [a for a in database.list_dispatch_approvals() if a["kind"] == "dispatch_public"]
+    window = intake.load_cfg().get("follow_up_window_min", 180) * 60
     for a in pending + active:
+        if time.time() - _epoch(a.get("created_at")) > window:   # 오래된 배치에 새 사건을 묻지 않게
+            continue
         other = incident_output(a["item"].get("incident_id", ""))
         o = (other or {}).get("output", {})
         if (o.get("zone"), o.get("type")) == (output["zone"], output["type"]) and o.get("state") != INVALID:
@@ -461,7 +523,7 @@ class Handler(BaseHTTPRequestHandler):
             if incident is None:
                 return self.send_json(404, {"error": "접수번호를 찾을 수 없습니다"})
             invalid = incident["result"].get("output", {}).get("state") == INVALID
-            return self.send_json(200, {"id": incident_id, **incident,
+            return self.send_json(200, {"id": incident_id, **incident, "result": public_row(incident["result"]),
                                         "guidance": None if invalid else public_guidance(incident_id)})
         if path == "/api/approvals":
             if not self.require_staff():
@@ -733,7 +795,7 @@ class Handler(BaseHTTPRequestHandler):
                 ):
                     approval = database.create_approval(
                         "welfare_guidance",
-                        {"incident_id": incident_id, "guidance": output},
+                        {"incident_id": incident_id, "guidance": output, "verifier": VERIFIER_INFO},
                         incident_id=incident_id,
                     )
                     row["approval_id"] = approval["id"]
@@ -741,7 +803,7 @@ class Handler(BaseHTTPRequestHandler):
                     # 제안서 6.9: notSure는 담당자 확인 요청. 표준 원문을 보여 주되 초안을 검토 대기열에 올린다.
                     review = database.create_approval(
                         "welfare_guidance_review",
-                        {"incident_id": incident_id, "guidance": output},
+                        {"incident_id": incident_id, "guidance": output, "verifier": VERIFIER_INFO},
                         incident_id=incident_id,
                     )
                     row["review_id"] = review["id"]
@@ -774,12 +836,12 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(429, {"error": "짧은 시간에 신고가 너무 많습니다. 급한 상황이면 119·112에 바로 전화하세요"})
                 duplicate = database.find_duplicate_incident(text)
                 if duplicate:
-                    return self.send_json(200, {**duplicate, "duplicate": True})
+                    return self.send_json(200, {**public_row(duplicate), "duplicate": True})
                 rid = "R-" + uuid.uuid4().hex[:8].upper()
                 row = classify_incident(rid, text, time.time())
                 # Persist only the classifier result (the intake agent applies its configured masking).
                 row = database.save_incident(row)
-                return self.send_json(201, database.update_incident(link_incident(row)))
+                return self.send_json(201, public_row(database.update_incident(link_incident(row))))
             if path.startswith("/api/incidents/") and path.endswith("/supplement"):   # 신고자가 빠진 정보 보완(접수번호로)
                 parts = path.strip("/").split("/")
                 if len(parts) != 4 or not parts[2] or len(parts[2]) > 40:
@@ -796,13 +858,21 @@ class Handler(BaseHTTPRequestHandler):
                     o = old["output"]
                     if o.get("state") != "보완 필요":
                         return self.send_json(409, {"error": "보완이 필요한 신고가 아닙니다"})
-                    text = f"{o['text']}\n[보완] {extra.strip()}"[:intake.MAX_TEXT]
-                    row = classify_incident(o["id"], text, o["ts"])
-                    row["output"]["supplements"] = o.get("supplements", 0) + 1
+                    if o.get("supplements", 0) >= MAX_SUPPLEMENTS:
+                        return self.send_json(409, {"error": "보완은 3번까지 받습니다. 담당자가 확인할 예정이며, 급한 상황이면 119·112에 바로 전화하세요"})
+                    # 원문 뒤에 붙이고 자르지 않는다(긴 원문이어도 보완 내용이 빠지지 않게, 최대 3번이라 길이는 제한됨)
+                    text = f"{o['text']}\n[보완] {extra.strip()}"
+                    row = classify_incident(o["id"], text, o["ts"], max_text=len(text))
+                    out = row["output"]
+                    zone_given = intake._zones(extra)
+                    if len(zone_given) == 1:   # 보완에 적은 구역이 원문의 모호한 구역('2구역인지 3구역인지')보다 우선
+                        out["zone"] = zone_given.pop()
+                        out["missing"] = intake.missing_fields(out)
+                    out["supplements"] = o.get("supplements", 0) + 1
                     row = link_incident(row)
                     database.log_audit("incident_supplemented", "incident", o["id"],
                                        {"still_missing": row["output"]["missing"]})
-                    return self.send_json(200, database.update_incident(row))
+                    return self.send_json(200, public_row(database.update_incident(row)))
             if path.startswith("/api/incidents/") and path.endswith("/invalidate"):   # 담당자: 허위·오접수 처리
                 s = self.require_staff(check_csrf=True)
                 if not s:
@@ -834,10 +904,12 @@ class Handler(BaseHTTPRequestHandler):
                             released.append(a["id"])
                     with FEATURES.lock:
                         cancelled, in_transit = FEATURES.cancel_incident_supply(o["id"], s["username"], reason)
+                    relinked = [i for aid in rejected + released for i in detach_dispatch(aid, o["id"], rebuild=True)]
                     o.update(state=INVALID, invalid_reason=reason, invalidated_by=s["username"], invalidated_at=time.time())
                     database.update_incident(row, status="rejected")
                     summary = {"rejected_approvals": rejected, "released_dispatches": released,
-                               "cancelled_supply": cancelled, "supply_in_transit": in_transit}
+                               "cancelled_supply": cancelled, "supply_in_transit": in_transit,
+                               "relinked_incidents": relinked}
                     database.log_audit("incident_invalidated", "incident", o["id"], {"reason": reason, **summary})
                     return self.send_json(200, {**row, **summary})
             if path == "/api/monitor/evaluate":
@@ -881,6 +953,8 @@ class Handler(BaseHTTPRequestHandler):
                                                            s["user_id"])
                         with FEATURES.lock:   # 승인 결과 반영(단계 확정, 봉사 투입, 물품 출고·예약 해제)
                             FEATURES.after_resolve(current, approved, s)
+                        if not approved and current and current["kind"] == "dispatch_public":
+                            detach_dispatch(aid, current["incident_id"], rebuild=False)   # 연결만 해 둔 반복 신고에 알림
                 except KeyError:
                     return self.send_json(404, {"error": "승인 요청을 찾을 수 없습니다"})
                 except ValueError as e:

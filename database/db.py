@@ -143,8 +143,9 @@ def log_audit(action: str, target_type: str, target_id: str | None, details: dic
 
 def list_pending_approvals() -> list[dict]:
     with connect() as conn:
-        rows = conn.execute("SELECT id, kind, item_json, state FROM approvals WHERE state='pending' ORDER BY created_at").fetchall()
-    return [{"id": r["id"], "kind": r["kind"], "item": json.loads(r["item_json"]), "state": r["state"]} for r in rows]
+        rows = conn.execute("SELECT id, kind, item_json, state, created_at FROM approvals WHERE state='pending' ORDER BY created_at").fetchall()
+    return [{"id": r["id"], "kind": r["kind"], "item": json.loads(r["item_json"]), "state": r["state"],
+             "created_at": r["created_at"]} for r in rows]
 
 
 def get_approval(aid: str) -> dict | None:
@@ -167,12 +168,12 @@ def list_dispatch_approvals(states=("approved",), include_released=False) -> lis
     """배치(dispatch_*) 승인 항목. 기본은 승인되고 아직 해제되지 않은 것(현재 투입 중)."""
     with connect() as conn:
         rows = conn.execute(f"""SELECT a.id, a.incident_id, a.kind, a.item_json, a.state, a.approver_name,
-                a.resolved_at, r.released_at
+                a.created_at, a.resolved_at, r.released_at
             FROM approvals a LEFT JOIN dispatch_releases r ON r.approval_id = a.id
             WHERE a.kind LIKE 'dispatch\\_%' ESCAPE '\\' AND a.state IN ({','.join('?' * len(states))})
             ORDER BY a.resolved_at""", states).fetchall()
     return [{"id": r["id"], "incident_id": r["incident_id"], "kind": r["kind"], "item": json.loads(r["item_json"]),
-             "state": r["state"], "approver": r["approver_name"], "resolved_at": r["resolved_at"],
+             "state": r["state"], "approver": r["approver_name"], "created_at": r["created_at"], "resolved_at": r["resolved_at"],
              "released_at": r["released_at"]}
             for r in rows if include_released or r["released_at"] is None]
 

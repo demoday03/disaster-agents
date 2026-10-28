@@ -611,11 +611,15 @@ class Features:
         self.db.put_record("supply_request", rid, req)
         return {**req, "proposal": out}
 
-    def supply_from_incident(self, inc):
-        """② 접수에서 '물품 요청'으로 분류된 신고 → ⑧ 물품 요청. 신고문에서 품목·수량을 뽑고,
+    def incident_items(self, inc):
+        """신고문에서 품목·수량 추출(AI 호출이 있을 수 있어 잠금 밖에서 부른다). 보완 내용까지 전부 본다."""
+        return supply.parse_memo(inc["text"], self.catalog, client=self.llm, max_chars=len(inc["text"]))
+
+    def supply_from_incident(self, inc, parsed):
+        """② 접수에서 '물품 요청'으로 분류된 신고 → ⑧ 물품 요청. parsed: incident_items 결과.
         담당자 판단이 필요 없는 요청(카탈로그 품목·상한 이내·수량 확인)은 바로 공급원을 추천해
         승인 대기열에 한 건으로 올린다. 나머지는 '검토'에 두고 사유를 적는다. 품목을 못 찾으면 빈 목록."""
-        items, ai, why = supply.parse_memo(inc["text"], self.catalog, client=self.llm)
+        items, ai, why = parsed
         now, out = time.time(), []
         for it in items:
             rid = _new_id("SR")
