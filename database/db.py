@@ -131,6 +131,15 @@ def get_approval(aid: str) -> dict | None:
                                    "item": json.loads(r["item_json"]), "state": r["state"]}
 
 
+def update_pending_approval_item(aid: str, item: dict) -> None:
+    """대기 중인 승인 항목의 내용만 바꾼다(배치 수정·직접 지정). 이미 처리됐으면 ValueError."""
+    with connect() as conn:
+        cur = conn.execute("UPDATE approvals SET item_json=? WHERE id=? AND state='pending'",
+                           (json.dumps(item, ensure_ascii=False, default=str), aid))
+        if cur.rowcount != 1:
+            raise ValueError(f"{aid}는 대기 중인 승인 항목이 아님")
+
+
 def list_dispatch_approvals(states=("approved",), include_released=False) -> list[dict]:
     """배치(dispatch_*) 승인 항목. 기본은 승인되고 아직 해제되지 않은 것(현재 투입 중)."""
     with connect() as conn:

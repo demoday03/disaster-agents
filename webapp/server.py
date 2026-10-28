@@ -3,7 +3,7 @@ Run from project root: python webapp/server.py
 This is a prototype, not a production or emergency-dispatch system.
 """
 from __future__ import annotations
-import hmac, json, os, sys, threading, time, uuid
+import hmac, json, os, sys, threading, time, traceback, uuid
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -83,7 +83,18 @@ def result_dict(result):
 
 SCENARIO = scenario.load()
 DISPATCH_CFG = dispatch.load_config()
-TRAVEL = scenario.travel_ctx(SCENARIO)
+
+
+def current_control_zones():
+    """통제 구간(제안서 O5): 시나리오 기본값에 담당자가 등록·해제한 내용을 덮어쓴다."""
+    saved = {r["id"]: r for r in database.list_records("control")}
+    zones = [{**c, **saved.pop(c["id"], {})} for c in SCENARIO["control_zones"]]
+    return zones + sorted(saved.values(), key=lambda c: c["id"])
+
+
+def travel():
+    """현재 통제 상태로 이동 시간·경로 차단을 매번 다시 계산한다(구간 변경이 다음 추천에 바로 반영)."""
+    return scenario.travel_ctx({**SCENARIO, "control_zones": current_control_zones()})
 FEATURE_PREFIXES = ("/api/stage", "/api/welfare/", "/api/verify", "/api/recovery", "/api/volunteer", "/api/supply")
 _dispatch_lock = threading.Lock()   # 배치 승인 직전 재검사와 승인 기록을 한 번에(같은 자원 이중 투입 방지)
 
@@ -115,8 +126,21 @@ def recommend_dispatch(incident_id, kind, data):
     rejected = {((a["item"].get("recommendation") or {}).get("top") or {}).get("id")
                 for a in database.list_dispatch_approvals(states=("rejected",), include_released=True)
                 if a["incident_id"] == incident_id and a["kind"] == "dispatch_" + kind}
-    result = dispatch.recommend(dkind, demand, candidates, TRAVEL, DISPATCH_CFG, exclude=rejected - {None})
+    result = dispatch.recommend(dkind, demand, candidates, travel(), DISPATCH_CFG, exclude=rejected - {None})
     return demand, result_dict(result)
+
+
+def affected_assignments():
+    """현재 투입 중인 배치 중 통제 구간 때문에 경로가 막히게 된 것(재추천이 필요한 것)."""
+    zones = {x["id"]: x["zone"] for x in SCENARIO["public"] + SCENARIO["shelters"]}
+    t = travel()["travel"]
+    out = []
+    for a in database.list_dispatch_approvals():
+        top = (a["item"].get("recommendation") or {}).get("top") or {}
+        src, dst = zones.get(top.get("id")), a["item"]["demand"]["zone"]
+        if src and t.get((src, dst), {}).get("via_blocked"):
+            out.append({"approval_id": a["id"], "incident_id": a["incident_id"], "resource": top.get("id")})
+    return out
 
 
 def recheck_dispatch(approval):
@@ -133,7 +157,7 @@ def recheck_dispatch(approval):
     return None
 
 
-FEATURES = features.Features(database, SCENARIO, TRAVEL, DISPATCH_CFG, GUIDANCE_CFG, LLM, VERIFY_LLM)
+FEATURES = features.Features(database, SCENARIO, travel, DISPATCH_CFG, GUIDANCE_CFG, LLM, VERIFY_LLM)
 
 
 def public_guidance(incident_id):
@@ -271,7 +295,7 @@ class Handler(BaseHTTPRequestHandler):
                 "assignments": database.list_dispatch_approvals(),
                 "public": scenario.public_candidates(SCENARIO, set(busy)),
                 "shelters": scenario.shelter_candidates(SCENARIO, assigned),
-                "control_zones": SCENARIO["control_zones"]})
+                "control_zones": current_control_zones(), "zones": SCENARIO["zones"]})
         return self.send_json(404, {"error": "찾을 수 없는 경로입니다"})
 
     def do_POST(self):
@@ -343,6 +367,82 @@ class Handler(BaseHTTPRequestHandler):
                                              "recommendation": out}, incident_id=incident_id)["id"]
                 row["incident_id"] = incident_id
                 return self.send_json(200, row)
+            if path == "/api/control-zones" or (path.startswith("/api/control-zones/") and path.endswith("/toggle")):
+                s = self.require_staff(check_csrf=True)
+                if not s:
+                    return
+                zone_ids = {z["id"] for z in SCENARIO["zones"]}
+                with _dispatch_lock:
+                    if path == "/api/control-zones":   # 통제 구간 등록(O5)
+                        name, between = data.get("name"), data.get("between")
+                        if not isinstance(name, str) or not name.strip() or len(name) > 50:
+                            return self.send_json(400, {"error": "구간 이름은 1~50자여야 합니다"})
+                        if (not isinstance(between, list) or len(between) != 2 or len(set(between)) != 2
+                                or any(z not in zone_ids for z in between)):
+                            return self.send_json(400, {"error": "서로 다른 구역 두 개를 골라야 합니다"})
+                        if any(frozenset(c["between"]) == frozenset(between) for c in current_control_zones()):
+                            return self.send_json(409, {"error": "같은 두 구역 사이의 구간이 이미 있습니다. 목록에서 통제를 켜세요"})
+                        rec = {"id": "C-" + uuid.uuid4().hex[:6].upper(), "name": name.strip(), "between": between,
+                               "active": True, "changed_by": s["username"]}
+                        database.put_record("control", rec["id"], rec)
+                        database.log_audit("control_zone_added", "control_zone", rec["id"], rec)
+                        return self.send_json(201, {**rec, "affected": affected_assignments()})
+                    cid, active = path.split("/")[-2], data.get("active")
+                    if not isinstance(active, bool):
+                        return self.send_json(400, {"error": "active는 true/false여야 합니다"})
+                    zone = next((c for c in current_control_zones() if c["id"] == cid), None)
+                    if zone is None:
+                        return self.send_json(404, {"error": "통제 구간을 찾을 수 없습니다"})
+                    rec = {**zone, "active": active, "changed_by": s["username"]}
+                    database.put_record("control", cid, rec)
+                    database.log_audit("control_zone_changed", "control_zone", cid, {"active": active})
+                    return self.send_json(200, {**rec, "affected": affected_assignments()})
+            if path.startswith("/api/dispatch/") and (path.endswith("/modify") or path.endswith("/direct")):
+                s = self.require_staff(check_csrf=True)
+                if not s:
+                    return
+                parts = path.strip("/").split("/")
+                if len(parts) != 4:
+                    return self.send_json(404, {"error": "찾을 수 없는 경로입니다"})
+                aid, action, cand_id, reason = parts[2], parts[3], data.get("candidate"), data.get("reason")
+                if not isinstance(reason, str) or not reason.strip() or len(reason) > 500:
+                    return self.send_json(400, {"error": "승인 사유를 입력해야 합니다(500자 이하)"})
+                with _dispatch_lock:
+                    ap = database.get_approval(aid)
+                    if ap is None or not ap["kind"].startswith("dispatch_"):
+                        return self.send_json(404, {"error": "배치 승인 항목을 찾을 수 없습니다"})
+                    if ap["state"] != "pending":
+                        return self.send_json(409, {"error": f"{aid}는 이미 처리됐습니다"})
+                    item, kind = ap["item"], ap["item"]["kind"]
+                    rec = item["recommendation"]
+                    busy, assigned = dispatch_state()
+                    cands = (scenario.public_candidates(SCENARIO, set(busy)) if kind == "public"
+                             else scenario.shelter_candidates(SCENARIO, assigned))
+                    cand = next((c for c in cands if c["id"] == cand_id), None)
+                    if cand is None:
+                        return self.send_json(400, {"error": "후보 목록에 없는 자원입니다"})
+                    warnings = dispatch.violations(kind, item["demand"], cand, travel(), DISPATCH_CFG)
+                    pool = [rec["top"]] + rec.get("alternatives", [])
+                    chosen = next((r for r in pool if r["id"] == cand_id), None)
+                    if action == "modify":   # 추천 목록(1순위·대안) 안에서 고른다. 제약 위반이면 불가
+                        if chosen is None:
+                            return self.send_json(400, {"error": "수정은 1순위·대안 후보 중에서만 고를 수 있습니다. 그 밖은 직접 지정을 쓰세요"})
+                        if warnings:
+                            return self.send_json(409, {"error": "제약 위반으로 수정할 수 없습니다: " + ", ".join(warnings), "warnings": warnings})
+                        extra = {"decision": "modify", "original_top": rec["top"]["id"],
+                                 "score_diff": round(rec["top"]["score"] - chosen["score"], 4)}
+                    else:   # 직접 지정: 제약 위반은 예외 승인(override)과 사유가 있어야 확정
+                        if warnings and data.get("override") is not True:
+                            return self.send_json(409, {"error": "제약 위반으로 직접 지정할 수 없습니다: " + ", ".join(warnings)
+                                                        + ". 예외 승인하려면 사유와 함께 예외 승인을 선택하세요", "warnings": warnings})
+                        chosen = chosen or {"id": cand_id, "score": None, "items": {}}
+                        extra = {"decision": "direct", "original_top": rec["top"]["id"], "warnings": warnings,
+                                 "override": bool(warnings)}
+                    chosen = {**chosen, "name": scenario.names(SCENARIO).get(cand_id, cand_id)}
+                    database.update_pending_approval_item(aid, {**item, "recommendation": {**rec, "top": chosen}, **extra})
+                    result = database.resolve_approval(aid, True, s["username"], reason.strip(), s["user_id"])
+                    database.log_audit("dispatch_" + action, "approval", aid, {**extra, "chosen": cand_id})
+                return self.send_json(200, {**result, **extra})
             if path.startswith("/api/dispatch/") and path.endswith("/release"):
                 s = self.require_staff(check_csrf=True)
                 if not s:
@@ -522,7 +622,8 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError as e:
             return self.send_json(400, {"error": str(e)})
         except Exception:
-            # Avoid returning stack traces or secrets to the browser.
+            # Avoid returning stack traces or secrets to the browser; keep them in the local console only.
+            traceback.print_exc()
             return self.send_json(500, {"error": "서버 내부 오류입니다. 콘솔 로그를 확인해 주세요"})
 
 def main():

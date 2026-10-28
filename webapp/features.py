@@ -37,6 +37,7 @@ def _int(v, name, lo, hi):
 
 class Features:
     def __init__(self, db, sc, travel, dispatch_cfg, guidance_cfg, llm=None, verify_llm=None):
+        """travel: 현재 통제 구간을 반영한 이동 시간 표를 돌려주는 함수."""
         self.db, self.sc, self.travel, self.dcfg, self.gcfg = db, sc, travel, dispatch_cfg, guidance_cfg
         self.llm, self.verify_llm = llm, verify_llm
         with open("data/scenario/people.json", encoding="utf-8") as f:
@@ -360,7 +361,7 @@ class Features:
         busy = self.busy_volunteers()
         cands = [{**v, "available": v["id"] not in busy and v["id"] not in task.get("rejected", [])}
                  for v in self.volunteers.values() if v["mode"] in ("작업", "둘 다")]
-        r = volunteer.assign(task, cands, self.travel, self.dcfg, self.tcfg["safety"],
+        r = volunteer.assign(task, cands, self.travel(), self.dcfg, self.tcfg["safety"],
                              temperature_c=task.get("temperature_c"))
         rec = r.output
         if rec["team"]:   # 추천 인원이 있으면 투입 승인 대기열에. 부족분은 대기열 표시
@@ -542,7 +543,7 @@ class Features:
         if req["route"] != "matching":
             return {**req, "note": "카탈로그에 없는 품목이라 자동 매칭하지 않습니다. 담당자가 직접 처리하세요"}
         inv = self.inventory()
-        r = supply.propose(req, inv, self.travel, self.dcfg)
+        r = supply.propose(req, inv, self.travel(), self.dcfg)
         out = r.output
         req["reservation"] = inv.reservations.get(rid, [])
         req["last_proposal"] = {"shortfall": out["shortfall"], "procurement_needed": out["procurement_needed"]}

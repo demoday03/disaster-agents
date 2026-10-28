@@ -18,7 +18,7 @@
 
   // ---------------------------------------------------------------- 탭
   const LOADERS = {overview: loadSituation, supply: loadSupply, volunteer: loadVolunteer, recovery: loadRecovery,
-                   welfare: loadChecks, sensor: loadVerifyDocs, approvals: loadApprovals, dispatch: loadDispatch,
+                   welfare: loadChecks, sensor: loadVerifyDocs, approvals: () => loadApprovals(), dispatch: () => { loadDispatch(); loadControl(); },
                    guidance: loadIncidents};
   function go(tab) {
     current = tab;
@@ -34,6 +34,7 @@
   const baseLoadApprovals = loadApprovals;
   loadApprovals = async function () {
     await baseLoadApprovals();
+    await addDispatchControls();
     try { $('approvalCount').textContent = (await api('/api/approvals')).items.length; } catch (e) { /* 배지만 */ }
     if (current !== 'approvals' && LOADERS[current] && current !== 'dispatch') LOADERS[current]();
   };
@@ -189,6 +190,56 @@
     } catch (e) { showError('checkList', e); }
   }
 
+  // ---------------------------------------------------------------- ④ 통제 구간·배치 수정
+  async function loadControl() {
+    try {
+      await loadMeta();
+      const d = await api('/api/dispatch');
+      $('controlList').innerHTML = table(['ID', '구간', '연결 구역', '상태', '처리'], d.control_zones.map(c =>
+        `<tr><td>${E(c.id)}</td><td>${E(c.name)}</td><td>${E(c.between.join(' ↔ '))}</td><td>${c.active ? chip('통제 중', 'bad') : chip('해제', 'ok')}</td><td><button data-cz="${E(c.id)}" data-on="${c.active ? '' : '1'}" class="${c.active ? 'gray' : 'red'}">${c.active ? '통제 해제' : '통제 시작'}</button></td></tr>`));
+      $('controlList').querySelectorAll('button[data-cz]').forEach(b => b.addEventListener('click', async () => {
+        b.disabled = true;
+        try { const r = await post(`/api/control-zones/${encodeURIComponent(b.dataset.cz)}/toggle`, {active: !!b.dataset.on}); reportAffected(r); loadControl(); loadDispatch(); }
+        catch (e) { alert(e.message); b.disabled = false; }
+      }));
+    } catch (e) { showError('controlList', e); }
+  }
+  function reportAffected(r) {
+    $('controlResult').innerHTML = r.affected.length
+      ? `<span class="err">경로가 막힌 투입 중 배치: ${E(r.affected.map(a => `${a.incident_id}(${a.resource})`).join(', '))} · 배치를 해제하고 다시 추천하세요.</span>`
+      : `${E(r.name)} ${r.active ? '통제를 시작했습니다' : '통제를 해제했습니다'}. 영향받는 투입 중 배치는 없습니다.`;
+  }
+  // 배치 승인 카드에 '다른 후보로 수정'·'직접 지정' 추가(제안서 5.7 담당자 결정)
+  async function addDispatchControls() {
+    let items, d;
+    try { [items, d] = await Promise.all([api('/api/approvals'), api('/api/dispatch')]); } catch (e) { return; }
+    for (const a of items.items.filter(x => x.kind.startsWith('dispatch_'))) {
+      const card = document.querySelector(`#approvals button[data-resolve="yes"][data-id="${CSS.escape(a.id)}"]`)?.closest('.incident');
+      if (!card || card.querySelector('.dctl')) continue;
+      const rec = a.item.recommendation, pool = [rec.top, ...(rec.alternatives || [])];
+      const all = a.kind === 'dispatch_public'
+        ? d.public.map(p => [p.id, `${p.id} ${p.name}${p.available ? '' : ' (투입 중)'}`])
+        : d.shelters.map(s => [s.id, `${s.id} ${s.name} (남은 ${s.capacity_left})`]);
+      card.insertAdjacentHTML('beforeend', `<div class="dctl" style="margin-top:8px;border-top:1px dashed #cbd3df;padding-top:8px">
+        <label>다른 후보로 수정</label><select data-mod-sel>${pool.slice(1).map(r => `<option value="${E(r.id)}">${E(r.id)} ${E(r.name || '')} · 점수 ${E(r.score.toFixed(2))}</option>`).join('')}</select><button type="button" data-mod>선택 후보로 승인</button>
+        <label>직접 지정</label><select data-dir-sel>${all.map(([id, label]) => `<option value="${E(id)}">${E(label)}</option>`).join('')}</select>
+        <label style="font-weight:400"><input type="checkbox" data-override style="width:auto"> 제약 위반이어도 예외 승인(사유 필수)</label><button type="button" data-dir class="gray">직접 지정으로 승인</button></div>`);
+      const reason = () => $('reason-' + a.id).value;
+      const send = async (action, body) => {
+        if (!reason().trim()) { alert('처리 사유를 입력해 주세요.'); return; }
+        try { const r = await post(`/api/dispatch/${encodeURIComponent(a.id)}/${action}`, {...body, reason: reason()});
+              if (r.warnings?.length) alert('예외 승인으로 기록했습니다: ' + r.warnings.join(', '));
+              await loadApprovals(); loadDispatch(); }
+        catch (e) { alert(e.message); }
+      };
+      const modSel = card.querySelector('[data-mod-sel]');
+      if (!modSel.options.length) card.querySelector('[data-mod]').disabled = true;
+      card.querySelector('[data-mod]').addEventListener('click', () => send('modify', {candidate: modSel.value}));
+      card.querySelector('[data-dir]').addEventListener('click', () => send('direct', {candidate: card.querySelector('[data-dir-sel]').value,
+                                                                                       override: card.querySelector('[data-override]').checked}));
+    }
+  }
+
   // ---------------------------------------------------------------- ⑦ 검증
   async function loadVerifyDocs() {
     if ($('vDocs').querySelector('input')) return;
@@ -204,6 +255,16 @@
     document.querySelectorAll('#tabs button').forEach(b => b.addEventListener('click', () => go(b.dataset.go)));
     $('refreshSupply').addEventListener('click', loadSupply);
     $('refreshVol').addEventListener('click', loadVolunteer);
+    $('controlForm').addEventListener('submit', async e => {
+      e.preventDefault();
+      try { const r = await post('/api/control-zones', {name: $('czName').value, between: [$('czA').value, $('czB').value]});
+            reportAffected(r); $('czName').value = ''; loadControl(); loadDispatch(); }
+      catch (err) { $('controlResult').innerHTML = '<span class="err">오류: ' + E(err.message) + '</span>'; }
+    });
+    $('gZonesFill').addEventListener('click', async () => {
+      try { const d = await api('/api/dispatch'); $('gZones').value = d.control_zones.filter(c => c.active).map(c => c.name).join(', '); }
+      catch (err) { alert(err.message); }
+    });
     ['Wl', 'Wh', 'Vb'].forEach(k => $('s' + k).addEventListener('input', () => { $('o' + k).textContent = $('s' + k).value; }));
 
     $('supplyForm').addEventListener('submit', async e => {

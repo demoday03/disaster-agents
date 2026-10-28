@@ -379,6 +379,48 @@ class TestDispatch(ServerBase):
         after = next(s for s in self.get('/api/dispatch')[1]['shelters'] if s['id'] == 'S4')['capacity_left']
         self.assertEqual(before - after, 10)
 
+    def test_control_zone_toggle_changes_recommendation(self):
+        iid = self.incident('Z5 뒷산 토사가 마당까지 흘러내려요 (통제 구간 전환 시험)')
+        _, r = self.dispatch(iid, kind='public')
+        self.assertNotIn('P10', {x['id'] for x in r['output']['excluded']})
+        self.post(f"/api/approvals/{r['approval_id']}/resolve", {'approved': False, 'reason': '정리'})
+        status, c = self.post('/api/control-zones/C3/toggle', {'active': True})   # Z5↔Z10 통제 시작
+        self.assertEqual(status, 200, c); self.assertTrue(c['active'])
+        _, r2 = self.dispatch(iid, kind='public')
+        self.assertIn('통제 구간 경유', {x['id']: x['reasons'] for x in r2['output']['excluded']}['P10'])
+        self.post(f"/api/approvals/{r2['approval_id']}/resolve", {'approved': False, 'reason': '정리'})
+        self.assertEqual(self.post('/api/control-zones/C3/toggle', {'active': False})[0], 200)
+        status, new = self.post('/api/control-zones', {'name': '시험 구간', 'between': ['Z2', 'Z7']})
+        self.assertEqual((status, new['active']), (201, True))
+        self.assertIn(new['id'], [z['id'] for z in self.get('/api/dispatch')[1]['control_zones']])
+        self.assertEqual(self.post('/api/control-zones', {'name': '중복', 'between': ['Z7', 'Z2']})[0], 409)
+        self.assertEqual(self.post('/api/control-zones', {'name': '잘못', 'between': ['Z2', 'Z2']})[0], 400)
+        self.assertEqual(self.post('/api/control-zones/C-NOPE/toggle', {'active': True})[0], 404)
+        self.assertEqual(self.post(f"/api/control-zones/{new['id']}/toggle", {'active': False})[0], 200)
+
+    def test_modify_and_direct_assignment(self):
+        a = self.incident('Z3 지하에 사람이 갇혀 있어요 (수정 시험)')
+        _, r = self.dispatch(a, kind='public')
+        alt = r['output']['alternatives'][0]['id']
+        self.assertEqual(self.post(f"/api/dispatch/{r['approval_id']}/modify", {'candidate': alt, 'reason': ''})[0], 400)
+        self.assertEqual(self.post(f"/api/dispatch/{r['approval_id']}/modify", {'candidate': 'P10', 'reason': '목록 밖'})[0], 400)
+        status, m = self.post(f"/api/dispatch/{r['approval_id']}/modify", {'candidate': alt, 'reason': '현장 판단'})
+        self.assertEqual((status, m['decision'], m['state']), (200, 'modify', 'approved'))
+        self.assertIsNotNone(m['score_diff'])
+        st = self.get('/api/dispatch')[1]
+        self.assertEqual(st['assignments'][0]['item']['recommendation']['top']['id'], alt)   # 고른 후보로 투입
+        self.assertEqual(self.post(f"/api/dispatch/{r['approval_id']}/modify", {'candidate': alt, 'reason': 'x'})[0], 409)
+        b = self.incident('Z3 반지하에 사람이 갇혀 있어요 (직접 지정 시험)')
+        _, r2 = self.dispatch(b, kind='public')
+        status, err = self.post(f"/api/dispatch/{r2['approval_id']}/direct", {'candidate': alt, 'reason': '같은 팀'})
+        self.assertEqual(status, 409); self.assertIn('가용하지 않음', err['warnings'])   # 이미 투입 중
+        status, d = self.post(f"/api/dispatch/{r2['approval_id']}/direct",
+                              {'candidate': alt, 'reason': '현장 책임자 예외 승인', 'override': True})
+        self.assertEqual((status, d['override']), (200, True)); self.assertIn('가용하지 않음', d['warnings'])
+        status, d2 = self.post(f"/api/dispatch/{self.dispatch(self.incident('Z9 사람이 고립됐어요 (직접 지정 2)'), kind='public')[1]['approval_id']}/direct",
+                               {'candidate': 'P10', 'reason': '가까운 지원반'})
+        self.assertEqual((status, d2['override']), (200, False))   # 제약 위반 없으면 예외 승인 없이 확정
+
     def test_validation_and_auth(self):
         iid = self.incident('Z5 뒷산 토사 유출 (검증 시험)')
         self.assertEqual(self.dispatch(iid, kind='helicopter')[0], 400)

@@ -107,13 +107,13 @@ $env:SOLAR_MODEL="계정에서_지원하는_모델명"
 python webapp/server.py
 ```
 
-API: `GET /api/health`, `GET /api/agents`, `GET /api/incidents`, `GET /api/approvals`, `POST /api/incidents`, `POST /api/monitor/evaluate`, `POST /api/approvals/{id}/resolve`, `POST /api/incidents/{id}/dispatch`, `GET /api/dispatch`, `POST /api/dispatch/{id}/release`.
+API: `GET /api/health`, `GET /api/agents`, `GET /api/incidents`, `GET /api/approvals`, `POST /api/incidents`, `POST /api/monitor/evaluate`, `POST /api/approvals/{id}/resolve`, `POST /api/incidents/{id}/dispatch`, `GET /api/dispatch`, `POST /api/dispatch/{id}/release`, `POST /api/dispatch/{id}/modify`, `POST /api/dispatch/{id}/direct`, `POST /api/control-zones`, `POST /api/control-zones/{id}/toggle`. 현장 운영 기능 API는 `webapp/features.py` 맨 위 라우팅을 보세요.
 
 테스트:
 
 ```bash
 python -m unittest discover -s tests -t . -v      # 단위 테스트 112개
-python -m unittest webapp.test_server -v           # mock 모드 서버 API 24개(로그인·권한·CSRF 6개, 배치 6개 포함)
+python -m unittest webapp.test_server -v           # mock 모드 서버 API 26개(로그인·권한·CSRF 6개, 배치 8개 포함)
 python -m unittest webapp.test_features -v         # 현장 운영 기능 API 9개(①③⑤⑥⑦⑧)
 python -m unittest webapp.test_server_solar -v     # solar 경로 8개(가짜 로컬 서버, 실제 API 호출 없음)
 ```
@@ -186,7 +186,10 @@ python -m unittest webapp.test_server_solar -v     # solar 경로 8개(가짜 �
 
 가상 데이터: `data/scenario/zones.json`(구역 10개, 이동 시간 규칙, 통제 구간), `data/scenario/resources.json`(공공 자원 10팀, 대피소 8곳). 실제 기관·시설과 관계없습니다.
 
-**아직 없는 것:** 봉사자·물품 탭, 수정(다른 후보 선택)·직접 지정 화면(에이전트의 `Board`에는 있음), 통제 구간 등록·해제 화면(O5), 여러 신고 일괄 배치(`plan`), 근거 문장 LLM 생성.
+- **다른 후보로 수정**(1순위·대안 중에서, 제약 위반이면 불가, 1순위와의 점수 차이 기록)과 **직접 지정**(목록의 어느 자원이든, 제약 위반이면 '예외 승인'과 사유가 있어야 확정, 위반 내용을 감사 로그에 기록)을 승인 대기열의 배치 카드에서 할 수 있습니다.
+- **통제 구간 관리(O5)**: 배치 탭에서 통제 구간을 등록하거나 통제를 켜고 끕니다. 바뀐 상태는 다음 배치·봉사·물품 추천의 경로 제약에 바로 반영되고, 이미 투입 중인 배치 중 경로가 막힌 것을 알려 줍니다(자동으로 바꾸지는 않음). 안내문 생성 폼의 '통제 중인 구간 불러오기'로 안내문에도 넣을 수 있습니다.
+
+**아직 없는 것:** 여러 신고 일괄 배치(`plan`), 근거 문장 LLM 생성, 통제 구간 변경 시 자동 재추천.
 
 ## 담당자 로그인 (2026-10-28)
 
