@@ -33,12 +33,8 @@ if MODE == "solar" and not os.getenv("UPSTAGE_API_KEY"):
 # 서버 프로세스 전체의 호출 한도. 다 쓰면 재시작 전까지 규칙 폴백으로만 동작한다(/api/health의 llm_calls로 확인).
 LLM_MAX_CALLS = int(os.getenv("SOLAR_MAX_CALLS", "1000"))
 LLM = SolarClient(max_calls=LLM_MAX_CALLS) if MODE == "solar" else None
-VERIFY_MODEL = os.getenv("GROUNDEDNESS_MODEL", "").strip()
-VERIFY_LLM = (
-    SolarClient(model=VERIFY_MODEL, max_calls=LLM_MAX_CALLS)
-    if MODE == "solar" and VERIFY_MODEL
-    else None
-)
+# 검증 모델: GROUNDEDNESS_MODEL이 있으면 그 모델, 없으면 SOLAR_MODEL(기본 solar-pro4)이 판정한다.
+VERIFY_LLM = verify.make_client(max_calls=LLM_MAX_CALLS) if MODE == "solar" else None
 # 마이크로비트 게이트웨이 인증 토큰. 비어 있으면 실시간 센서 입력 경로를 닫아 둔다.
 SENSOR_TOKEN = os.getenv("SENSOR_GATEWAY_TOKEN", "").strip()
 if SENSOR_TOKEN and len(SENSOR_TOKEN) < 16:

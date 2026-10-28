@@ -28,7 +28,7 @@
 ## 지금 비어 있거나 확정이 필요한 것
 - 감시 임계값(calibrated=false): 설치 점검에서 측정해 교체.
 - 안전 수치(연속 활동 시간·고온·체크인 지연)·활동 시간 상한: 공식 지침 확인 전이라 null → 규칙 미적용, '기준 미확정' 표시.
-- Groundedness 모델명: 콘솔 확인 후 SolarClient(model=...)로 주입. 선택 근거 검색(임베딩)은 미구현(문서 ID 매핑만).
+- Groundedness 모델명: 콘솔 확인 후 `GROUNDEDNESS_MODEL`로 지정. 없으면 solar-pro4가 판정(`verify.make_client`). 선택 근거 검색(임베딩)은 미구현(문서 ID 매핑만).
 - 안내 문구(guidance.json)·물품 카탈로그·지원제도 규칙의 '확인 필요' 항목·as_of(기준일): 공식 자료로 교체·확인.
 - 업스테이지 문서 파싱: 연동 코드는 있으나 실제 API로는 아직 호출해 보지 않음. 주소·모델명(`DOCUMENT_PARSE_URL`·`DOCUMENT_PARSE_MODEL`)을 콘솔에서 확인해야 함.
 - 수요 1건에 여러 명이 필요한 인력 배치(④ 자체)는 ⑥·⑧ 쪽에서 반복 추천으로 처리.
@@ -60,7 +60,7 @@
 `data/eval/guidance_errors.json`에 오류 안내문 20종(근거와 다른 숫자 7, 한글로 쓴 숫자 2, 없는 제도 5, 위험한 행동 6)과 근거에 맞는 대조군 5종이 있다. 목표는 오류 문구의 90% 이상을 차단(`notGrounded`) 또는 보류(`notSure`)하는 것이다.
 
 - `python scripts/eval_verify.py --rules-only`: API 없이 실행. 숫자 선검사로 막히는 것은 7/20(35%)뿐이고 나머지는 검증 모델이 없어 `notSure`로 보류된다. 실제 차단 성능이 아니다.
-- `GROUNDEDNESS_MODEL`과 `UPSTAGE_API_KEY`를 설정한 뒤 `python scripts/eval_verify.py`: 실제 Groundedness 모델을 25회 호출해 차단·보류율과 대조군 통과율을 출력한다. 목표 미달이면 종료 코드 1.
+- `UPSTAGE_API_KEY`를 설정한 뒤 `python scripts/eval_verify.py`: 검증 모델(`GROUNDEDNESS_MODEL`, 없으면 solar-pro4)을 최대 25회 호출해 차단·보류율과 대조군 통과율을 출력한다. 목표 미달이면 종료 코드 1.
 - `tests/test_guidance_errors.py`는 세트 형식과, 모델이 전부 `grounded`라고 답하는 최악의 경우에도 숫자 오류가 규칙으로 차단되는지를 오프라인으로 확인한다.
 
 ### 신고 데이터셋으로 접수 성능 측정 (제안서 D8·11.2)
@@ -112,7 +112,7 @@ API: `GET /api/health`, `GET /api/agents`, `GET /api/incidents`, `GET /api/appro
 테스트:
 
 ```bash
-python -m unittest discover -s tests -t . -v      # 단위 테스트 134개
+python -m unittest discover -s tests -t . -v      # 단위 테스트 135개
 python -m unittest webapp.test_server -v           # mock 모드 서버 API 33개(로그인·권한·CSRF, 배치, 내부망 보안 4개, 센서 게이트웨이 3개 포함)
 python -m unittest webapp.test_features -v         # 현장 운영 기능 API 11개(①③⑤⑥⑦⑧, 서류 파일 읽기 포함)
 python -m unittest webapp.test_server_solar -v     # solar 경로 9개(가짜 로컬 서버, 실제 API 호출 없음. 문서 파싱 포함)
@@ -121,7 +121,7 @@ python -m unittest webapp.test_server_solar -v     # solar 경로 9개(가짜 �
 `test_server_solar`는 127.0.0.1에 가짜 OpenAI 호환 서버를 띄워 `LLM_MODE=solar` 경로(안내문 생성 → Groundedness 판정 → 승인 대기열)를 검사합니다. 가짜 키 문자열만 쓰며, **통과해도 실제 Solar 연결이나 안내 정확성이 확인된 것은 아닙니다.** 포트 18765~18768을 사용합니다.
 
 ### 안내문 승인 흐름 (현재 구현)
-- `GROUNDEDNESS_MODEL`이 없거나 mock 모드면 AI 안내문을 만들지 않고 표준 원문만 반환합니다.
+- mock 모드면 AI 안내문을 만들지 않고 표준 원문만 반환합니다. solar 모드에서 `GROUNDEDNESS_MODEL`이 없으면 `SOLAR_MODEL`(기본 solar-pro4)이 같은 세 판정으로 검증합니다.
 - 검증 판정은 응답이 정확히 `grounded`/`notGrounded`/`notSure`일 때만 인정합니다. 그 밖의 문장(예: "not grounded")은 `notSure`로 처리합니다.
 - `grounded`만 승인 대기열(`welfare_guidance`)에 들어갑니다. API 응답에는 승인 전 AI 문구를 넣지 않고 표준 원문만 담으며(`ai_text_withheld: true`), 초안은 승인 대기열 항목에서만 볼 수 있습니다.
 - `notSure`(모호한 판정, 검증 호출 실패, 근거 길이 초과 포함)는 표준 원문을 반환하고, 초안을 `welfare_guidance_review`(담당자 확인) 항목으로 승인 대기열에 올립니다. 응답에는 `review_id`가 붙습니다.

@@ -33,7 +33,8 @@ class FakeUpstream(BaseHTTPRequestHandler):
         STATE["calls"].append(body["model"])
         if STATE["error"]:
             self.send_response(500); self.end_headers(); return
-        if body["model"] == "fake-ground":
+        judge = body["messages"][0]["content"].startswith("너는 재난 안내문 검증기다")   # solar 모델 판정(폴백)
+        if body["model"] == "fake-ground" or judge:
             if STATE["verify_error"]:
                 self.send_response(500); self.end_headers(); return
             content = STATE["verdict"]
@@ -243,19 +244,23 @@ class TestSolarPathWithVerifier(SolarPathBase):
         self.assertIn("직접 붙여 넣어", d["error"])
 
 
-class TestSolarPathWithoutVerifier(SolarPathBase):
+class TestSolarPathJudgeFallback(SolarPathBase):
     groundedness = False
     port = APP_PORT_NOVERIFY
 
-    def test_no_groundedness_model_means_no_ai_guidance(self):
-        iid = self.incident("Z2 구역 침수 (검증기 없음 테스트)")
-        status, g = self.guidance(iid, "f-nov")
+    def test_without_groundedness_model_solar_judges(self):
+        iid = self.incident("Z2 구역 침수 (solar 판정 테스트)")
+        status, g = self.guidance(iid, "f-judge")
         self.assertEqual(status, 200)
-        self.assertEqual(STATE["calls"], [])                   # 안내문 LLM 호출 자체가 없음
-        self.assertFalse(g["ai_used"])
-        self.assertEqual(g["output"]["status"], "표준 원문")
+        self.assertNotIn("fake-ground", STATE["calls"])
+        self.assertEqual(STATE["calls"], ["fake-solar", "fake-solar"])   # 안내문 다듬기 + 판정
+        self.assertEqual(g["output"]["verdict"], "grounded")
+        self.assertIn("approval_id", g)
+        STATE.update(verdict="notGrounded", label="사")
+        status, g = self.guidance(iid, "f-judge-ng")
+        self.assertEqual(status, 200)
+        self.assertTrue(g["blocked"])
         self.assertNotIn("approval_id", g)
-
 
 if __name__ == "__main__":
     unittest.main()
