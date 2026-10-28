@@ -106,6 +106,38 @@ class TestPipeline(ServerBase):
         _, st = self.get("/api/dispatch")
         self.assertNotIn(d["approval_id"], [a["id"] for a in st["assignments"]])
 
+    def dispatches(self, iid):
+        return [a for a in self.pending(iid) if a["kind"] == "dispatch_public"]
+
+    def test_urgent_report_gets_dispatch_recommendation(self):
+        o = self.report("Z7 개울에서 사람이 떠내려가요")
+        self.assertEqual((o["type"], o["urgency"]), ("인명구조", 1))
+        [a] = self.dispatches(o["id"])
+        self.assertTrue(a["item"]["auto"]); self.assertEqual(o["linked"]["dispatch"], [a["id"]])
+        self.assertEqual(self.get("/api/dispatch")[1]["assignments"], [])   # 승인 전에는 투입 없음
+        code, d = self.post(f"/api/incidents/{o['id']}/dispatch", {"kind": "public"})
+        self.assertEqual((code, d["approval_id"]), (409, a["id"]))           # 같은 신고에 중복 추천 없음
+        o2 = self.report("Z7 다른 집에서도 사람이 떠내려가요")
+        self.assertEqual(len(self.dispatches(o2["id"])), 1)                  # 인명구조는 별건으로 각각 추천
+
+    def test_repeat_report_links_to_ongoing_dispatch(self):
+        first = self.report("Z1 반지하 집에 물이 차고 있어요")
+        self.assertEqual(first["urgency"], 2)
+        [a] = self.dispatches(first["id"])
+        again = self.report("Z1 반지하 쪽 침수 계속돼요")
+        self.assertEqual(self.dispatches(again["id"]), [])
+        self.assertEqual(again["linked"]["dispatch"], [a["id"]])
+        self.assertIn("이미 진행 중", again["notes"][0])
+
+    def test_low_urgency_and_missing_zone_wait(self):
+        road = self.report("Z4 공원 벤치가 부서졌어요")
+        self.assertEqual(self.dispatches(road["id"]), [])                    # 긴급도 3~4는 담당자가 요청
+        o = self.report("어딘지 모르겠는데 사람이 갇혀 있어요")
+        self.assertEqual(self.dispatches(o["id"]), [])                       # 위치가 없으면 추천하지 않음
+        code, d = Client(self.base).post(f"/api/incidents/{o['id']}/supplement", {"text": "Z8 구역 마트 지하예요"})
+        self.assertEqual(code, 200, d)
+        self.assertEqual(len(self.dispatches(o["id"])), 1)                   # 보완되면 그때 추천
+
     def test_manual_mode_shown_and_cleared_on_success(self):
         old = db.DB_PATH
         db.DB_PATH = Path(self.tempdir.name) / "test.db"

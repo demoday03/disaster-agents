@@ -131,15 +131,17 @@ class Rehearsal:
 
     def s4_dispatch(self):
         iid = self.ids["rescue"]
-        r = self.ok(self.staff, f"/api/incidents/{iid}/dispatch", {"kind": "public"})
-        top = r["output"]["top"]
-        check(top and r.get("approval_id"), "추천 1순위 또는 승인 요청 없음")
+        auto = self.pending("dispatch_public", iid)   # 긴급도 1 신고는 접수 때 배치 추천이 자동으로 올라와 있다
+        check(len(auto) == 1 and auto[0]["item"].get("auto"), f"자동 배치 추천 {len(auto)}건(1건이어야 함)")
+        check(not [a for a in self.ok(self.staff, "/api/dispatch")["assignments"] if a["incident_id"] == iid],
+              "승인 전인데 투입됨")
+        top = auto[0]["item"]["recommendation"]["top"]
         again = self.ok(self.staff, f"/api/incidents/{iid}/dispatch", {"kind": "public"}, status=409)
-        check(again.get("approval_id") == r["approval_id"], "같은 추천이 중복으로 올라감")
-        self.approve(r["approval_id"], "인명구조, 가장 가까운 팀")
+        check(again.get("approval_id") == auto[0]["id"], "같은 추천이 중복으로 올라감")
+        self.approve(auto[0]["id"], "인명구조, 가장 가까운 팀")
         busy = [a for a in self.ok(self.staff, "/api/dispatch")["assignments"] if a["incident_id"] == iid]
         check(len(busy) == 1, "승인 후 투입 현황에 없음")
-        return f"1순위 {top.get('name', top['id'])} (점수 {top['score']:.2f}) 투입"
+        return f"자동 추천 1순위 {top.get('name', top['id'])} (점수 {top['score']:.2f}) → 승인 → 투입"
 
     def s5_guidance(self):
         iid = self.ids["rescue"]
@@ -193,10 +195,11 @@ class Rehearsal:
         self.ok(self.staff, f"/api/supply/requests/{rid}/deliver", {})
         done = self.ok(self.staff, f"/api/supply/requests/{rid}/receipt", {"received": True})
         check(done["state"] == "완료", "수령 확인 후 완료가 아님")
-        med = self.report("Z2 할아버지 처방약이 다 떨어졌어요")["output"]
+        med = self.report("Z2 경로당에 혈압약 같은 처방약을 보내 주세요")["output"]
         mreq = [r for r in self.ok(self.staff, "/api/supply")["requests"] if r.get("incident_id") == med["id"]]
-        check(mreq and mreq[0]["route"] == "manual_medicine" and not self.pending("supply_dispatch", med["id"]),
-              "의약품이 자동 매칭됨")
+        check(mreq, f"의약품 신고가 물품 요청으로 이어지지 않음(분류 {med['type']})")
+        check(all(r["route"] == "manual_medicine" for r in mreq if r["item"] == "처방약")
+              and not self.pending("supply_dispatch", med["id"]), "의약품이 자동 매칭됨")
         return "생수 12·담요 5 → 승인 2건 → 출고·수령 완료 · 의약품은 담당자 직접 처리"
 
     def s8_supplement(self):
@@ -255,7 +258,7 @@ class Rehearsal:
     def run(self):
         for name, fn in [("0. 서버·로그인", self.s0_ready), ("1. 시민 신고(② 접수)", self.s1_report),
                          ("2. 상황판", self.s2_board), ("3. 센서 감지·단계 확정(①)", self.s3_sensor),
-                         ("4. 구조 인력 배치(④)", self.s4_dispatch), ("5. 안내문·검증(③⑦)", self.s5_guidance),
+                         ("4. 구조 인력 자동 추천·배치(②④)", self.s4_dispatch), ("5. 안내문·검증(③⑦)", self.s5_guidance),
                          ("6. 안부 확인(③)", self.s6_welfare), ("7. 신고 → 물품 출고(②⑧)", self.s7_supply),
                          ("8. 빠진 정보 보완", self.s8_supplement), ("9. 오접수 처리", self.s9_invalid),
                          ("10. 봉사자 투입(⑥)", self.s10_volunteer), ("11. 복구 서류(⑤)", self.s11_recovery),

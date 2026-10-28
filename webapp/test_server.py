@@ -310,6 +310,7 @@ class TestAuth(ServerBase):
 class TestDispatch(ServerBase):
     """배치 추천(④) API: 추천 → 승인 대기열 → 승인(재검사) → 투입 현황 → 해제."""
     port = 18770
+    extra_env = {**ServerBase.extra_env, "AUTO_DISPATCH_MAX_URGENCY": "0"}   # 담당자가 직접 요청하는 경로를 시험(자동 연결은 test_pipeline)
 
     def setUp(self):   # 테스트끼리 같은 서버를 쓰므로 앞 테스트의 투입을 모두 해제하고 시작
         for a in self.get('/api/dispatch')[1]['assignments']:

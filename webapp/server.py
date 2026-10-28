@@ -165,6 +165,23 @@ def link_incident(row):
     넘기다 실패하면 신고는 그대로 두고 그 에이전트만 수동 처리로 표시한다."""
     out = row["output"]
     missing, linked, notes = list(out.get("missing") or []), {}, []
+    if (not missing and out.get("type") in SCENARIO["type_skills"] and isinstance(out.get("urgency"), int)
+            and out["urgency"] <= AUTO_DISPATCH_MAX_URGENCY):   # 급한 신고 → ④ 공공 인력 배치 추천
+        try:
+            same = ongoing_dispatch(out)
+            if same:
+                linked["dispatch"] = [same]
+                notes.append(f"같은 구역·유형 배치가 이미 진행 중이라 연결만 함({same})")
+            else:
+                d = create_dispatch(out["id"], "public", {}, auto=True, output=out)
+                if d.get("approval_id"):
+                    linked["dispatch"] = [d["approval_id"]]
+                else:
+                    notes.append("배치 후보가 없습니다: " + " · ".join(d["output"].get("options", [])))
+            agent_ok("dispatch")
+        except Exception as e:
+            agent_failed("dispatch", e)
+            notes.append("배치 추천 연결 실패: 담당자가 ④ 배치 화면에서 직접 추천하세요")
     if out.get("route") == "supply" and not missing:
         try:
             with FEATURES.lock:
@@ -221,8 +238,9 @@ def dispatch_state():
     return busy, assigned
 
 
-def recommend_dispatch(incident_id, kind, data):
-    output = database.get_incident(incident_id)["result"]["output"]
+def recommend_dispatch(incident_id, kind, data, output=None):
+    """output: 저장 전(보완 직후 등) 신고 내용을 직접 줄 때. 없으면 DB에서 읽는다."""
+    output = output or database.get_incident(incident_id)["result"]["output"]
     busy, assigned = dispatch_state()
     if kind == "public":
         demand = scenario.public_demand(output, SCENARIO)
@@ -238,6 +256,41 @@ def recommend_dispatch(incident_id, kind, data):
                 if a["incident_id"] == incident_id and a["kind"] == "dispatch_" + kind}
     result = dispatch.recommend(dkind, demand, candidates, travel(), DISPATCH_CFG, exclude=rejected - {None})
     return demand, result_dict(result)
+
+
+def create_dispatch(incident_id, kind, data, auto=False, output=None):
+    """배치 추천을 만들고, 후보가 있으면 승인 대기열에 올린다. 없으면 부족 사실과 선택지만 돌려준다."""
+    demand, row = recommend_dispatch(incident_id, kind, data, output)
+    out = row["output"]
+    names = scenario.names(SCENARIO)
+    for r in [out.get("top")] + out.get("alternatives", []):
+        if r:
+            r["name"] = names.get(r["id"], r["id"])
+    if out.get("top"):
+        row["approval_id"] = database.create_approval(
+            "dispatch_" + kind, {"incident_id": incident_id, "kind": kind, "demand": demand,
+                                 "recommendation": out, "auto": auto}, incident_id=incident_id)["id"]
+    row["incident_id"] = incident_id
+    return row
+
+
+# 긴급도가 이 값 이하인 신고는 접수되면 공공 인력 배치 추천을 자동으로 승인 대기열에 올린다(0이면 끔).
+AUTO_DISPATCH_MAX_URGENCY = int(os.getenv("AUTO_DISPATCH_MAX_URGENCY", DISPATCH_CFG.get("auto_public_max_urgency", 2)))
+
+
+def ongoing_dispatch(output):
+    """같은 구역·유형 신고에 이미 대기 중이거나 투입 중인 공공 인력 배치(같은 사건의 반복 신고로 중복 배치하지 않게).
+    인명구조는 별건 누락을 막기 위해 묶지 않는다."""
+    if output["type"] == "인명구조":
+        return None
+    pending = [a for a in database.list_pending_approvals() if a["kind"] == "dispatch_public"]
+    active = [a for a in database.list_dispatch_approvals() if a["kind"] == "dispatch_public"]
+    for a in pending + active:
+        other = incident_output(a["item"].get("incident_id", ""))
+        o = (other or {}).get("output", {})
+        if (o.get("zone"), o.get("type")) == (output["zone"], output["type"]) and o.get("state") != INVALID:
+            return a["id"]
+    return None
 
 
 def affected_assignments():
@@ -518,18 +571,7 @@ class Handler(BaseHTTPRequestHandler):
                 if waiting:   # 같은 신고에 같은 종류의 추천이 이미 대기 중이면 중복으로 올리지 않는다
                     return self.send_json(409, {"error": f"이 신고에는 승인 대기 중인 배치 추천({waiting})이 있습니다. 먼저 승인하거나 거절하세요",
                                                 "approval_id": waiting})
-                demand, row = recommend_dispatch(incident_id, kind, data)   # 입력 오류는 ValueError → 400
-                out = row["output"]
-                names = scenario.names(SCENARIO)
-                for r in [out.get("top")] + out.get("alternatives", []):
-                    if r:
-                        r["name"] = names.get(r["id"], r["id"])
-                if out.get("top"):   # 후보가 있을 때만 승인 대기열에. 없으면 부족 사실과 선택지만 돌려준다
-                    row["approval_id"] = database.create_approval(
-                        "dispatch_" + kind, {"incident_id": incident_id, "kind": kind, "demand": demand,
-                                             "recommendation": out}, incident_id=incident_id)["id"]
-                row["incident_id"] = incident_id
-                return self.send_json(200, row)
+                return self.send_json(200, create_dispatch(incident_id, kind, data))   # 입력 오류는 ValueError → 400
             if path == "/api/control-zones" or (path.startswith("/api/control-zones/") and path.endswith("/toggle")):
                 s = self.require_staff(check_csrf=True)
                 if not s:

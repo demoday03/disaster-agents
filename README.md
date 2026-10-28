@@ -139,7 +139,7 @@ python -m unittest discover -s tests -t . -v      # 단위 테스트 139개
 python -m unittest webapp.test_server -v           # mock 모드 서버 API 33개(로그인·권한·CSRF, 배치, 내부망 보안 4개, 센서 게이트웨이 3개 포함)
 python -m unittest webapp.test_features -v         # 현장 운영 기능 API 11개(①③⑤⑥⑦⑧, 서류 파일 읽기 포함)
 python -m unittest webapp.test_server_solar -v     # solar 경로 9개(가짜 로컬 서버, 실제 API 호출 없음. 문서 파싱 포함)
-python -m unittest webapp.test_pipeline -v         # 신고 → 다음 에이전트 연결과 예외 처리 8개
+python -m unittest webapp.test_pipeline -v         # 신고 → 다음 에이전트 연결과 예외 처리 11개
 python -m unittest webapp.test_rehearsal -v        # 시연 리허설 전체(mock, 약 10초)
 ```
 
@@ -153,6 +153,7 @@ python scripts/rehearse_demo.py            # 실패한 장면이 있으면 종�
 
 ### 신고 처리 흐름과 예외 처리 (현재 구현)
 - **자동 연결:** ② 접수가 '물품 요청'으로 분류하면 신고문에서 품목·수량을 뽑아 ⑧ 물품 요청을 만들고, 재고 추천·예약까지 해서 승인 대기열에 **한 건**(`supply_dispatch`, `combined_review: true`)으로 올린다. 담당자가 이것을 승인하면 검토 승인과 출고가 함께 확정된다(이력에 검토·배치 모두 승인자 이름이 남음). 승인 전에는 재고가 줄지 않는다.
+- **긴급 신고 → 배치 추천:** 긴급도 2 이하(인명구조, 취약 가구가 있는 침수·산사태·단전 등) 신고는 접수 즉시 ④ 공공 인력 배치 추천을 승인 대기열에 올린다(`auto: true`). 같은 구역·유형 배치가 이미 대기·투입 중이면 새로 만들지 않고 연결만 한다(인명구조는 항상 별건). 기준은 `config/dispatch.json`의 `auto_public_max_urgency`(0이면 끔, 환경변수 `AUTO_DISPATCH_MAX_URGENCY`로 덮어씀).
 - 수량을 못 찾았거나, 가구당 상한을 넘거나, 의약품·카탈로그 밖 품목이거나, 재고가 없으면 자동으로 올리지 않고 ⑧ 물품 화면의 '검토'에 사유(`review_reason`)와 함께 둔다.
 - **필수 정보 누락:** 위치(구역)를 못 찾았거나, 물품 요청인데 품목을 못 찾으면 신고 상태가 `보완 필요`가 되고 다음 에이전트로 넘기지 않는다. 신고자는 접수 사이트에서 접수번호로 보완 내용을 보낼 수 있다(`POST /api/incidents/{id}/supplement`, 로그인 불필요). 보완하면 다시 분류하고, 정보가 채워지면 그때 연결한다. 인명구조는 위치가 없어도 긴급도 1·즉시 알림을 그대로 유지한다.
 - **잘못된 신고(오접수):** 담당자가 관리자 화면의 '오접수 처리'로 사유를 남기면(`POST /api/incidents/{id}/invalidate`) 그 신고에 걸린 대기 중 승인(배치·물품·안내문)은 반려, 이미 투입된 배치는 해제, 출고 전 물품 요청은 반려·예약 해제된다. 이미 출고된 물품 요청은 바꾸지 않고 목록으로 알려 준다. 이후 그 신고로는 배치·안내문을 만들 수 없고, 접수 사이트에는 승인된 안내문도 표시하지 않는다. 모든 처리는 `audit_logs`에 남는다.
