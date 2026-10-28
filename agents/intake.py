@@ -33,6 +33,11 @@ def urgency(typ, vulnerable, people):
     return 4
 
 
+def missing_fields(out):
+    """처리에 꼭 필요한데 신고문에서 찾지 못한 정보. 누락이 있어도 긴급도·알림은 그대로 둔다(인명구조를 늦추지 않게)."""
+    return ["위치(구역)"] if out["zone"] == "미상" else []
+
+
 MAX_TEXT = 2000   # 서버 입력 상한과 같게 둔다. 잘라 버리면 뒤쪽의 '사람이 갇혔어요' 같은 문장이 분류·저장에서 빠진다
 
 
@@ -57,7 +62,7 @@ def classify(rid, text, ts, cfg, client=None):
     return AgentResult("intake", {
         "id": rid, "text": clean, "ts": ts, **out, "urgency": u,
         "route": "supply" if out["type"] == "물품 요청" else "inbox",
-        "notify_now": u == 1, "label": None if ai else "AI 미사용"},
+        "notify_now": u == 1, "label": None if ai else "AI 미사용", "missing": missing_fields(out)},
         ai_used=ai, fallback_reason=why, evidence=[f"유형={out['type']}", f"긴급도={u}"])
 
 

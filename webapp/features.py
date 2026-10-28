@@ -162,6 +162,8 @@ class Features:
             if req is None:
                 return
             inv = self.inventory()
+            if approved and req["state"] == "검토" and item.get("combined_review"):   # 신고 자동 연결: 검토 승인 겸함
+                self._move(req, "승인", "staff", who, "배치 승인과 함께 검토 승인")
             if approved:   # 배치 승인 → 예약분 출고(재고 감소), 요청은 '배치'
                 now = time.time()
                 for row in item["plan"]:
@@ -171,7 +173,7 @@ class Features:
                 self.save_inventory(inv)
                 self._move(req, "배치", "staff", who)
                 req["reservation"] = []
-            else:          # 반려 → 예약 해제, 요청은 '승인'에 남아 다시 추천 가능
+            else:          # 반려 → 예약 해제, 요청은 그 상태('승인' 또는 자동 연결분은 '검토')에 남아 다시 처리 가능
                 req["reservation"] = []
                 req.setdefault("history", []).append({"to": req["state"], "actor": "staff", "by": who,
                                                       "reason": "배치 반려(예약 해제)", "ts": time.time()})
@@ -569,6 +571,8 @@ class Features:
         to = {"승인": "승인", "보류": "보류", "반려": "반려", "재검토": "검토"}.get(decision)
         if to is None:
             raise ValueError("decision은 승인·보류·반려·재검토 중 하나여야 합니다")
+        if req.get("pending_approval"):   # 신고 자동 연결분은 배치 승인 한 번으로 검토까지 처리한다
+            raise Conflict(f"승인 대기열의 배치 승인({req['pending_approval']})에서 처리하세요")
         self._move(req, to, "staff", data.get("_by"), reason)
         self.db.put_record("supply_request", rid, req)
         if to == "승인" and req["route"] == "matching":
@@ -579,6 +583,12 @@ class Features:
         req = self._get_request(rid)
         if req["state"] != "승인":
             raise Conflict(f"'{req['state']}' 상태에서는 공급원을 추천할 수 없습니다(승인 상태만)")
+        return self._propose(req)
+
+    def _propose(self, req, combined=False):
+        """공급원 추천·예약 후 배치 승인 대기열에 올린다. combined: 신고에서 자동으로 만든 요청이라
+        검토 승인과 배치 승인을 담당자의 한 번 승인으로 처리한다(요청은 '검토' 상태로 기다림)."""
+        rid = req["id"]
         if req.get("pending_approval"):
             raise Conflict(f"이미 배치 승인 대기 중입니다({req['pending_approval']})")
         if req["route"] == "manual_medicine":
@@ -595,9 +605,60 @@ class Features:
             req["pending_approval"] = self.db.create_approval("supply_dispatch", {
                 "request_id": rid, "household": req["household"], "item": req["item"], "qty": req["qty"],
                 "zone": req["zone"], "plan": plan, "shortfall": out["shortfall"],
-                "procurement_needed": out["procurement_needed"], "reason": out["recommendation"].get("reason")})["id"]
+                "procurement_needed": out["procurement_needed"], "reason": out["recommendation"].get("reason"),
+                "incident_id": req.get("incident_id"), "combined_review": combined},
+                incident_id=req.get("incident_id"))["id"]
         self.db.put_record("supply_request", rid, req)
         return {**req, "proposal": out}
+
+    def supply_from_incident(self, inc):
+        """② 접수에서 '물품 요청'으로 분류된 신고 → ⑧ 물품 요청. 신고문에서 품목·수량을 뽑고,
+        담당자 판단이 필요 없는 요청(카탈로그 품목·상한 이내·수량 확인)은 바로 공급원을 추천해
+        승인 대기열에 한 건으로 올린다. 나머지는 '검토'에 두고 사유를 적는다. 품목을 못 찾으면 빈 목록."""
+        items, ai, why = supply.parse_memo(inc["text"], self.catalog, client=self.llm)
+        now, out = time.time(), []
+        for it in items:
+            rid = _new_id("SR")
+            row = {"id": rid, "household": None, "item": it["item"], "qty": it["qty"] or 1,
+                   "people": inc.get("people") or 1, "when": "지금" if inc.get("urgency") == 1 else "오늘 중",
+                   "zone": inc["zone"], "ts": now, **{k: False for k in REQUEST_FLAGS},
+                   "has_elderly": bool(inc.get("vulnerable"))}
+            p = supply.process_requests([row], self.catalog)[0]
+            req = {**row, **p, "incident_id": inc["id"], "last_ts": now, "memo": None,
+                   "qty_unconfirmed": it["qty"] is None, "merged_count": 1,
+                   "state": "접수", "history": [], "reservation": [], "created_at": now}
+            self._move(req, "검토", "system", None, f"신고 {inc['id']}에서 자동 생성")
+            hold = list(p["flags"]) + (["수량 미확인"] if req["qty_unconfirmed"] else [])
+            if hold:
+                req["review_reason"] = ", ".join(hold)
+                self.db.put_record("supply_request", rid, req)
+            else:
+                self._propose(req, combined=True)
+                req = self._get_request(rid)
+                if not req.get("pending_approval"):   # 재고가 하나도 없으면 대기열에 올릴 계획이 없다
+                    req["review_reason"] = "재고 없음: 조달 필요"
+                    self.db.put_record("supply_request", rid, req)
+            out.append(self._get_request(rid))
+        return {"requests": out, "ai_used": ai, "fallback_reason": why}
+
+    def cancel_incident_supply(self, incident_id, who, reason):
+        """오접수 처리: 이 신고에서 만든 물품 요청 중 아직 출고 전(검토·보류·승인)인 것을 반려·예약 해제.
+        이미 배치·이동 중인 요청은 바꾸지 않고 목록으로 돌려준다(담당자가 회수 여부를 판단)."""
+        cancelled, left = [], []
+        for req in self.db.list_records("supply_request"):
+            if req.get("incident_id") != incident_id or req["state"] in ("완료", "반려"):
+                continue
+            if req["state"] in ("검토", "보류", "승인"):
+                req["reservation"] = []
+                req.pop("pending_approval", None)
+                req["state"] = "반려"   # 오접수는 어느 단계에서든 담당자 결정으로 닫는다
+                req.setdefault("history", []).append({"to": "반려", "actor": "staff", "by": who,
+                                                      "reason": f"오접수 처리: {reason}", "ts": time.time()})
+                self.db.put_record("supply_request", req["id"], req)
+                cancelled.append(req["id"])
+            else:
+                left.append({"id": req["id"], "state": req["state"]})
+        return cancelled, left
 
     def request_deliver(self, rid, data):
         req = self._get_request(rid)

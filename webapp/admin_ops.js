@@ -99,7 +99,7 @@
           r.route === 'manual_medicine' ? chip('의약품: 직접 처리', 'bad') : '', r.qty_unconfirmed ? chip('수량 확인 필요', 'warn') : '',
           r.merged_count > 1 ? chip(`요청 ${r.merged_count}건 병합`) : '',
           r.last_proposal?.procurement_needed ? chip(`부족 ${r.last_proposal.shortfall} · 외부 조달 필요`, 'bad') : ''].join('');
-        return `<tr><td>${E(r.id)}</td><td>${E(r.household)} · ${E(r.zone)}</td><td>${E(r.item)} ${E(r.qty)}</td><td>${E(r.urgency)}</td><td>${marks}</td><td>${chip(r.state, STATE_CLS[r.state] || '')}</td><td>${acts}</td></tr>`;
+        return `<tr><td>${E(r.id)}</td><td>${r.household ? E(r.household) : '신고 ' + E(r.incident_id)} · ${E(r.zone)}${r.review_reason ? ' ' + chip(r.review_reason, 'warn') : ''}</td><td>${E(r.item)} ${E(r.qty)}</td><td>${E(r.urgency)}</td><td>${marks}</td><td>${chip(r.state, STATE_CLS[r.state] || '')}</td><td>${acts}</td></tr>`;
       }));
       $('supplyRequests').querySelectorAll('button[data-req]').forEach(b => b.addEventListener('click', async () => {
         const body = JSON.parse(b.dataset.body);

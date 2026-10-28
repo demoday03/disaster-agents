@@ -74,6 +74,27 @@ def save_incident(result: dict) -> dict:
     return result
 
 
+def update_incident(result: dict, status: str | None = None) -> dict:
+    """저장된 신고의 결과(JSON)를 고친다. status는 incidents.status 허용값 중 하나(없으면 그대로)."""
+    output = result["output"]
+    with connect() as conn:
+        cur = conn.execute("""UPDATE incidents SET result_json=?, incident_type=?, zone=?, severity=?,
+              status=COALESCE(?, status), updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?""",
+            (json.dumps(result, ensure_ascii=False), str(output.get("type", "미분류")), str(output.get("zone", "미상")),
+             output.get("urgency") if isinstance(output.get("urgency"), int) else None, status, output["id"]))
+        if cur.rowcount != 1:
+            raise KeyError(output["id"])
+    return result
+
+
+def list_pending_approvals_for(incident_id: str) -> list[dict]:
+    """한 신고에 걸린 대기 중 승인 항목(오접수 처리 때 함께 반려)."""
+    with connect() as conn:
+        rows = conn.execute("SELECT id FROM approvals WHERE state='pending' AND incident_id=? ORDER BY created_at",
+                            (incident_id,)).fetchall()
+    return [get_approval(r["id"]) for r in rows]
+
+
 def list_incidents(limit: int = 100) -> list[dict]:
     with connect() as conn:
         rows = conn.execute("SELECT result_json FROM incidents ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()

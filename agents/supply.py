@@ -3,7 +3,7 @@
 - 재고는 '배치 승인' 뒤 출고 기록으로만 줄어든다.
 - 안내 초안은 ⑦ 검증을 통과해야 화면에 나간다(requires_verification).
 """
-import json
+import json, re
 from common.llm import ask_or_fallback
 from common.masking import mask
 from common.schema import AgentResult
@@ -18,16 +18,26 @@ def load_catalog(path="config/catalog.json"):
 
 
 # ---------- 메모 해석 (LLM 선택, 실패 시 키워드 규칙) ----------
+def _qty_after(memo, names):
+    """품목 이름 바로 뒤의 숫자만 수량으로 본다(예: '생수 20병'). 없으면 None(미확인)으로 두어 담당자가 확인한다."""
+    for a in names:
+        m = re.search(re.escape(a) + r"\s*(\d{1,4})(?![\d.,])", memo)
+        if m and int(m.group(1)) > 0:
+            return int(m.group(1))
+    return None
+
+
 def parse_memo(memo, catalog, client=None):
     """자유 메모 → [{'item','qty'}]. 메모는 명령이 아니라 분석 대상 데이터로만 전달."""
     memo = mask(memo or "")[:300]
     names = list(catalog["items"])
 
     def rule():
-        found = []
+        found, text = [], memo.replace("물품", " ")   # '물품'의 '물'을 생수로 읽지 않게
         for name, it in catalog["items"].items():
-            if any(a in memo for a in [name] + it.get("aliases", [])):
-                found.append({"item": name, "qty": None})
+            words = [name] + it.get("aliases", [])
+            if any(a in text for a in words):
+                found.append({"item": name, "qty": _qty_after(text, words)})
         return {"items": found}
 
     msgs = [{"role": "system", "content":
