@@ -82,3 +82,34 @@ class TestIntake(unittest.TestCase):
         o = I.classify("L", "Z3 " + "물이 조금씩 들어오고 있어요. " * 30 + "할머니가 방에 갇혀 있어요", 0, CFG).output
         self.assertEqual((o["type"], o["urgency"]), ("인명구조", 1))
         self.assertTrue(o["text"].endswith("갇혀 있어요"))
+
+    def test_zone_ambiguous_or_missed_by_llm(self):
+        # 구역이 둘 이상 적히면 AI가 하나를 골라도 미상(보완 요청), 하나만 적혔는데 AI가 놓치면 글의 구역을 쓴다
+        two = I.classify("Z", "2구역인지 3구역인지 산이 무너져요", 0, CFG,
+                         fake('{"type":"산사태·토사","zone":"Z2","people":null,"vulnerable":false}')).output
+        self.assertEqual((two["zone"], two["missing"]), ("미상", ["위치(구역)"]))
+        one = I.classify("Z", "Z6 피해 신고는 어디서 하나요", 0, CFG,
+                         fake('{"type":"대민지원","zone":"미상","people":null,"vulnerable":false}')).output
+        self.assertEqual((one["zone"], one["missing"]), ("Z6", []))
+
+    def test_vulnerable_keyword_not_dropped_by_llm(self):
+        o = I.classify("V", "Z3 반지하 침수 신고 또 합니다", 0, CFG,
+                       fake('{"type":"침수","zone":"Z3","people":null,"vulnerable":false}')).output
+        self.assertEqual((o["vulnerable"], o["urgency"]), (True, 2))
+
+    def test_rule_raises_only_rescue_and_landslide(self):
+        r = I.classify("L", "Z9 도로에 낙석이 떨어졌어요", 0, CFG,
+                       fake('{"type":"도로·시설 장애","zone":"Z9","people":null,"vulnerable":false}'))
+        self.assertEqual(r.output["type"], "산사태·토사"); self.assertIn("키워드 규칙으로 상향(도로·시설 장애→산사태·토사)", r.evidence)
+        past = I.classify("P", "Z4 지난번 침수됐던 집 소독은 언제 해주나요", 0, CFG,
+                          fake('{"type":"대민지원","zone":"Z4","people":null,"vulnerable":false}')).output
+        self.assertEqual(past["type"], "대민지원")   # 침수 낱말은 지나간 일 문의에도 흔해 올리지 않는다
+        for t in ("Z8 엘리베이터에 사람이 갇혔어요", "갇힌 사람이 있어요"):
+            self.assertEqual(I.classify("R", t, 0, CFG).output["type"], "인명구조", t)
+
+    def test_merge_follow_up_and_different_subjects(self):
+        recs = [I.classify(f"M{i}", t, m * 60, CFG).output for i, (t, m) in enumerate(
+            [("Z4 맨홀 뚜껑이 떠올랐어요", 0), ("Z4 맨홀 뚜껑 아직 그대로예요", 5), ("Z4 쓰러진 나무가 길을 막았어요", 12),
+             ("Z2 대피소에 담요가 모자라요", 20), ("Z2 대피소 담요 아직 안 왔어요", 90), ("Z2 담요 보내 주세요", 200)])]
+        groups = sorted(sorted(g["members"]) for g in I.build_inbox(recs, CFG))
+        self.assertEqual(groups, [["M0", "M1"], ["M2"], ["M3", "M4"], ["M5"]])   # 대상이 다르면 따로, '아직'은 3시간 안이면 묶음
