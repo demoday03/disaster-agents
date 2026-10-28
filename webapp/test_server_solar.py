@@ -63,6 +63,7 @@ def start_app(port, db_path, groundedness=True):
         env["GROUNDEDNESS_MODEL"] = "fake-ground"
     else:
         env.pop("GROUNDEDNESS_MODEL", None)
+        env["VERIFY_MODEL"] = "fake-judge"   # 안내문 작성(fake-solar)과 다른 판정 모델
     proc = subprocess.Popen([sys.executable, "webapp/server.py"], cwd=ROOT, env=env,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     base = f"http://127.0.0.1:{port}"
@@ -253,12 +254,12 @@ class TestSolarPathJudgeFallback(SolarPathBase):
         status, g = self.guidance(iid, "f-judge")
         self.assertEqual(status, 200)
         self.assertNotIn("fake-ground", STATE["calls"])
-        self.assertEqual(STATE["calls"], ["fake-solar", "fake-solar"])   # 안내문 다듬기 + 판정
+        self.assertEqual(STATE["calls"], ["fake-solar", "fake-judge"])   # 안내문 다듬기(작성 모델) + 판정(다른 모델)
         self.assertEqual(g["output"]["verdict"], "grounded")
         self.assertIn("approval_id", g)
         _, q = self.get("/api/approvals")
         item = next(a for a in q["items"] if a["id"] == g["approval_id"])["item"]
-        self.assertEqual(item["verifier"], {"model": "fake-solar", "mode": "judge"})   # 담당자에게 같은 모델 판정임을 표시
+        self.assertEqual(item["verifier"], {"model": "fake-judge", "mode": "judge", "same_as_writer": False})
         STATE.update(verdict="notGrounded", label="사")
         status, g = self.guidance(iid, "f-judge-ng")
         self.assertEqual(status, 200)

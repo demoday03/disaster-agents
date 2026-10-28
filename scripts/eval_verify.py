@@ -4,7 +4,7 @@
   python scripts/eval_verify.py --rules-only      # API 없이 숫자 선검사만(나머지는 notSure)
   $env:UPSTAGE_API_KEY="..."; $env:GROUNDEDNESS_MODEL="콘솔에서_확인한_모델명"
   python scripts/eval_verify.py                   # 실제 모델 호출(문항 40개, 숫자 선검사로 막히는 7개를 빼고 33회)
-  GROUNDEDNESS_MODEL이 없으면 SOLAR_MODEL(기본 solar-pro4)이 판정한다.
+  GROUNDEDNESS_MODEL이 없으면 판정 모델(VERIFY_MODEL, 기본 solar-pro3)이 판정한다.
 
 결과는 시험 세트에 대한 측정일 뿐이며, 실제 안내의 정확성·안전성을 보증하지 않는다.
 """
@@ -43,7 +43,8 @@ def main():
     if client is None:
         print("주의: --rules-only는 모델 판정 없이 notSure로 보류한 결과라 실제 차단 성능이 아닙니다.")
     else:
-        mode = "Groundedness" if client.verify_mode == "groundedness" else "채팅 모델 판정"
+        mode = ("Groundedness" if client.verify_mode == "groundedness" else
+                "채팅 모델 판정" + (", 안내문 작성 모델과 같음" if client.same_as_writer else ""))
         print(f"모델={client.model} ({mode}), 호출 {client.calls}회")
     return 0 if res["block_rate"] >= EG.TARGET else 1
 

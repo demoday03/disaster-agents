@@ -35,10 +35,11 @@ if MODE == "solar" and not os.getenv("UPSTAGE_API_KEY"):
 # 서버 프로세스 전체의 호출 한도. 다 쓰면 재시작 전까지 규칙 폴백으로만 동작한다(/api/health의 llm_calls로 확인).
 LLM_MAX_CALLS = int(os.getenv("SOLAR_MAX_CALLS", "1000"))
 LLM = SolarClient(max_calls=LLM_MAX_CALLS) if MODE == "solar" else None
-# 검증 모델: GROUNDEDNESS_MODEL이 있으면 그 모델, 없으면 SOLAR_MODEL(기본 solar-pro4)이 판정한다.
+# 검증 모델: GROUNDEDNESS_MODEL이 있으면 그 모델, 없으면 판정 모델(VERIFY_MODEL, 기본 solar-pro3)이 지시문을 받아 판정한다.
 VERIFY_LLM = verify.make_client(max_calls=LLM_MAX_CALLS) if MODE == "solar" else None
-# 승인 카드에 표시할 검증 방식. judge는 Groundedness 모델이 없어 안내문을 쓴 것과 같은 Solar 모델이 판정했다는 뜻이다.
-VERIFIER_INFO = {"model": VERIFY_LLM.model, "mode": VERIFY_LLM.verify_mode} if VERIFY_LLM else None
+# 승인 카드에 표시할 검증 방식. judge는 Groundedness 모델 대신 채팅 모델이 지시문을 받아 판정했다는 뜻이고, same_as_writer면 안내문을 쓴 모델과 같은 모델이다.
+VERIFIER_INFO = ({"model": VERIFY_LLM.model, "mode": VERIFY_LLM.verify_mode, "same_as_writer": VERIFY_LLM.same_as_writer}
+                 if VERIFY_LLM else None)
 # 마이크로비트 게이트웨이 인증 토큰. 비어 있으면 실시간 센서 입력 경로를 닫아 둔다.
 SENSOR_TOKEN = os.getenv("SENSOR_GATEWAY_TOKEN", "").strip()
 if SENSOR_TOKEN and len(SENSOR_TOKEN) < 16:

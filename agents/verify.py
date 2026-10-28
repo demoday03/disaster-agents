@@ -1,9 +1,9 @@
 """⑦ 검증 에이전트. 안내문·지원제도 안내·필요 물품 안내가 근거 문서와 맞는지 확인한다.
 1) 규칙 선검사: 근거에 없는 숫자는 바로 차단(오프라인에서도 동작)
 2) 업스테이지 Groundedness Check: grounded / notGrounded / notSure
-   Groundedness 모델(GROUNDEDNESS_MODEL)이 없으면 Solar 채팅 모델(SOLAR_MODEL, 기본 solar-pro4)이 같은 세 판정으로 판단한다.
+   Groundedness 모델(GROUNDEDNESS_MODEL)이 없으면 안내문을 쓰는 모델과 다른 판정 모델(기본 solar-pro3)이 같은 세 판정으로 판단한다.
 실패·불확실은 모두 안전한 쪽(담당자 확인 또는 차단)으로 처리한다. 근거 문서 자체의 오류는 판단하지 못한다."""
-import os, re
+import json, os, re
 from common.llm import SolarClient
 from common.schema import AgentResult
 
@@ -17,11 +17,21 @@ JUDGE_PROMPT = ("너는 재난 안내문 검증기다. [근거]에 있는 내용
                 "다른 말 없이 grounded, notGrounded, notSure 중 한 단어만 출력하라.")
 
 
+def load_cfg(path="config/verify.json"):
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
 def make_client(**kw):
-    """검증용 SolarClient. GROUNDEDNESS_MODEL이 있으면 그 모델, 없으면 SOLAR_MODEL(기본 solar-pro4)로 판정한다."""
-    model = os.getenv("GROUNDEDNESS_MODEL", "").strip()
+    """검증용 SolarClient.
+    GROUNDEDNESS_MODEL(진짜 Groundedness 모델)이 있으면 그 모델로, 없으면 판정 모델(VERIFY_MODEL, 기본은
+    config/verify.json의 judge_model=solar-pro3)이 지시문을 받아 판정한다. 안내문을 쓰는 모델과 다른 모델을 써서
+    같은 모델이 자기 초안을 통과시키는 일을 줄인다. client.same_as_writer로 같은 모델인지 알려 준다."""
+    grounded = os.getenv("GROUNDEDNESS_MODEL", "").strip()
+    model = grounded or os.getenv("VERIFY_MODEL", "").strip() or load_cfg().get("judge_model")
     client = SolarClient(model=model or None, **kw)
-    client.verify_mode = "groundedness" if model else "judge"
+    client.verify_mode = "groundedness" if grounded else "judge"
+    client.same_as_writer = client.model == os.getenv("SOLAR_MODEL", "solar-pro4")
     return client
 
 

@@ -28,7 +28,7 @@
 ## 지금 비어 있거나 확정이 필요한 것
 - 감시 임계값(calibrated=false): 설치 점검에서 측정해 교체.
 - 안전 수치(연속 활동 시간·고온·체크인 지연)·활동 시간 상한: 공식 지침 확인 전이라 null → 규칙 미적용, '기준 미확정' 표시.
-- Groundedness 모델명: 콘솔 확인 후 `GROUNDEDNESS_MODEL`로 지정. 없으면 solar-pro4가 판정(`verify.make_client`). 선택 근거 검색(임베딩)은 미구현(문서 ID 매핑만).
+- 검증 모델: Upstage Groundedness Check는 2026-10-28 기준 이 계정 모델 목록에 없고 예전 이름은 'no longer supported'를 돌려준다. 그래서 안내문을 쓰는 모델(solar-pro4)과 다른 **solar-pro3**가 지시문을 받아 판정한다(`config/verify.json`의 `judge_model`, 환경변수 `VERIFY_MODEL`로 바꿈). 진짜 Groundedness 모델이 다시 생기면 `GROUNDEDNESS_MODEL`에 넣으면 그쪽을 쓴다. 선택 근거 검색(임베딩)은 미구현(문서 ID 매핑만).
 - 안내 문구(guidance.json)·물품 카탈로그·지원제도 규칙의 '확인 필요' 항목·as_of(기준일): 공식 자료로 교체·확인.
 - 업스테이지 문서 파싱: 연동 코드는 있으나 실제 API로는 아직 호출해 보지 않음. 주소·모델명(`DOCUMENT_PARSE_URL`·`DOCUMENT_PARSE_MODEL`)을 콘솔에서 확인해야 함.
 - 수요 1건에 여러 명이 필요한 인력 배치(④ 자체)는 ⑥·⑧ 쪽에서 반복 추천으로 처리.
@@ -60,8 +60,9 @@
 `data/eval/guidance_errors.json`에 오류 안내문 20종(근거와 다른 숫자 7, 한글로 쓴 숫자 2, 없는 제도 5, 위험한 행동 6)과 근거에 맞는 대조군 20종(근거를 다른 말로 풀어 쓴 문장, 근거 두 개를 합친 문장 포함)이 있다. 목표는 오류 문구의 90% 이상을 차단(`notGrounded`) 또는 보류(`notSure`)하는 것이다.
 
 - `python scripts/eval_verify.py --rules-only`: API 없이 실행. 숫자 선검사로 막히는 것은 7/20(35%)뿐이고 나머지는 검증 모델이 없어 `notSure`로 보류된다. 실제 차단 성능이 아니다.
-- `UPSTAGE_API_KEY`를 설정한 뒤 `python scripts/eval_verify.py`: 검증 모델(`GROUNDEDNESS_MODEL`, 없으면 solar-pro4)을 33회 호출해(숫자 선검사로 막히는 7건 제외) 차단·보류율과 대조군 통과율을 출력한다. 목표 미달이면 종료 코드 1.
-- 2026-10-28 solar-pro4 판정 결과(전체 3회, 한도 수정 전 2회 포함 5회): 오류 문구 차단 100%(20/20, 모두 notGrounded), 대조군 통과 95~100%(5회 중 1회 C13 "아기가 있는 반지하 가구는 기저귀와 분유를 챙겨 … 대피소로" 하나가 notGrounded). 대조군을 5건에서 20건으로 늘릴 때 스크립트의 호출 한도(30회)에 마지막 3건이 걸려 notSure로 나오던 문제를 고쳤다(한도 100회).
+- `UPSTAGE_API_KEY`를 설정한 뒤 `python scripts/eval_verify.py`: 검증 모델(기본 solar-pro3)을 33회 호출해(숫자 선검사로 막히는 7건 제외) 차단·보류율과 대조군 통과율을 출력한다. 목표 미달이면 종료 코드 1.
+- 2026-10-28 판정 모델 비교(검증 세트 40건): solar-pro3·solar-mini4·solar-pro4 모두 오류 차단 100%·정상 통과 100%, solar-decide는 판정 형식을 따르지 않아 정상 안내문을 전부 보류(0%). 안내문 작성 모델과 다른 solar-pro3를 기본으로 정했고, solar-pro3로 2회 더 재서 두 번 다 100%/100%였다.
+- 그 전 solar-pro4 판정 결과(전체 3회, 한도 수정 전 2회 포함 5회): 오류 문구 차단 100%(20/20, 모두 notGrounded), 대조군 통과 95~100%(5회 중 1회 C13 "아기가 있는 반지하 가구는 기저귀와 분유를 챙겨 … 대피소로" 하나가 notGrounded). 대조군을 5건에서 20건으로 늘릴 때 스크립트의 호출 한도(30회)에 마지막 3건이 걸려 notSure로 나오던 문제를 고쳤다(한도 100회).
 - `tests/test_guidance_errors.py`는 세트 형식과, 모델이 전부 `grounded`라고 답하는 최악의 경우에도 숫자 오류가 규칙으로 차단되는지를 오프라인으로 확인한다.
 
 ### 신고 데이터셋으로 접수 성능 측정 (제안서 D8·11.2)
@@ -164,10 +165,10 @@ python scripts/rehearse_demo.py            # 실패한 장면이 있으면 종�
 - 없는 구역 번호(예: Z99)는 '보완 필요'로 두고, 신고 내용 문제로 연결을 못 한 경우는 에이전트를 수동 처리로 바꾸지 않는다.
 - 보완은 3번까지 받는다. 보완에 구역을 하나 적으면 원문의 모호한 구역보다 우선한다. 보완 내용은 원문 길이와 관계없이 잘리지 않는다.
 - 접수번호로 보는 공개 응답에는 담당자 메모·오접수 처리자·사유를 넣지 않는다(담당자 목록에서만 보임).
-- Groundedness 모델 없이 solar-pro4가 안내문을 판정한 경우, 승인 카드에 '안내문을 쓴 모델이 직접 판정'이라고 표시해 담당자가 근거 원문과 직접 대조하게 한다.
+- 승인 카드에 어떤 모델이 판정했는지 표시한다. 판정 모델을 안내문 작성 모델과 같게 설정한 경우(`VERIFY_MODEL=solar-pro4`)에는 '안내문을 쓴 모델이 직접 판정 · 근거 원문과 직접 대조하세요'로 경고한다.
 
 ### 안내문 승인 흐름 (현재 구현)
-- mock 모드면 AI 안내문을 만들지 않고 표준 원문만 반환합니다. solar 모드에서 `GROUNDEDNESS_MODEL`이 없으면 `SOLAR_MODEL`(기본 solar-pro4)이 같은 세 판정으로 검증합니다.
+- mock 모드면 AI 안내문을 만들지 않고 표준 원문만 반환합니다. solar 모드에서 `GROUNDEDNESS_MODEL`이 없으면 판정 모델(기본 solar-pro3)이 같은 세 판정으로 검증합니다.
 - 검증 판정은 응답이 정확히 `grounded`/`notGrounded`/`notSure`일 때만 인정합니다. 그 밖의 문장(예: "not grounded")은 `notSure`로 처리합니다.
 - `grounded`만 승인 대기열(`welfare_guidance`)에 들어갑니다. API 응답에는 승인 전 AI 문구를 넣지 않고 표준 원문만 담으며(`ai_text_withheld: true`), 초안은 승인 대기열 항목에서만 볼 수 있습니다.
 - `notSure`(모호한 판정, 검증 호출 실패, 근거 길이 초과 포함)는 표준 원문을 반환하고, 초안을 `welfare_guidance_review`(담당자 확인) 항목으로 승인 대기열에 올립니다. 응답에는 `review_id`가 붙습니다.

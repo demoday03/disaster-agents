@@ -57,9 +57,14 @@ class TestVerify(unittest.TestCase):
         import os
         from unittest import mock
         with mock.patch.dict(os.environ, {"SOLAR_MODEL": "solar-pro4"}):
-            os.environ.pop("GROUNDEDNESS_MODEL", None)
+            os.environ.pop("GROUNDEDNESS_MODEL", None); os.environ.pop("VERIFY_MODEL", None)
             c = V.make_client()
-        self.assertEqual((c.model, c.verify_mode), ("solar-pro4", "judge"))
+        # 기본 판정 모델은 안내문 작성 모델(solar-pro4)과 다른 solar-pro3
+        self.assertEqual((c.model, c.verify_mode, c.same_as_writer), ("solar-pro3", "judge", False))
+        with mock.patch.dict(os.environ, {"SOLAR_MODEL": "solar-pro4", "VERIFY_MODEL": "solar-pro4"}):
+            os.environ.pop("GROUNDEDNESS_MODEL", None)
+            same = V.make_client()
+        self.assertEqual((same.model, same.same_as_writer), ("solar-pro4", True))
         calls = []
         c.transport = lambda u, h, b, t: calls.append(b) or {"choices": [{"message": {"content": "notGrounded"}}]}
         self.assertEqual(V.verify_text("대피소는 학교입니다", "대피소는 체육관", c)[0], "notGrounded")
