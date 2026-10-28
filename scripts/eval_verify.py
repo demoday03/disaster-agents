@@ -3,7 +3,7 @@
 실행 예(프로젝트 루트에서):
   python scripts/eval_verify.py --rules-only      # API 없이 숫자 선검사만(나머지는 notSure)
   $env:UPSTAGE_API_KEY="..."; $env:GROUNDEDNESS_MODEL="콘솔에서_확인한_모델명"
-  python scripts/eval_verify.py                   # 실제 Groundedness 모델 호출(문항 25개, 25회)
+  python scripts/eval_verify.py                   # 실제 모델 호출(문항 40개, 숫자 선검사로 막히는 7개를 빼고 33회)
   GROUNDEDNESS_MODEL이 없으면 SOLAR_MODEL(기본 solar-pro4)이 판정한다.
 
 결과는 시험 세트에 대한 측정일 뿐이며, 실제 안내의 정확성·안전성을 보증하지 않는다.
@@ -31,7 +31,7 @@ def main():
             print("오류: UPSTAGE_API_KEY(또는 SOLAR_BASE_URL)를 설정하거나 --rules-only로 실행하세요.",
                   file=sys.stderr)
             return 2
-        client = verify.make_client(timeout=15, max_calls=30)
+        client = verify.make_client(timeout=15, max_calls=100)   # 세트(오류 20 + 대조군 20)보다 넉넉하게. 한도에 걸리면 notSure로 왜곡된다
 
     data, docs = EG.load()
     res = EG.evaluate(client, data, docs)

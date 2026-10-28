@@ -57,10 +57,11 @@
 
 ### 오류 안내문 세트로 검증 차단율 측정 (제안서 11.2·11.3)
 
-`data/eval/guidance_errors.json`에 오류 안내문 20종(근거와 다른 숫자 7, 한글로 쓴 숫자 2, 없는 제도 5, 위험한 행동 6)과 근거에 맞는 대조군 5종이 있다. 목표는 오류 문구의 90% 이상을 차단(`notGrounded`) 또는 보류(`notSure`)하는 것이다.
+`data/eval/guidance_errors.json`에 오류 안내문 20종(근거와 다른 숫자 7, 한글로 쓴 숫자 2, 없는 제도 5, 위험한 행동 6)과 근거에 맞는 대조군 20종(근거를 다른 말로 풀어 쓴 문장, 근거 두 개를 합친 문장 포함)이 있다. 목표는 오류 문구의 90% 이상을 차단(`notGrounded`) 또는 보류(`notSure`)하는 것이다.
 
 - `python scripts/eval_verify.py --rules-only`: API 없이 실행. 숫자 선검사로 막히는 것은 7/20(35%)뿐이고 나머지는 검증 모델이 없어 `notSure`로 보류된다. 실제 차단 성능이 아니다.
-- `UPSTAGE_API_KEY`를 설정한 뒤 `python scripts/eval_verify.py`: 검증 모델(`GROUNDEDNESS_MODEL`, 없으면 solar-pro4)을 최대 25회 호출해 차단·보류율과 대조군 통과율을 출력한다. 목표 미달이면 종료 코드 1.
+- `UPSTAGE_API_KEY`를 설정한 뒤 `python scripts/eval_verify.py`: 검증 모델(`GROUNDEDNESS_MODEL`, 없으면 solar-pro4)을 33회 호출해(숫자 선검사로 막히는 7건 제외) 차단·보류율과 대조군 통과율을 출력한다. 목표 미달이면 종료 코드 1.
+- 2026-10-28 solar-pro4 판정 결과(5회 실행): 오류 문구 차단 100%(20/20, 모두 notGrounded), 대조군 통과 95~100%(가끔 C13 "아기가 있는 반지하 가구는 기저귀와 분유를 챙겨 … 대피소로" 하나가 notGrounded). 대조군을 5건에서 20건으로 늘릴 때 스크립트의 호출 한도(30회)에 마지막 3건이 걸려 notSure로 나오던 문제를 고쳤다(한도 100회).
 - `tests/test_guidance_errors.py`는 세트 형식과, 모델이 전부 `grounded`라고 답하는 최악의 경우에도 숫자 오류가 규칙으로 차단되는지를 오프라인으로 확인한다.
 
 ### 신고 데이터셋으로 접수 성능 측정 (제안서 D8·11.2)
