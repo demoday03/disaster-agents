@@ -125,6 +125,9 @@ class TestDashboardServer(ServerBase):
             self.assertIn(b'id="guidanceForm"', page)   # 안내문 생성 폼
         with urllib.request.urlopen(self.base + '/login', timeout=2) as r:
             self.assertIn(b'id="loginForm"', r.read())
+        with urllib.request.urlopen(self.base + '/static/admin_ops.js', timeout=2) as r:
+            self.assertIn('javascript', r.headers['Content-Type']); self.assertIn(b'opsInit', r.read())
+        self.assertEqual(self.get('/static/../server.py')[0], 404)   # 정해진 파일만 제공
 
     def test_receipt_status_lookup(self):
         anon = Client(self.base)   # 신고 접수와 접수번호 조회는 로그인 없이 가능
@@ -300,6 +303,100 @@ class TestAuth(ServerBase):
         self.assertEqual(c.get('/api/me')[1]['username'], '담당자')
         self.assertEqual(c.post('/api/logout', {})[0], 200)
         self.assertEqual(c.get('/api/me')[0], 401)   # 서버 쪽 세션도 삭제됨
+
+
+class TestDispatch(ServerBase):
+    """배치 추천(④) API: 추천 → 승인 대기열 → 승인(재검사) → 투입 현황 → 해제."""
+    port = 18770
+
+    def setUp(self):   # 테스트끼리 같은 서버를 쓰므로 앞 테스트의 투입을 모두 해제하고 시작
+        for a in self.get('/api/dispatch')[1]['assignments']:
+            self.post(f"/api/dispatch/{a['id']}/release", {})
+
+    def incident(self, text):
+        status, d = self.post('/api/incidents', {'text': text})
+        self.assertEqual(status, 201, d)
+        return d['output']['id']
+
+    def dispatch(self, iid, **body):
+        return self.post(f'/api/incidents/{iid}/dispatch', body)
+
+    def approve(self, aid):
+        return self.post(f'/api/approvals/{aid}/resolve', {'approved': True, 'reason': '배치 시험'})
+
+    def test_public_flow_and_busy_resource_excluded(self):
+        a = self.incident('Z1 지하에 사람이 갇혀 있어요 (배치 시험 1)')
+        status, r = self.dispatch(a, kind='public')
+        self.assertEqual(status, 200)
+        self.assertEqual(r['output']['top']['id'], 'P01')          # 같은 구역·구조 역량
+        self.assertEqual(len(r['output']['alternatives']), 2)
+        self.assertTrue(r['output']['top']['name'])
+        self.assertEqual(self.get('/api/dispatch')[1]['assignments'], [])   # 승인 전에는 반영 없음
+        self.assertEqual(self.approve(r['approval_id'])[0], 200)
+        _, st = self.get('/api/dispatch')
+        self.assertEqual([x['id'] for x in st['assignments']], [r['approval_id']])
+        self.assertFalse(next(p for p in st['public'] if p['id'] == 'P01')['available'])
+        b = self.incident('Z1 사람이 갇혀 있어요 다른 건물 (배치 시험 2)')
+        _, r2 = self.dispatch(b, kind='public')
+        self.assertNotEqual(r2['output']['top']['id'], 'P01')       # 투입 중인 자원은 후보에서 제외
+        self.assertIn('P01', [e['id'] for e in r2['output']['excluded']])
+        self.assertEqual(self.post(f"/api/dispatch/{r['approval_id']}/release", {})[0], 200)
+        self.assertEqual(self.post(f"/api/dispatch/{r['approval_id']}/release", {})[0], 409)   # 이미 해제
+        self.assertTrue(next(p for p in self.get('/api/dispatch')[1]['public'] if p['id'] == 'P01')['available'])
+
+    def test_double_booking_blocked_at_approval(self):
+        a = self.incident('Z2 상가에 사람이 갇혀 있어요 (이중 투입 시험 1)')
+        b = self.incident('Z2 상가 2층에 사람이 갇혀 있어요 (이중 투입 시험 2)')
+        _, ra = self.dispatch(a, kind='public'); _, rb = self.dispatch(b, kind='public')
+        self.assertEqual(ra['output']['top']['id'], rb['output']['top']['id'])   # 둘 다 같은 1순위
+        self.assertEqual(self.approve(ra['approval_id'])[0], 200)
+        status, err = self.approve(rb['approval_id'])
+        self.assertEqual(status, 409); self.assertIn('이미 다른 배치', err['error'])
+        self.assertIn(rb['approval_id'], [x['id'] for x in self.get('/api/approvals')[1]['items']])   # 대기 상태 유지
+
+    def test_reject_then_recommend_excludes_rejected_top(self):
+        iid = self.incident('Z3 반지하 침수됐어요 (재추천 시험)')
+        _, r = self.dispatch(iid, kind='public')
+        first = r['output']['top']['id']
+        self.assertEqual(self.post(f"/api/approvals/{r['approval_id']}/resolve",
+                                   {'approved': False, 'reason': '다른 현장 우선'})[0], 200)
+        _, r2 = self.dispatch(iid, kind='public')
+        self.assertNotEqual(r2['output']['top']['id'], first)
+        self.assertIn('담당자 거절로 제외', {x['id']: x['reasons'] for x in r2['output']['excluded']}[first])
+
+    def test_control_zone_route_excluded(self):
+        iid = self.incident('Z6 논두렁에 사람이 고립됐어요 (통제 구간 시험)')
+        _, r = self.dispatch(iid, kind='public')
+        reasons = {x['id']: x['reasons'] for x in r['output']['excluded']}
+        self.assertIn('통제 구간 경유', reasons.get('P01', []))     # Z1↔Z6 하천변 통제
+
+    def test_shelter_capacity_updates_after_approval(self):
+        iid = self.incident('Z4 학교 앞 주택 침수 대피 필요 (대피소 시험)')
+        _, r = self.dispatch(iid, kind='shelter', people=10, amenities=['엘리베이터'])
+        self.assertEqual(r['output']['top']['id'], 'S4')
+        before = next(s for s in self.get('/api/dispatch')[1]['shelters'] if s['id'] == 'S4')['capacity_left']
+        self.assertEqual(self.approve(r['approval_id'])[0], 200)
+        after = next(s for s in self.get('/api/dispatch')[1]['shelters'] if s['id'] == 'S4')['capacity_left']
+        self.assertEqual(before - after, 10)
+
+    def test_validation_and_auth(self):
+        iid = self.incident('Z5 뒷산 토사 유출 (검증 시험)')
+        self.assertEqual(self.dispatch(iid, kind='helicopter')[0], 400)
+        _, first = self.dispatch(iid, kind='public')
+        status, dup = self.dispatch(iid, kind='public')   # 대기 중인 추천이 있으면 중복 생성 안 함
+        self.assertEqual((status, dup['approval_id']), (409, first['approval_id']))
+        self.assertEqual(self.dispatch(iid, kind='shelter', people=0)[0], 400)
+        self.assertEqual(self.dispatch(iid, kind='shelter', people=3, amenities=['수영장'])[0], 400)
+        self.assertEqual(self.dispatch('R-NOPE', kind='public')[0], 404)
+        supply = self.incident('Z1 생수랑 담요 보내주세요 (물품 시험)')
+        self.assertEqual(self.dispatch(supply, kind='public')[0], 400)   # 물품 요청은 ⑧ 몫
+        nozone = self.incident('어딘지 모르겠는데 사람이 갇혀 있어요 (구역 미상 시험)')
+        self.assertEqual(self.dispatch(nozone, kind='public')[0], 400)
+        self.assertEqual(self.post('/api/dispatch/AP-NOPE/release', {})[0], 404)
+        anon = Client(self.base)
+        self.assertEqual(anon.get('/api/dispatch')[0], 401)
+        self.assertEqual(anon.post(f'/api/incidents/{iid}/dispatch', {'kind': 'public'})[0], 401)
+        self.assertEqual(self.staff.post(f'/api/incidents/{iid}/dispatch', {'kind': 'public'}, csrf=False)[0], 403)
 
 
 if __name__=='__main__': unittest.main()

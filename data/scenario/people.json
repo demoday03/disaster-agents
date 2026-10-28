@@ -1,0 +1,41 @@
+{
+  "_note": "제안서 D6(가구 20)·D7(봉사자 12). 모두 가상이며 이름·주소·연락처 대신 코드만 쓴다(제안서 7.4-2). 가구의 factors는 취약 요인 범주, 봉사자의 available_min은 오늘 남은 가능 시간(분).",
+  "source": "가상 시나리오 데이터(제안서 7.1 기준으로 작성)",
+  "as_of": "2026-10-28",
+  "households": [
+    {"id": "H01", "zone": "Z1", "floor": "1층",   "factors": [],                 "members": 2, "contact": "문자", "consent": true},
+    {"id": "H02", "zone": "Z1", "floor": "반지하", "factors": ["반지하"],         "members": 3, "contact": "전화", "consent": true},
+    {"id": "H03", "zone": "Z2", "floor": "2층 이상", "factors": [],               "members": 1, "contact": "앱", "consent": true},
+    {"id": "H04", "zone": "Z2", "floor": "1층",   "factors": ["고령"],           "members": 1, "contact": "전화", "consent": true},
+    {"id": "H05", "zone": "Z3", "floor": "반지하", "factors": ["반지하", "영유아"], "members": 4, "contact": "앱", "consent": true},
+    {"id": "H06", "zone": "Z3", "floor": "반지하", "factors": ["반지하", "거동 불편"], "members": 2, "contact": "전화", "consent": true},
+    {"id": "H07", "zone": "Z3", "floor": "2층 이상", "factors": [],               "members": 3, "contact": "문자", "consent": true},
+    {"id": "H08", "zone": "Z4", "floor": "1층",   "factors": ["영유아"],         "members": 3, "contact": "앱", "consent": true},
+    {"id": "H09", "zone": "Z4", "floor": "2층 이상", "factors": [],               "members": 2, "contact": "문자", "consent": true},
+    {"id": "H10", "zone": "Z5", "floor": "1층",   "factors": ["고령", "거동 불편"], "members": 1, "contact": "전화", "consent": true},
+    {"id": "H11", "zone": "Z5", "floor": "1층",   "factors": [],                 "members": 4, "contact": "앱", "consent": true},
+    {"id": "H12", "zone": "Z6", "floor": "1층",   "factors": ["고령"],           "members": 2, "contact": "전화", "consent": true},
+    {"id": "H13", "zone": "Z6", "floor": "1층",   "factors": [],                 "members": 3, "contact": "문자", "consent": true},
+    {"id": "H14", "zone": "Z7", "floor": "1층",   "factors": ["임신"],           "members": 2, "contact": "앱", "consent": true},
+    {"id": "H15", "zone": "Z7", "floor": "2층 이상", "factors": [],               "members": 1, "contact": "문자", "consent": true},
+    {"id": "H16", "zone": "Z8", "floor": "1층",   "factors": ["고령"],           "members": 1, "contact": "전화", "consent": true},
+    {"id": "H17", "zone": "Z8", "floor": "2층 이상", "factors": [],               "members": 4, "contact": "앱", "consent": true},
+    {"id": "H18", "zone": "Z9", "floor": "1층",   "factors": [],                 "members": 2, "contact": "문자", "consent": true},
+    {"id": "H19", "zone": "Z10", "floor": "1층",  "factors": ["거동 불편"],      "members": 2, "contact": "전화", "consent": true},
+    {"id": "H20", "zone": "Z10", "floor": "1층",  "factors": [],                 "members": 3, "contact": "문자", "consent": false}
+  ],
+  "volunteers": [
+    {"id": "V01", "zone": "Z1",  "skills": ["토사", "운반"], "equipment": ["삽"],              "available_min": 300, "mode": "작업"},
+    {"id": "V02", "zone": "Z2",  "skills": ["청소"],         "equipment": ["고무장갑"],        "available_min": 240, "mode": "작업"},
+    {"id": "V03", "zone": "Z3",  "skills": ["토사"],         "equipment": ["삽", "고무장갑"],  "available_min": 180, "mode": "둘 다"},
+    {"id": "V04", "zone": "Z3",  "skills": ["청소", "운반"], "equipment": ["고무장갑"],        "available_min": 300, "mode": "작업"},
+    {"id": "V05", "zone": "Z4",  "skills": ["운반"],         "equipment": [],                  "available_min": 120, "mode": "작업"},
+    {"id": "V06", "zone": "Z5",  "skills": ["토사", "청소"], "equipment": ["삽"],              "available_min": 360, "mode": "작업"},
+    {"id": "V07", "zone": "Z6",  "skills": ["청소"],         "equipment": ["고무장갑"],        "available_min": 180, "mode": "둘 다"},
+    {"id": "V08", "zone": "Z7",  "skills": ["토사", "운반"], "equipment": ["삽"],              "available_min": 240, "mode": "작업"},
+    {"id": "V09", "zone": "Z8",  "skills": ["운반", "청소"], "equipment": ["고무장갑"],        "available_min": 300, "mode": "작업"},
+    {"id": "V10", "zone": "Z8",  "skills": ["토사"],         "equipment": ["삽"],              "available_min": 90,  "mode": "작업"},
+    {"id": "V11", "zone": "Z9",  "skills": ["청소"],         "equipment": [],                  "available_min": 240, "mode": "기부"},
+    {"id": "V12", "zone": "Z10", "skills": ["운반", "토사"], "equipment": ["삽", "고무장갑"],  "available_min": 300, "mode": "둘 다"}
+  ]
+}

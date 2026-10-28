@@ -13,9 +13,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.chdir(ROOT)
 from common.llm import SolarClient
-from agents import intake, monitor, welfare, verify
+from common import scenario
+from agents import dispatch, intake, monitor, welfare, verify
 from coordinator import Coordinator
 from database import db as database
+from webapp import features
 
 HOST = os.getenv("WEBAPP_HOST", "127.0.0.1")
 PORT = int(os.getenv("WEBAPP_PORT", "8765"))
@@ -66,11 +68,11 @@ AGENTS = [
     {"id": "monitor", "name": "감시", "mode": "규칙 기반", "status": "demo-ready"},
     {"id": "intake", "name": "신고 접수", "mode": "규칙 + 선택적 LLM", "status": "demo-ready"},
     {"id": "welfare", "name": "안부·안내", "mode": "규칙 기반 + 선택적 LLM", "status": "demo-ready"},
-    {"id": "dispatch", "name": "배치 추천", "mode": "규칙 기반", "status": "not-wired"},
-    {"id": "recovery", "name": "복구·지원", "mode": "규칙 + 선택적 LLM", "status": "not-wired"},
-    {"id": "volunteer", "name": "봉사 코디", "mode": "규칙 + 선택적 LLM", "status": "not-wired"},
-    {"id": "verify", "name": "내용 검증", "mode": "규칙 + 선택적 LLM", "status": "not-wired"},
-    {"id": "supply", "name": "물품 수급", "mode": "규칙 + 선택적 LLM", "status": "not-wired"},
+    {"id": "dispatch", "name": "배치 추천", "mode": "규칙 기반", "status": "demo-ready"},
+    {"id": "recovery", "name": "복구·지원", "mode": "규칙 + 선택적 LLM", "status": "demo-ready"},
+    {"id": "volunteer", "name": "봉사 코디", "mode": "규칙 + 선택적 LLM", "status": "demo-ready"},
+    {"id": "verify", "name": "내용 검증", "mode": "규칙 + 선택적 LLM", "status": "demo-ready"},
+    {"id": "supply", "name": "물품 수급", "mode": "규칙 + 선택적 LLM", "status": "demo-ready"},
 ]
 
 def json_bytes(obj):
@@ -78,6 +80,61 @@ def json_bytes(obj):
 
 def result_dict(result):
     return result.to_dict() if hasattr(result, "to_dict") else result
+
+SCENARIO = scenario.load()
+DISPATCH_CFG = dispatch.load_config()
+TRAVEL = scenario.travel_ctx(SCENARIO)
+FEATURE_PREFIXES = ("/api/stage", "/api/welfare/", "/api/verify", "/api/recovery", "/api/volunteer", "/api/supply")
+_dispatch_lock = threading.Lock()   # 배치 승인 직전 재검사와 승인 기록을 한 번에(같은 자원 이중 투입 방지)
+
+
+def dispatch_state():
+    """승인되고 해제되지 않은 배치로 현재 투입 중인 공공 인력과 대피소별 배정 인원을 계산한다."""
+    busy, assigned = {}, {}
+    for a in database.list_dispatch_approvals():
+        top = (a["item"].get("recommendation") or {}).get("top") or {}
+        if a["kind"] == "dispatch_public" and top.get("id"):
+            busy[top["id"]] = a
+        elif a["kind"] == "dispatch_shelter" and top.get("id"):
+            assigned[top["id"]] = assigned.get(top["id"], 0) + a["item"]["demand"]["people"]
+    return busy, assigned
+
+
+def recommend_dispatch(incident_id, kind, data):
+    output = database.get_incident(incident_id)["result"]["output"]
+    busy, assigned = dispatch_state()
+    if kind == "public":
+        demand = scenario.public_demand(output, SCENARIO)
+        candidates = scenario.public_candidates(SCENARIO, set(busy))
+        dkind = "public"
+    else:
+        demand = scenario.shelter_demand(output, SCENARIO, data.get("people"), data.get("amenities", []))
+        candidates = scenario.shelter_candidates(SCENARIO, assigned)
+        dkind = "shelter"
+    # 같은 신고·같은 배치 종류에서 담당자가 거절한 1순위는 제외하고 다시 추천(제안서 5.7 거절 → 재추천)
+    rejected = {((a["item"].get("recommendation") or {}).get("top") or {}).get("id")
+                for a in database.list_dispatch_approvals(states=("rejected",), include_released=True)
+                if a["incident_id"] == incident_id and a["kind"] == "dispatch_" + kind}
+    result = dispatch.recommend(dkind, demand, candidates, TRAVEL, DISPATCH_CFG, exclude=rejected - {None})
+    return demand, result_dict(result)
+
+
+def recheck_dispatch(approval):
+    """승인 직전 재검사. 그사이 같은 자원이 다른 배치에 투입됐거나 수용량이 찼으면 사유를 돌려준다."""
+    top = (approval["item"].get("recommendation") or {}).get("top") or {}
+    busy, assigned = dispatch_state()
+    if approval["kind"] == "dispatch_public":
+        if top.get("id") in busy:
+            return f"{top['id']}는 이미 다른 배치({busy[top['id']]['incident_id']})에 투입되어 있습니다. 다시 추천하세요"
+    elif approval["kind"] == "dispatch_shelter":
+        shelter = next((s for s in scenario.shelter_candidates(SCENARIO, assigned) if s["id"] == top.get("id")), None)
+        if shelter is None or shelter["capacity_left"] < approval["item"]["demand"]["people"]:
+            return f"{top.get('id')}의 남은 수용량이 부족합니다. 다시 추천하세요"
+    return None
+
+
+FEATURES = features.Features(database, SCENARIO, TRAVEL, DISPATCH_CFG, GUIDANCE_CFG, LLM, VERIFY_LLM)
+
 
 def public_guidance(incident_id):
     """접수 사이트에 내보낼 안내문. 검증 통과(grounded) + 담당자 승인 건만, 표시 직전에 조건을 다시 확인한다."""
@@ -153,11 +210,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Security-Policy", "default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'")
         self.end_headers(); self.wfile.write(body)
 
-    def send_html(self, filename="report.html"):
+    def send_html(self, filename="report.html", content_type="text/html; charset=utf-8"):
         path = ROOT / "webapp" / filename
         body = path.read_bytes()
         self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -172,6 +229,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_html("admin.html")
         if path == "/login":
             return self.send_html("login.html")
+        if path == "/static/admin_ops.js":   # 정해진 파일만 제공(경로 조작 방지)
+            return self.send_html("admin_ops.js", "application/javascript; charset=utf-8")
         if path == "/api/me":
             _, s = self.session()
             if s is None:
@@ -199,6 +258,20 @@ class Handler(BaseHTTPRequestHandler):
             if not self.require_staff():
                 return
             return self.send_json(200, {"items": database.list_pending_approvals()})
+        if path.startswith(FEATURE_PREFIXES):   # ①③⑤⑥⑦⑧ 현장 운영 기능(webapp/features.py)
+            if not self.require_staff():
+                return
+            res = FEATURES.get(path)
+            return self.send_json(*res) if res else self.send_json(404, {"error": "찾을 수 없는 경로입니다"})
+        if path == "/api/dispatch":   # 현재 투입 현황과 자원·대피소 상태
+            if not self.require_staff():
+                return
+            busy, assigned = dispatch_state()
+            return self.send_json(200, {
+                "assignments": database.list_dispatch_approvals(),
+                "public": scenario.public_candidates(SCENARIO, set(busy)),
+                "shelters": scenario.shelter_candidates(SCENARIO, assigned),
+                "control_zones": SCENARIO["control_zones"]})
         return self.send_json(404, {"error": "찾을 수 없는 경로입니다"})
 
     def do_POST(self):
@@ -229,6 +302,58 @@ class Handler(BaseHTTPRequestHandler):
                         return self.send_json(403, {"error": "보안 토큰(CSRF)이 올바르지 않습니다"})
                     database.delete_session(token)
                 return self.send_json(200, {"ok": True}, headers={"Set-Cookie": session_cookie("", 0)})
+            if path.startswith(FEATURE_PREFIXES):
+                s = self.require_staff(check_csrf=True)
+                if not s:
+                    return
+                try:
+                    res = FEATURES.post(path, {**data, "_by": s["username"]})   # 처리자는 로그인 계정
+                except KeyError:
+                    return self.send_json(404, {"error": "대상을 찾을 수 없습니다"})
+                except features.Conflict as e:
+                    return self.send_json(409, {"error": str(e)})
+                return self.send_json(*res) if res else self.send_json(404, {"error": "찾을 수 없는 경로입니다"})
+            if path.startswith("/api/incidents/") and path.endswith("/dispatch"):
+                if not self.require_staff(check_csrf=True):
+                    return
+                parts = path.strip("/").split("/")
+                if len(parts) != 4:
+                    return self.send_json(404, {"error": "찾을 수 없는 경로입니다"})
+                incident_id, kind = parts[2], data.get("kind")
+                if not incident_id or len(incident_id) > 40:
+                    return self.send_json(400, {"error": "접수번호 형식이 올바르지 않습니다"})
+                if kind not in scenario.KINDS:
+                    return self.send_json(400, {"error": f"kind는 {list(scenario.KINDS)} 중 하나여야 합니다"})
+                if database.get_incident(incident_id) is None:
+                    return self.send_json(404, {"error": "접수번호를 찾을 수 없습니다"})
+                waiting = next((a["id"] for a in database.list_pending_approvals()
+                                if a["kind"] == "dispatch_" + kind and a["item"].get("incident_id") == incident_id), None)
+                if waiting:   # 같은 신고에 같은 종류의 추천이 이미 대기 중이면 중복으로 올리지 않는다
+                    return self.send_json(409, {"error": f"이 신고에는 승인 대기 중인 배치 추천({waiting})이 있습니다. 먼저 승인하거나 거절하세요",
+                                                "approval_id": waiting})
+                demand, row = recommend_dispatch(incident_id, kind, data)   # 입력 오류는 ValueError → 400
+                out = row["output"]
+                names = scenario.names(SCENARIO)
+                for r in [out.get("top")] + out.get("alternatives", []):
+                    if r:
+                        r["name"] = names.get(r["id"], r["id"])
+                if out.get("top"):   # 후보가 있을 때만 승인 대기열에. 없으면 부족 사실과 선택지만 돌려준다
+                    row["approval_id"] = database.create_approval(
+                        "dispatch_" + kind, {"incident_id": incident_id, "kind": kind, "demand": demand,
+                                             "recommendation": out}, incident_id=incident_id)["id"]
+                row["incident_id"] = incident_id
+                return self.send_json(200, row)
+            if path.startswith("/api/dispatch/") and path.endswith("/release"):
+                s = self.require_staff(check_csrf=True)
+                if not s:
+                    return
+                try:
+                    database.release_dispatch(path.split("/")[-2], s["username"], s["user_id"])
+                except KeyError:
+                    return self.send_json(404, {"error": "배치 항목을 찾을 수 없습니다"})
+                except ValueError as e:
+                    return self.send_json(409, {"error": str(e)})
+                return self.send_json(200, {"ok": True})
             if path.startswith("/api/incidents/") and path.endswith("/guidance"):
                 if not self.require_staff(check_csrf=True):
                     return
@@ -377,8 +502,17 @@ class Handler(BaseHTTPRequestHandler):
                 if approved and (not isinstance(reason, str) or not reason.strip()):
                     return self.send_json(400, {"error": "승인 시 사유를 입력해야 합니다"})
                 try:   # 처리자는 요청 본문이 아니라 로그인한 계정으로 기록한다
-                    result = database.resolve_approval(aid, approved, s["username"], (reason or "").strip(),
-                                                       s["user_id"])
+                    with _dispatch_lock:
+                        current = database.get_approval(aid)
+                        if approved and current and current["state"] == "pending":
+                            problem = (recheck_dispatch(current) if current["kind"].startswith("dispatch_")
+                                       else FEATURES.before_approve(current))
+                            if problem:
+                                return self.send_json(409, {"error": problem})
+                        result = database.resolve_approval(aid, approved, s["username"], (reason or "").strip(),
+                                                           s["user_id"])
+                        with FEATURES.lock:   # 승인 결과 반영(단계 확정, 봉사 투입, 물품 출고·예약 해제)
+                            FEATURES.after_resolve(current, approved, s)
                 except KeyError:
                     return self.send_json(404, {"error": "승인 요청을 찾을 수 없습니다"})
                 except ValueError as e:

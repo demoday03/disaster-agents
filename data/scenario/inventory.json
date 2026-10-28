@@ -1,0 +1,41 @@
+{
+  "_note": "제안서 D17(재고 6곳)·D19(기부 약속 10건). 모두 가상이다. days_left는 유통기한까지 남은 일수(유통기한이 없는 물품은 null, 음수는 기한 경과). 서버 첫 실행 때 이 값을 DB로 옮기고, 이후 재고는 승인된 출고로만 줄어든다. 기부는 담당자 검수로 '접수 가능'이 되어야 매칭 대상이 된다.",
+  "source": "가상 시나리오 데이터(제안서 7.1 기준으로 작성)",
+  "as_of": "2026-10-28",
+  "locations": [
+    {"id": "L1", "name": "가람초등학교 체육관(가상)", "zone": "Z2"},
+    {"id": "L2", "name": "누리 종합사회복지관(가상)", "zone": "Z4"},
+    {"id": "L3", "name": "한빛중학교 강당(가상)",     "zone": "Z8"},
+    {"id": "L4", "name": "시 구호물품 창고(가상)",    "zone": "Z6"},
+    {"id": "L5", "name": "주민자치센터(가상)",        "zone": "Z3"},
+    {"id": "L6", "name": "바다 숙박시설(가상)",       "zone": "Z9"}
+  ],
+  "stock": [
+    {"id": "ST01", "location": "L4", "item": "생수",     "qty": 300, "days_left": 180},
+    {"id": "ST02", "location": "L1", "item": "생수",     "qty": 40,  "days_left": 5},
+    {"id": "ST03", "location": "L4", "item": "즉석밥",   "qty": 120, "days_left": 60},
+    {"id": "ST04", "location": "L2", "item": "기저귀",   "qty": 60,  "days_left": null},
+    {"id": "ST05", "location": "L2", "item": "분유",     "qty": 6,   "days_left": 90},
+    {"id": "ST06", "location": "L5", "item": "마스크",   "qty": 200, "days_left": null},
+    {"id": "ST07", "location": "L4", "item": "담요",     "qty": 80,  "days_left": null},
+    {"id": "ST08", "location": "L3", "item": "담요",     "qty": 15,  "days_left": null},
+    {"id": "ST09", "location": "L3", "item": "손전등",   "qty": 10,  "days_left": null},
+    {"id": "ST10", "location": "L6", "item": "보조배터리", "qty": 8, "days_left": null},
+    {"id": "ST11", "location": "L4", "item": "삽",       "qty": 12,  "days_left": null},
+    {"id": "ST12", "location": "L4", "item": "고무장갑", "qty": 50,  "days_left": null},
+    {"id": "ST13", "location": "L1", "item": "즉석밥",   "qty": 20,  "days_left": -2},
+    {"id": "ST14", "location": "L2", "item": "처방약",   "qty": 5,   "days_left": 30}
+  ],
+  "donations": [
+    {"id": "DN01", "donor": "V03", "item": "생수",     "qty": 48, "unit": "병",   "condition": "새것",     "days_left": 200, "zone": "Z3", "state": "접수 가능"},
+    {"id": "DN02", "donor": "V07", "item": "담요",     "qty": 10, "unit": "장",   "condition": "사용 가능", "days_left": null, "zone": "Z6", "state": "접수 가능"},
+    {"id": "DN03", "donor": "V11", "item": "양말",     "qty": 30, "unit": "켤레", "condition": "새것",     "days_left": null, "zone": "Z9", "state": "검수 대기"},
+    {"id": "DN04", "donor": "V12", "item": "즉석밥",   "qty": 24, "unit": "개",   "condition": "새것",     "days_left": 40,  "zone": "Z10", "state": "검수 대기"},
+    {"id": "DN05", "donor": "V03", "item": "마스크",   "qty": 100, "unit": "개",  "condition": "새것",     "days_left": null, "zone": "Z3", "state": "접수 가능"},
+    {"id": "DN06", "donor": "V07", "item": "기저귀",   "qty": 2,  "unit": "팩",   "condition": "새것",     "days_left": null, "zone": "Z6", "state": "검수 대기"},
+    {"id": "DN07", "donor": "V11", "item": "세정제",   "qty": 12, "unit": "개",   "condition": "새것",     "days_left": null, "zone": "Z9", "state": "접수 가능"},
+    {"id": "DN08", "donor": "V12", "item": "고무장갑", "qty": 20, "unit": "켤레", "condition": "새것",     "days_left": null, "zone": "Z10", "state": "접수 가능"},
+    {"id": "DN09", "donor": "V03", "item": "보조배터리", "qty": 5, "unit": "개",  "condition": "사용 가능", "days_left": null, "zone": "Z3", "state": "검수 대기"},
+    {"id": "DN10", "donor": "V07", "item": "생수",     "qty": 24, "unit": "병",   "condition": "새것",     "days_left": 150, "zone": "Z6", "state": "접수 가능"}
+  ]
+}

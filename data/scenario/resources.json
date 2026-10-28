@@ -1,0 +1,31 @@
+{
+  "_note": "제안서 D3(대피소 8곳)·D4(공공 자원 10팀). 모두 가상이며 실제 기관·시설과 관계없다. 공공 자원의 max_urgency는 그 팀이 맡을 수 있는 가장 급한 긴급도(1이 가장 급함), load는 현재 부하(0~1). 대피소 occupied는 시나리오 시작 시점의 입소 인원이며, 승인된 대피소 배치 인원은 서버가 더해 남은 수용량을 계산한다.",
+  "source": "가상 시나리오 데이터(제안서 7.1 기준으로 작성)",
+  "as_of": "2026-10-28",
+  "type_skills": {
+    "인명구조": ["구조"], "침수": ["배수"], "산사태·토사": ["토사"],
+    "도로·시설 장애": ["도로"], "단전·단수": ["전기"], "대민지원": ["일반"]
+  },
+  "public": [
+    {"id": "P01", "name": "구조대 A(가상)",          "zone": "Z1",  "skills": ["구조", "배수"], "max_urgency": 1, "load": 0.2},
+    {"id": "P02", "name": "구조대 B(가상)",          "zone": "Z8",  "skills": ["구조"],         "max_urgency": 1, "load": 0.5},
+    {"id": "P03", "name": "배수펌프팀(가상)",        "zone": "Z3",  "skills": ["배수"],         "max_urgency": 2, "load": 0.3},
+    {"id": "P04", "name": "시 현장대응반(가상)",     "zone": "Z2",  "skills": ["일반", "도로"], "max_urgency": 3, "load": 0.4},
+    {"id": "P05", "name": "도로보수반(가상)",        "zone": "Z4",  "skills": ["도로", "장비"], "max_urgency": 3, "load": 0.1},
+    {"id": "P06", "name": "사방·토사 정비팀(가상)",  "zone": "Z5",  "skills": ["토사", "장비"], "max_urgency": 2, "load": 0.2},
+    {"id": "P07", "name": "군 지원 인력(가상)",      "zone": "Z7",  "skills": ["토사", "배수", "일반"], "max_urgency": 2, "load": 0.6},
+    {"id": "P08", "name": "전력 긴급복구반(가상)",   "zone": "Z9",  "skills": ["전기"],         "max_urgency": 2, "load": 0.3},
+    {"id": "P09", "name": "급수 지원반(가상)",       "zone": "Z6",  "skills": ["전기", "일반"], "max_urgency": 3, "load": 0.2},
+    {"id": "P10", "name": "동 행정복지센터 지원반(가상)", "zone": "Z10", "skills": ["일반"],    "max_urgency": 4, "load": 0.0}
+  ],
+  "shelters": [
+    {"id": "S1", "name": "가람초등학교 체육관(가상)", "type": "학교",     "zone": "Z2",  "capacity": 120, "occupied": 40, "amenities": ["경사로"]},
+    {"id": "S2", "name": "1구역 마을회관(가상)",      "type": "마을회관", "zone": "Z1",  "capacity": 30,  "occupied": 26, "amenities": []},
+    {"id": "S3", "name": "6구역 경로당(가상)",        "type": "경로당",   "zone": "Z6",  "capacity": 25,  "occupied": 10, "amenities": ["경사로"]},
+    {"id": "S4", "name": "누리 종합사회복지관(가상)", "type": "복지관",   "zone": "Z4",  "capacity": 80,  "occupied": 35, "amenities": ["엘리베이터", "경사로", "의료 공간"]},
+    {"id": "S5", "name": "한빛중학교 강당(가상)",     "type": "학교",     "zone": "Z8",  "capacity": 150, "occupied": 60, "amenities": ["엘리베이터"]},
+    {"id": "S6", "name": "바다 숙박시설(가상)",       "type": "숙박시설", "zone": "Z9",  "capacity": 40,  "occupied": 12, "amenities": ["엘리베이터"]},
+    {"id": "S7", "name": "5구역 마을회관(가상)",      "type": "마을회관", "zone": "Z5",  "capacity": 20,  "occupied": 20, "amenities": []},
+    {"id": "S8", "name": "주민자치센터 대회의실(가상)", "type": "주민자치센터", "zone": "Z3", "capacity": 60, "occupied": 18, "amenities": ["엘리베이터", "경사로"]}
+  ]
+}

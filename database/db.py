@@ -124,6 +124,44 @@ def list_pending_approvals() -> list[dict]:
     return [{"id": r["id"], "kind": r["kind"], "item": json.loads(r["item_json"]), "state": r["state"]} for r in rows]
 
 
+def get_approval(aid: str) -> dict | None:
+    with connect() as conn:
+        r = conn.execute("SELECT id, incident_id, kind, item_json, state FROM approvals WHERE id=?", (aid,)).fetchone()
+    return None if r is None else {"id": r["id"], "incident_id": r["incident_id"], "kind": r["kind"],
+                                   "item": json.loads(r["item_json"]), "state": r["state"]}
+
+
+def list_dispatch_approvals(states=("approved",), include_released=False) -> list[dict]:
+    """배치(dispatch_*) 승인 항목. 기본은 승인되고 아직 해제되지 않은 것(현재 투입 중)."""
+    with connect() as conn:
+        rows = conn.execute(f"""SELECT a.id, a.incident_id, a.kind, a.item_json, a.state, a.approver_name,
+                a.resolved_at, r.released_at
+            FROM approvals a LEFT JOIN dispatch_releases r ON r.approval_id = a.id
+            WHERE a.kind LIKE 'dispatch\\_%' ESCAPE '\\' AND a.state IN ({','.join('?' * len(states))})
+            ORDER BY a.resolved_at""", states).fetchall()
+    return [{"id": r["id"], "incident_id": r["incident_id"], "kind": r["kind"], "item": json.loads(r["item_json"]),
+             "state": r["state"], "approver": r["approver_name"], "resolved_at": r["resolved_at"],
+             "released_at": r["released_at"]}
+            for r in rows if include_released or r["released_at"] is None]
+
+
+def release_dispatch(aid: str, by: str, user_id: int | None = None) -> None:
+    """승인된 배치를 해제한다. 없는 항목은 KeyError, 승인 전이거나 이미 해제됐으면 ValueError."""
+    with connect() as conn:
+        row = conn.execute("SELECT kind, state FROM approvals WHERE id=?", (aid,)).fetchone()
+        if row is None or not row["kind"].startswith("dispatch_"):
+            raise KeyError(aid)
+        if row["state"] != "approved":
+            raise ValueError(f"{aid}는 승인된 배치가 아님")
+        cur = conn.execute("INSERT OR IGNORE INTO dispatch_releases(approval_id, released_by, user_id) VALUES (?, ?, ?)",
+                           (aid, by, user_id))
+        if cur.rowcount != 1:
+            raise ValueError(f"{aid}는 이미 해제됨")
+        conn.execute("INSERT INTO audit_logs(user_id, action, target_type, target_id, details_json) "
+                     "VALUES (?, 'dispatch_released', 'approval', ?, ?)",
+                     (user_id, aid, json.dumps({"by": by}, ensure_ascii=False)))
+
+
 def resolve_approval(aid: str, approved: bool, by: str, reason: str, user_id: int | None = None) -> dict:
     state = "approved" if approved else "rejected"
     with connect() as conn:
@@ -143,6 +181,33 @@ def resolve_approval(aid: str, approved: bool, by: str, reason: str, user_id: in
                       json.dumps({"decision": state, "by": by, "reason": reason}, ensure_ascii=False)))
     return {"id": aid, "kind": row["kind"], "item": json.loads(row["item_json"]),
             "state": state, "by": by, "reason": reason}
+
+
+# ---- 기능별 상태 문서(records) ---------------------------------------------------
+def put_record(kind: str, rid: str, data: dict) -> dict:
+    with connect() as conn:
+        conn.execute("""INSERT INTO records(kind, id, data_json) VALUES (?, ?, ?)
+            ON CONFLICT(kind, id) DO UPDATE SET data_json=excluded.data_json,
+              updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')""",
+            (kind, rid, json.dumps(data, ensure_ascii=False, default=str)))
+    return data
+
+
+def get_record(kind: str, rid: str) -> dict | None:
+    with connect() as conn:
+        row = conn.execute("SELECT data_json FROM records WHERE kind=? AND id=?", (kind, rid)).fetchone()
+    return None if row is None else json.loads(row["data_json"])
+
+
+def list_records(kind: str) -> list[dict]:
+    with connect() as conn:
+        rows = conn.execute("SELECT data_json FROM records WHERE kind=? ORDER BY created_at, id", (kind,)).fetchall()
+    return [json.loads(r["data_json"]) for r in rows]
+
+
+def count_records(kind: str) -> int:
+    with connect() as conn:
+        return conn.execute("SELECT COUNT(*) FROM records WHERE kind=?", (kind,)).fetchone()[0]
 
 
 # ---- 사용자·세션 -------------------------------------------------------------
