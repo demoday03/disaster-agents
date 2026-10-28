@@ -52,3 +52,20 @@ class TestVerify(unittest.TestCase):
         for raw, want in [(" grounded\n", "grounded"), ('"notGrounded"', "notGrounded")]:
             self.assertEqual(V.verify_text(d, EVID, fake(raw))[0], want, raw)
 
+    def test_judge_mode_without_groundedness_model(self):
+        # GROUNDEDNESS_MODEL이 없으면 채팅 모델이 지시문을 받고 같은 세 판정으로 답한다
+        import os
+        from unittest import mock
+        with mock.patch.dict(os.environ, {"SOLAR_MODEL": "solar-pro4"}):
+            os.environ.pop("GROUNDEDNESS_MODEL", None)
+            c = V.make_client()
+        self.assertEqual((c.model, c.verify_mode), ("solar-pro4", "judge"))
+        calls = []
+        c.transport = lambda u, h, b, t: calls.append(b) or {"choices": [{"message": {"content": "notGrounded"}}]}
+        self.assertEqual(V.verify_text("대피소는 학교입니다", "대피소는 체육관", c)[0], "notGrounded")
+        msgs = calls[0]["messages"]
+        self.assertEqual([m["role"] for m in msgs], ["system", "user"])
+        self.assertIn("[근거]\n대피소는 체육관", msgs[1]["content"])
+        with mock.patch.dict(os.environ, {"GROUNDEDNESS_MODEL": "groundedness-check"}):
+            g = V.make_client()
+        self.assertEqual((g.model, g.verify_mode), ("groundedness-check", "groundedness"))
