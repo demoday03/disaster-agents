@@ -23,8 +23,8 @@ def make_users(db_path, users):
 
 class Client:
     """쿠키(sid)와 CSRF 토큰을 들고 다니는 작은 HTTP 클라이언트."""
-    def __init__(self, base):
-        self.base, self.cookie, self.csrf = base, None, ""
+    def __init__(self, base, timeout=3):
+        self.base, self.cookie, self.csrf, self.timeout = base, None, "", timeout
 
     def request(self, method, path, obj=None, headers=None, csrf=True):
         h = {"Content-Type": "application/json"}
@@ -34,7 +34,7 @@ class Client:
         data = json.dumps(obj).encode() if obj is not None else (b"{}" if method == "POST" else None)
         req = urllib.request.Request(self.base + path, data=data, headers=h, method=method)
         try:
-            with urllib.request.urlopen(req, timeout=3) as r:
+            with urllib.request.urlopen(req, timeout=self.timeout) as r:
                 return r.status, json.loads(r.read()), r.headers
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read()), e.headers

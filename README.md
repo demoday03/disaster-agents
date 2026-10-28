@@ -117,6 +117,13 @@ python -m unittest webapp.test_server -v           # mock 모드 서버 API 33�
 python -m unittest webapp.test_features -v         # 현장 운영 기능 API 11개(①③⑤⑥⑦⑧, 서류 파일 읽기 포함)
 python -m unittest webapp.test_server_solar -v     # solar 경로 9개(가짜 로컬 서버, 실제 API 호출 없음. 문서 파싱 포함)
 python -m unittest webapp.test_pipeline -v         # 신고 → 다음 에이전트 연결과 예외 처리 8개
+python -m unittest webapp.test_rehearsal -v        # 시연 리허설 전체(mock, 약 10초)
+```
+
+시연 전 점검: `python scripts/rehearse_demo.py`는 임시 DB로 서버를 따로 띄워 `docs/시연_시나리오.md`의 장면(신고·센서·배치·안내·안부·물품·보완·오접수·봉사·복구·감사 기록) 13개를 API로 자동 실행하고 장면별 통과/실패를 출력한다. `UPSTAGE_API_KEY`가 있으면 실제 Solar로(약 35초), 없거나 `--mock`이면 규칙으로 돈다.
+
+```bash
+python scripts/rehearse_demo.py            # 실패한 장면이 있으면 종료 코드 1
 ```
 
 `test_server_solar`는 127.0.0.1에 가짜 OpenAI 호환 서버를 띄워 `LLM_MODE=solar` 경로(안내문 생성 → Groundedness 판정 → 승인 대기열)를 검사합니다. 가짜 키 문자열만 쓰며, **통과해도 실제 Solar 연결이나 안내 정확성이 확인된 것은 아닙니다.** 포트 18765~18768을 사용합니다.
