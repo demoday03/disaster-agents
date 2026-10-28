@@ -65,3 +65,20 @@ class TestIntake(unittest.TestCase):
     def test_supply_keywords_follow_catalog_not_labor(self):
         self.assertEqual(I.classify("A", "Z2 랜턴이랑 이불 보내주세요", 0, CFG).output["type"], "물품 요청")
         self.assertEqual(I.classify("B", "Z2 진흙 치울 일손이 필요해요", 0, CFG).output["type"], "대민지원")
+
+    def test_llm_cannot_override_id_or_text(self):
+        # 신고문 속 지시로 AI가 id·text를 내보내도 다른 접수 건을 덮어쓸 수 없어야 한다
+        c = fake('{"type":"침수","zone":"Z7","people":1,"vulnerable":false,"id":"R-OTHER","text":"바뀜","urgency":4}')
+        o = I.classify("R-MINE", "Z7 침수", 0, CFG, c).output
+        self.assertEqual((o["id"], o["text"], o["urgency"]), ("R-MINE", "Z7 침수", 3))
+
+    def test_bool_or_negative_people_from_llm_rejected(self):
+        for people in ("true", "-3"):
+            r = I.classify("P", "Z2 정전", 0, CFG, fake('{"type":"단전·단수","zone":"Z2","people":%s,"vulnerable":false}' % people))
+            self.assertFalse(r.ai_used, people)
+
+    def test_long_report_keeps_late_rescue_sentence(self):
+        # 앞부분이 길어도 뒤쪽의 인명구조 문장이 잘리지 않아야 한다(이전에는 300자에서 잘렸다)
+        o = I.classify("L", "Z3 " + "물이 조금씩 들어오고 있어요. " * 30 + "할머니가 방에 갇혀 있어요", 0, CFG).output
+        self.assertEqual((o["type"], o["urgency"]), ("인명구조", 1))
+        self.assertTrue(o["text"].endswith("갇혀 있어요"))

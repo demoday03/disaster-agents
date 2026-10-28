@@ -3,7 +3,7 @@ Run from project root: python webapp/server.py
 This is a prototype, not a production or emergency-dispatch system.
 """
 from __future__ import annotations
-import hmac, json, os, sys, threading, time, traceback, uuid
+import hmac, json, os, ssl, sys, threading, time, traceback, uuid
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -13,35 +13,74 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.chdir(ROOT)
 from common.llm import SolarClient
+from common.docparse import DocumentParser
 from common import scenario
 from agents import dispatch, intake, monitor, welfare, verify
 from coordinator import Coordinator
 from database import db as database
-from webapp import features
+from webapp import features, sensors
 
 HOST = os.getenv("WEBAPP_HOST", "127.0.0.1")
 PORT = int(os.getenv("WEBAPP_PORT", "8765"))
 MAX_BODY = 64 * 1024
+MAX_UPLOAD_BODY = 7 * 1024 * 1024   # 서류 파일(5MB)을 base64로 담은 요청. 이 경로만 크게 받는다
+UPLOAD_PATHS = {"/api/recovery/parse"}
 MODE = os.getenv("LLM_MODE", "mock").strip().lower()
 if MODE not in {"mock", "solar"}:
     raise RuntimeError("LLM_MODE must be 'mock' or 'solar'")
 if MODE == "solar" and not os.getenv("UPSTAGE_API_KEY"):
     raise RuntimeError("LLM_MODE=solar requires UPSTAGE_API_KEY in environment")
-LLM = SolarClient() if MODE == "solar" else None
+# 서버 프로세스 전체의 호출 한도. 다 쓰면 재시작 전까지 규칙 폴백으로만 동작한다(/api/health의 llm_calls로 확인).
+LLM_MAX_CALLS = int(os.getenv("SOLAR_MAX_CALLS", "1000"))
+LLM = SolarClient(max_calls=LLM_MAX_CALLS) if MODE == "solar" else None
 VERIFY_MODEL = os.getenv("GROUNDEDNESS_MODEL", "").strip()
 VERIFY_LLM = (
-    SolarClient(model=VERIFY_MODEL)
+    SolarClient(model=VERIFY_MODEL, max_calls=LLM_MAX_CALLS)
     if MODE == "solar" and VERIFY_MODEL
     else None
 )
+# 마이크로비트 게이트웨이 인증 토큰. 비어 있으면 실시간 센서 입력 경로를 닫아 둔다.
+SENSOR_TOKEN = os.getenv("SENSOR_GATEWAY_TOKEN", "").strip()
+if SENSOR_TOKEN and len(SENSOR_TOKEN) < 16:
+    raise RuntimeError("SENSOR_GATEWAY_TOKEN은 16자 이상이어야 합니다(python gateway/microbit_gateway.py --new-token)")
 GUIDANCE_CFG = welfare.load_cfg()
 COORDINATOR = Coordinator()
 database.init_db()
 
 STAFF_ROLES = {"operator", "admin"}   # 관리자 화면·승인·안내문 생성 권한
-COOKIE_SECURE = os.getenv("WEBAPP_COOKIE_SECURE") == "1"   # HTTPS로 배포할 때 켠다
+TLS_CERT, TLS_KEY = os.getenv("WEBAPP_TLS_CERT", "").strip(), os.getenv("WEBAPP_TLS_KEY", "").strip()
+# HTTPS로 배포할 때 켠다. 인증서를 직접 지정하면 자동으로 켠다.
+COOKIE_SECURE = os.getenv("WEBAPP_COOKIE_SECURE") == "1" or bool(TLS_CERT)
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+# 요청의 Host 헤더 허용 목록(DNS 리바인딩 방지). 내부망으로 열 때는 서버 주소를 WEBAPP_ALLOWED_HOSTS에 쉼표로 적는다.
+ALLOWED_HOSTS = ({f"{h}:{PORT}" for h in ("127.0.0.1", "localhost", "[::1]")}
+                 | ({"127.0.0.1", "localhost", "[::1]"} if PORT in (80, 443) else set())   # 기본 포트면 브라우저가 포트를 빼고 보낸다
+                 | {h.strip().lower() for h in os.getenv("WEBAPP_ALLOWED_HOSTS", "").split(",") if h.strip()})
 LOGIN_MAX_FAILS, LOGIN_WINDOW_S = 5, 600
 _login_fails, _login_lock = {}, threading.Lock()
+
+
+class RateLimiter:
+    """키(접속 IP 등)별로 window_s초 동안 limit번까지만 허용한다. 공개 경로의 반복 요청(신고 폭주, LLM 한도 소진)을 막는다."""
+    def __init__(self, limit, window_s):
+        self.limit, self.window_s, self.hits, self.lock = limit, window_s, {}, threading.Lock()
+
+    def allow(self, key):
+        now = time.time()
+        with self.lock:
+            if len(self.hits) > 10000:   # 오래된 키 정리(메모리 상한)
+                self.hits = {k: v for k, v in self.hits.items() if v and now - v[-1] < self.window_s}
+            recent = [t for t in self.hits.get(key, []) if now - t < self.window_s]
+            if len(recent) >= self.limit:
+                self.hits[key] = recent
+                return False
+            recent.append(now)
+            self.hits[key] = recent
+            return True
+
+
+INCIDENT_LIMIT = RateLimiter(int(os.getenv("WEBAPP_INCIDENT_PER_MIN", "10")), 60)   # 접속 IP당 분당 신고 수
+LOGIN_IP_LIMIT = RateLimiter(30, 600)   # 접속 IP당 10분에 로그인 시도 30번(계정별 5번 잠금과 별도)
 
 
 def login_blocked(username):
@@ -157,7 +196,9 @@ def recheck_dispatch(approval):
     return None
 
 
-FEATURES = features.Features(database, SCENARIO, travel, DISPATCH_CFG, GUIDANCE_CFG, LLM, VERIFY_LLM)
+DOC_PARSER = DocumentParser(max_calls=LLM_MAX_CALLS) if MODE == "solar" else None
+FEATURES = features.Features(database, SCENARIO, travel, DISPATCH_CFG, GUIDANCE_CFG, LLM, VERIFY_LLM, DOC_PARSER)
+SENSORS = sensors.SensorHub(database)
 
 
 def public_guidance(incident_id):
@@ -169,14 +210,14 @@ def public_guidance(incident_id):
     return {"text": g["text"], "verdict": "grounded", "approved": True, "approved_at": row["approved_at"],
             "source": g.get("source", ""), "doc_ids": g.get("doc_ids", []), "evidence": g.get("standard", "")}
 
-def read_json_body(handler):
+def read_json_body(handler, limit=MAX_BODY):
     raw_len = handler.headers.get("Content-Length", "0")
     try:
         length = int(raw_len)
     except ValueError:
         raise ValueError("잘못된 Content-Length")
-    if length < 0 or length > MAX_BODY:
-        raise ValueError(f"요청 본문은 {MAX_BODY}바이트 이하여야 합니다")
+    if length < 0 or length > limit:
+        raise ValueError(f"요청 본문은 {limit}바이트 이하여야 합니다")
     raw = handler.rfile.read(length)
     if not raw:
         return {}
@@ -188,8 +229,19 @@ def read_json_body(handler):
         raise ValueError("JSON 최상위 값은 객체여야 합니다")
     return data
 
+SECURITY_HEADERS = {
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": "default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; "
+                               "script-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "DisasterAgentDemo/0.1"
+    timeout = 30   # 요청을 아주 느리게 보내 연결을 붙잡는 클라이언트를 끊는다
     def log_message(self, fmt, *args):
         # Do not log request bodies, reports, or API credentials.
         print("[%s] %s" % (self.log_date_time_string(), fmt % args))
@@ -215,6 +267,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(403, {"error": "보안 토큰(CSRF)이 올바르지 않습니다. 페이지를 새로 고쳐 주세요"}); return None
         return s
 
+    def host_allowed(self):
+        """허용한 Host로 들어온 요청만 처리한다. 악성 사이트가 DNS를 바꿔 이 서버로 요청을 보내는 공격(DNS 리바인딩)을 막는다."""
+        return self.headers.get("Host", "").strip().lower() in ALLOWED_HOSTS
+
+    def client_ip(self):
+        return self.client_address[0]
+
     def same_origin(self):
         """브라우저가 다른 사이트에서 보낸 POST를 막는다(Origin이 없는 비브라우저 요청은 허용)."""
         if self.headers.get("Sec-Fetch-Site") == "cross-site":
@@ -229,9 +288,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header(k, v)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Content-Security-Policy", "default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'")
+        for k, v in SECURITY_HEADERS.items():
+            self.send_header(k, v)
         self.end_headers(); self.wfile.write(body)
 
     def send_html(self, filename="report.html", content_type="text/html; charset=utf-8"):
@@ -240,13 +298,14 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Content-Security-Policy", "default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'")
+        for k, v in SECURITY_HEADERS.items():
+            self.send_header(k, v)
         self.end_headers(); self.wfile.write(body)
 
     def do_GET(self):
         path = urlparse(self.path).path
+        if not self.host_allowed():
+            return self.send_json(421, {"error": "허용되지 않은 주소로 들어온 요청입니다(WEBAPP_ALLOWED_HOSTS 확인)"})
         if path in {"/", "/report"}:
             return self.send_html("report.html")
         if path == "/admin":
@@ -262,7 +321,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {"username": s["username"], "role": s["role"], "csrf_token": s["csrf"]})
         if path == "/api/health":
             return self.send_json(200, {"ok": True, "mode": MODE, "llm_enabled": LLM is not None,
-                "llm_calls": LLM.calls if LLM else 0, "database": "SQLite", "database_ready": True, "prototype": True,
+                "llm_calls": LLM.calls if LLM else 0, "llm_max_calls": LLM.max_calls if LLM else 0, "database": "SQLite", "database_ready": True, "prototype": True,
                 "warning": "시뮬레이션/프로토타입입니다. 실제 출동·재난 경보 시스템이 아닙니다."})
         if path == "/api/agents":
             return self.send_json(200, {"items": AGENTS})
@@ -287,6 +346,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             res = FEATURES.get(path)
             return self.send_json(*res) if res else self.send_json(404, {"error": "찾을 수 없는 경로입니다"})
+        if path == "/api/sensor/status":   # 게이트웨이 수신 현황과 최근 판정
+            if not self.require_staff():
+                return
+            return self.send_json(200, {**SENSORS.status(), "gateway_enabled": bool(SENSOR_TOKEN)})
         if path == "/api/dispatch":   # 현재 투입 현황과 자원·대피소 상태
             if not self.require_staff():
                 return
@@ -300,15 +363,24 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+        if not self.host_allowed():
+            return self.send_json(421, {"error": "허용되지 않은 주소로 들어온 요청입니다(WEBAPP_ALLOWED_HOSTS 확인)"})
         if not self.same_origin():
             return self.send_json(403, {"error": "다른 사이트에서 보낸 요청은 받지 않습니다"})
         try:
-            data = read_json_body(self)
+            if path in UPLOAD_PATHS:   # 큰 본문은 로그인·CSRF를 먼저 확인한 뒤에만 읽는다
+                if not self.require_staff(check_csrf=True):
+                    return
+                data = read_json_body(self, MAX_UPLOAD_BODY)
+            else:
+                data = read_json_body(self)
             if path == "/api/login":
                 username, password = data.get("username"), data.get("password")
                 if not isinstance(username, str) or not isinstance(password, str) or len(username) > 50 or len(password) > 200:
                     return self.send_json(400, {"error": "사용자 이름과 비밀번호를 입력해 주세요"})
                 key = username.strip().casefold()
+                if not LOGIN_IP_LIMIT.allow(self.client_ip()):
+                    return self.send_json(429, {"error": "이 기기에서 로그인 시도가 너무 많습니다. 10분 뒤 다시 시도해 주세요"})
                 if login_blocked(key):
                     return self.send_json(429, {"error": "로그인 실패가 많아 잠시 막혔습니다. 10분 뒤 다시 시도해 주세요"})
                 user = database.authenticate(username, password)
@@ -319,6 +391,13 @@ class Handler(BaseHTTPRequestHandler):
                 database.log_audit("login", "user", user["username"], {"role": user["role"]})
                 return self.send_json(200, {"username": user["username"], "role": user["role"], "csrf_token": csrf},
                                       headers={"Set-Cookie": session_cookie(token, database.SESSION_TTL_S)})
+            if path == "/api/sensor/readings":   # 마이크로비트 게이트웨이(로그인 대신 게이트웨이 토큰)
+                if not SENSOR_TOKEN:
+                    return self.send_json(503, {"error": "센서 게이트웨이가 꺼져 있습니다. 서버에 SENSOR_GATEWAY_TOKEN을 설정하세요"})
+                given = self.headers.get("X-Gateway-Token", "").encode("utf-8")
+                if not hmac.compare_digest(given, SENSOR_TOKEN.encode("utf-8")):
+                    return self.send_json(401, {"error": "게이트웨이 토큰이 올바르지 않습니다"})
+                return self.send_json(200, SENSORS.ingest(data.get("readings"), data.get("rain_stage")))
             if path == "/api/logout":
                 token, s = self.session()
                 if s is not None:
@@ -563,6 +642,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(400, {"error": "신고 내용을 입력해 주세요"})
                 if len(text) > 2000:
                     return self.send_json(400, {"error": "신고 내용은 2000자 이하여야 합니다"})
+                if not INCIDENT_LIMIT.allow(self.client_ip()):
+                    return self.send_json(429, {"error": "짧은 시간에 신고가 너무 많습니다. 급한 상황이면 119·112에 바로 전화하세요"})
                 duplicate = database.find_duplicate_incident(text)
                 if duplicate:
                     return self.send_json(200, {**duplicate, "duplicate": True})
@@ -626,11 +707,45 @@ class Handler(BaseHTTPRequestHandler):
             traceback.print_exc()
             return self.send_json(500, {"error": "서버 내부 오류입니다. 콘솔 로그를 확인해 주세요"})
 
+def check_bind_policy(host=HOST, env=os.environ, staff_count=None):
+    """내부망 공개 조건을 검사한다. 문제가 있으면 이유 문자열, 괜찮으면 None (docs/내부망_배포_점검표.md).
+    - 기본은 이 PC(localhost)만. 내부망은 WEBAPP_ALLOW_LAN=1로 명시해야 열린다.
+    - 내부망에서는 HTTPS 인증서가 있어야 한다. 시연처럼 잠깐 HTTP로 열려면 WEBAPP_ALLOW_HTTP_LAN=1.
+    - 담당자 계정이 있고, 접속 주소가 WEBAPP_ALLOWED_HOSTS에 있어야 한다."""
+    if host in LOCAL_HOSTS:
+        return None
+    if env.get("WEBAPP_ALLOW_LAN") != "1":
+        return ("안전상 기본은 localhost만 허용합니다. 학교 내부망으로 열려면 docs/내부망_배포_점검표.md를 확인하고 "
+                "WEBAPP_ALLOW_LAN=1을 설정하세요.")
+    if host in {"0.0.0.0", "::", ""}:
+        return "모든 네트워크(0.0.0.0)에 열지 말고 이 PC의 내부망 IP(예: 192.168.0.10)를 WEBAPP_HOST로 지정하세요."
+    has_tls = bool(env.get("WEBAPP_TLS_CERT", "").strip() and env.get("WEBAPP_TLS_KEY", "").strip())
+    if not has_tls and env.get("WEBAPP_ALLOW_HTTP_LAN") != "1":
+        return ("내부망에서는 로그인 정보가 암호화되도록 HTTPS가 필요합니다. WEBAPP_TLS_CERT·WEBAPP_TLS_KEY를 지정하세요. "
+                "(시연용으로 잠깐 HTTP를 쓰려면 WEBAPP_ALLOW_HTTP_LAN=1)")
+    if not any(h.strip() for h in env.get("WEBAPP_ALLOWED_HOSTS", "").split(",")):
+        return f"WEBAPP_ALLOWED_HOSTS에 접속 주소를 적으세요(예: {host}:{PORT})."
+    if (database.count_users() if staff_count is None else staff_count) == 0:
+        return "담당자 계정이 없습니다. 먼저 python scripts/create_user.py 이름 --role operator 로 만드세요."
+    return None
+
+
 def main():
-    if HOST not in {"127.0.0.1", "localhost", "::1"}:
-        raise SystemExit("안전상 기본은 localhost만 허용합니다. 공개망 배포 전 인증/HTTPS/CSRF/운영 보안 설계가 필요합니다.")
+    problem = check_bind_policy()
+    if problem:
+        raise SystemExit(problem)
     server = ThreadingHTTPServer((HOST, PORT), Handler)
-    print(f"재난 안전 AI 에이전트 프로토타입: http://{HOST}:{PORT}")
+    scheme = "http"
+    if TLS_CERT and TLS_KEY:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.load_cert_chain(TLS_CERT, TLS_KEY)
+        # 핸드셰이크를 accept()가 아닌 요청 처리 스레드에서 하게 한다(연결만 하고 가만히 있는 클라이언트가 전체를 막지 않게).
+        server.socket = ctx.wrap_socket(server.socket, server_side=True, do_handshake_on_connect=False)
+        scheme = "https"
+    elif HOST not in LOCAL_HOSTS:
+        print("경고: 내부망에 HTTP(암호화 없음)로 열었습니다. 같은 네트워크에서 로그인 정보가 노출될 수 있으니 시연에만 쓰세요.")
+    print(f"재난 안전 AI 에이전트 프로토타입: {scheme}://{HOST}:{PORT}")
     print(f"LLM_MODE={MODE}; {'Solar API 사용 설정됨' if LLM else 'LLM은 사용하지 않고 규칙 기반 데모로 실행'}")
     if database.count_users() == 0:
         print("담당자 계정이 없습니다. 관리자 화면을 쓰려면 먼저 실행하세요: python scripts/create_user.py 이름 --role operator")

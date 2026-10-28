@@ -59,7 +59,8 @@ class TestFeatures(ServerBase):
         self.assertEqual(r['verification']['verdict'], 'notSure')
         self.assertEqual(self.post('/api/recovery/support', {'damage_types': ['화재']})[0], 400)
         ex = self.ok('/api/recovery/extract', {'text': '임대차계약서 Z3 세대주 가구 A-05 주택 침수'})
-        self.assertTrue(ex['manual_form_required'])         # mock: 수동 입력 폼으로 전환
+        self.assertEqual((ex['fields']['zone'], ex['fields']['damage_type'], ex['ai_used']), ('Z3', '주택침수', False))   # mock: 규칙 추출
+        self.assertTrue(self.ok('/api/recovery/extract', {'text': '흐릿한 서류'})['manual_form_required'])   # 못 읽으면 수동 입력 폼
         rp = self.ok('/api/recovery/report', {'household': 'H05', 'damage_types': ['주택침수'],
                                               'fields': {'zone': 'Z3', 'householder': '가구 H05', 'damage_type': '주택침수'}})
         self.assertIn('피해 사진', rp['checklist']); self.assertIn('초안', rp['status'])
@@ -131,6 +132,25 @@ class TestFeatures(ServerBase):
         self.ok(f"/api/supply/requests/{req['id']}/deliver", {})
         self.assertEqual(self.ok(f"/api/supply/requests/{req['id']}/receipt", {'received': True})['state'], '완료')
 
+    def test_supply_approval_rechecks_stock_before_recording(self):
+        # 승인 직전 출고가 불가능해졌으면(재고가 그사이 줄어듦) 승인을 기록하지 않고 409로 돌려준다
+        from pathlib import Path
+        from database import db
+        r = self.ok('/api/supply/requests', {'household': 'H09', 'item': '생수', 'qty': 3})['requests'][0]
+        aid = self.ok(f"/api/supply/requests/{r['id']}/review", {'decision': '승인'})['pending_approval']
+        plan = next(a for a in self.ok('/api/approvals')['items'] if a['id'] == aid)['item']['plan']
+        old = db.DB_PATH
+        db.DB_PATH = Path(self.tempdir.name) / "test.db"
+        try:
+            for row in plan:
+                rec = db.get_record("stock", row['source']) or db.get_record("donation", row['source'])
+                db.put_record("stock" if db.get_record("stock", row['source']) else "donation", row['source'], {**rec, "qty": 0})
+        finally:
+            db.DB_PATH = old
+        code, d = self.approve(aid)
+        self.assertEqual(code, 409, d)
+        self.assertIn(aid, [a['id'] for a in self.ok('/api/approvals')['items']])   # 여전히 대기 중
+
     def test_supply_rules(self):
         med = self.ok('/api/supply/requests', {'household': 'H10', 'item': '처방약', 'qty': 1})['requests'][0]
         self.assertEqual(med['route'], 'manual_medicine')
@@ -155,6 +175,23 @@ class TestFeatures(ServerBase):
         st = self.ok('/api/supply')
         self.assertTrue(st['forecast'])
         self.assertNotIn('처방약', {f['item'] for f in st['forecast']})
+
+    def test_recovery_parse_text_file_and_limits(self):
+        import base64
+        b64 = lambda b: base64.b64encode(b).decode()
+        doc = "피해 신고서\n구역 Z3\n세대주 가구 H05 연락처 010-1234-5678\n피해 내용 주택침수".encode()
+        r = self.ok('/api/recovery/parse', {'filename': 'a.txt', 'data_base64': b64(doc)})
+        self.assertEqual(r['parser'], 'text')
+        self.assertIn('구역 Z3', r['text'])
+        self.assertNotIn('1234-5678', r['text'])                               # 화면에는 마스킹한 텍스트만
+        self.assertEqual(r['fields'], {'zone': 'Z3', 'householder': '가구 H05 연락처 [전화]', 'damage_type': '주택침수'})
+        self.assertFalse(r['ai_used'])                                         # mock 모드: 규칙 추출
+        pdf = b64(b"%PDF-1.4 fake")
+        self.assertEqual(self.post('/api/recovery/parse', {'filename': 'a.pdf', 'data_base64': pdf})[0], 503)   # 파싱 API 없음
+        self.assertEqual(self.post('/api/recovery/parse', {'filename': 'a.exe', 'data_base64': b64(b"MZ\x90\x00\x01")})[0], 400)
+        self.assertEqual(self.post('/api/recovery/parse', {'filename': 'a.txt', 'data_base64': '***'})[0], 400)
+        self.assertEqual(Client(self.base).post('/api/recovery/parse', {'filename': 'a.txt', 'data_base64': b64(doc)})[0], 401)
+        self.assertFalse(self.ok('/api/recovery')['doc_parser'])
 
     def test_auth(self):
         anon = Client(self.base)

@@ -39,6 +39,15 @@ class TestSQLitePersistence(unittest.TestCase):
         self.assertEqual(audit_count, 2)
 
 
+    def test_duplicate_found_when_report_has_phone_number(self):
+        import time
+        from agents import intake
+        text = "Z3 침수됐어요 연락처 010-1234-5678"
+        db.save_incident(intake.classify("R-DUP00001", text, time.time(), intake.load_cfg()).to_dict())
+        dup = db.find_duplicate_incident("  Z3 침수됐어요   연락처 010-1234-5678 ")
+        self.assertIsNotNone(dup)
+        self.assertEqual(dup["output"]["id"], "R-DUP00001")
+
     def test_double_resolve_and_missing(self):
         a = db.create_approval("demo", {"stage": 1})
         db.resolve_approval(a["id"], False, "담당자", "")

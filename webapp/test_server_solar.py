@@ -19,7 +19,17 @@ class FakeUpstream(BaseHTTPRequestHandler):
         pass
 
     def do_POST(self):
-        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        raw = self.rfile.read(int(self.headers["Content-Length"]))
+        if self.path.endswith("/document-digitization"):   # 업스테이지 문서 파싱(multipart)
+            STATE["calls"].append("document-parse")
+            STATE["parse_body"] = raw
+            if STATE["error"]:
+                self.send_response(500); self.end_headers(); return
+            text = "피해 신고서 구역 Z3 세대주 가구 H05 연락처 010-9876-5432 피해 내용 주택침수"
+            out = json.dumps({"content": {"text": text}, "usage": {"pages": 1}}, ensure_ascii=False).encode()
+            self.send_response(200); self.send_header("Content-Length", str(len(out))); self.end_headers()
+            self.wfile.write(out); return
+        body = json.loads(raw)
         STATE["calls"].append(body["model"])
         if STATE["error"]:
             self.send_response(500); self.end_headers(); return
@@ -27,6 +37,9 @@ class FakeUpstream(BaseHTTPRequestHandler):
             if STATE["verify_error"]:
                 self.send_response(500); self.end_headers(); return
             content = STATE["verdict"]
+        elif "서류 텍스트에서 필드를 추출" in body["messages"][0]["content"]:   # ⑤ 서류 필드 추출
+            STATE["extract_input"] = body["messages"][1]["content"]
+            content = json.dumps({"zone": "Z3", "householder": "가구 H05", "damage_type": "주택침수"}, ensure_ascii=False)
         else:  # 안내문 다듬기: 숫자 없는 초안(숫자 선검사에 걸리지 않게)
             content = json.dumps({"text": f"AI가 다듬은 안내({STATE['label']}) 낮은 곳을 피해 이동하세요"},
                                  ensure_ascii=False)
@@ -42,7 +55,9 @@ def start_app(port, db_path, groundedness=True):
     env.update({"WEBAPP_PORT": str(port), "LLM_MODE": "solar",
                 "UPSTAGE_API_KEY": "fake-key-for-offline-test",
                 "SOLAR_BASE_URL": f"http://127.0.0.1:{FAKE_PORT}/v1",
-                "SOLAR_MODEL": "fake-solar", "DISASTER_DB_PATH": str(db_path)})
+                "SOLAR_MODEL": "fake-solar", "DISASTER_DB_PATH": str(db_path),
+                "DOCUMENT_PARSE_URL": f"http://127.0.0.1:{FAKE_PORT}/v1/document-digitization",
+                "WEBAPP_INCIDENT_PER_MIN": "1000"})
     if groundedness:
         env["GROUNDEDNESS_MODEL"] = "fake-ground"
     else:
@@ -206,6 +221,26 @@ class TestSolarPathWithVerifier(SolarPathBase):
         self.assertFalse(g["ai_used"])
         self.assertEqual(g["output"]["status"], "표준 원문")
         self.assertNotIn("approval_id", g)
+
+
+    def test_document_parse_then_extract_fields(self):
+        import base64
+        body = {"filename": "홍길동_계약서.pdf", "data_base64": base64.b64encode(b"%PDF-1.4 fake").decode()}
+        status, d = self.post("/api/recovery/parse", body)
+        self.assertEqual(status, 400, d)                                      # 외부 전송 동의 없으면 보내지 않음
+        self.assertNotIn("document-parse", STATE["calls"])
+        status, d = self.post("/api/recovery/parse", {**body, "consent_external": True})
+        self.assertEqual(status, 200, d)
+        self.assertEqual((d["parser"], d["pages"], d["ai_used"]), ("upstage", 1, True))
+        self.assertEqual(d["fields"], {"zone": "Z3", "householder": "가구 H05", "damage_type": "주택침수"})
+        self.assertFalse(d["manual_form_required"])
+        self.assertNotIn("9876", d["text"])                                   # 화면에 돌려주는 텍스트는 마스킹
+        self.assertNotIn("9876", STATE["extract_input"])                      # LLM에도 마스킹한 텍스트만
+        self.assertNotIn("홍길동".encode(), STATE["parse_body"])               # 원래 파일 이름은 보내지 않음
+        STATE["error"] = True                                                 # 파싱 API 오류 → 502, 수동 입력 안내
+        status, d = self.post("/api/recovery/parse", {**body, "consent_external": True})
+        self.assertEqual(status, 502, d)
+        self.assertIn("직접 붙여 넣어", d["error"])
 
 
 class TestSolarPathWithoutVerifier(SolarPathBase):

@@ -2,10 +2,11 @@
 각 에이전트 모듈(agents/*)의 규칙을 그대로 쓰고, 여기서는 상태 저장(DB records)과 승인 대기열 연결만 한다.
 모든 경로는 담당자 로그인이 필요하며(서버가 검사), 상태를 바꾸는 결정은 승인 대기열이나 담당자 동작으로만 일어난다.
 """
-import json, threading, time, uuid
+import base64, binascii, json, threading, time, uuid
 
 from agents import recovery, supply, verify, volunteer, welfare
-from common import scenario
+from common import docparse, scenario
+from common.masking import mask
 
 DAMAGE_TYPES = ("주택침수", "주택파손", "사면유실")
 AREAS = ("거제시", "기타")
@@ -36,10 +37,10 @@ def _int(v, name, lo, hi):
 
 
 class Features:
-    def __init__(self, db, sc, travel, dispatch_cfg, guidance_cfg, llm=None, verify_llm=None):
-        """travel: 현재 통제 구간을 반영한 이동 시간 표를 돌려주는 함수."""
+    def __init__(self, db, sc, travel, dispatch_cfg, guidance_cfg, llm=None, verify_llm=None, doc_parser=None):
+        """travel: 현재 통제 구간을 반영한 이동 시간 표를 돌려주는 함수. doc_parser: 업스테이지 문서 파싱(없으면 텍스트 파일만)."""
         self.db, self.sc, self.travel, self.dcfg, self.gcfg = db, sc, travel, dispatch_cfg, guidance_cfg
-        self.llm, self.verify_llm = llm, verify_llm
+        self.llm, self.verify_llm, self.doc_parser = llm, verify_llm, doc_parser
         with open("data/scenario/people.json", encoding="utf-8") as f:
             people = json.load(f)
         with open("data/scenario/inventory.json", encoding="utf-8") as f:
@@ -74,6 +75,8 @@ class Features:
 
     def post(self, path, data):
         p = path.strip("/").split("/")[1:]
+        if p == ["recovery", "parse"]:   # 외부 API를 기다리는 동안 다른 기능이 멈추지 않게 잠금 밖에서
+            return self.recovery_parse(data)
         with self.lock:
             # ③ 안부 확인
             if p == ["welfare", "checks", "start"]:
@@ -127,6 +130,15 @@ class Features:
             taken = [v for v in approval["item"]["recommendation"]["team"] if v in busy]
             if taken:
                 return f"봉사자 {', '.join(taken)}가 이미 다른 작업에 투입되어 있습니다. 다시 추천하세요"
+        if approval["kind"] == "supply_dispatch":
+            # 승인을 기록한 뒤 출고가 실패하면 '승인됐지만 출고 안 됨' 상태가 남는다. 저장하지 않는 사본으로 먼저 출고해 본다.
+            inv = self.inventory()
+            try:
+                for row in approval["item"]["plan"]:
+                    inv.issue(row["source"], row["qty"], approved=True, by="check", ts=time.time(),
+                              request_id=approval["item"]["request_id"])
+            except (ValueError, KeyError) as e:
+                return f"출고할 수 없습니다({e}). 반려 후 다시 추천하세요"
         return None
 
     def after_resolve(self, approval, approved, session):
@@ -265,6 +277,37 @@ class Features:
         r = recovery.extract_fields(_text(data.get("text"), "서류 텍스트", 3000), client=self.llm)
         return {**r.output, "ai_used": r.ai_used, "fallback_reason": r.fallback_reason}
 
+    def recovery_parse(self, data):
+        """서류 파일(PDF·사진·텍스트) → 텍스트 → 필드 추출. 원본 파일은 저장하지 않고, 화면에는 마스킹한 텍스트만 돌려준다."""
+        name = _text(data.get("filename"), "파일 이름", 100)
+        try:
+            raw = base64.b64decode(_text(data.get("data_base64"), "파일 내용", docparse.MAX_BYTES * 4 // 3 + 8), validate=True)
+        except (binascii.Error, ValueError):
+            raise ValueError("파일 내용(base64)이 올바르지 않습니다") from None
+        if not raw or len(raw) > docparse.MAX_BYTES:
+            raise ValueError(f"파일은 1바이트~{docparse.MAX_BYTES // (1024 * 1024)}MB여야 합니다")
+        kind, pages = docparse.sniff(raw), None
+        if kind == "txt":   # 이미 텍스트인 서류는 외부로 보내지 않고 바로 읽는다
+            text, parser = raw.decode("utf-8-sig"), "text"
+        elif kind in docparse.TYPES:
+            if self.doc_parser is None:
+                return 503, {"error": "문서 파싱 API가 연결되지 않았습니다(LLM_MODE=solar 필요). 서류 텍스트를 직접 붙여 넣어 주세요"}
+            if data.get("consent_external") is not True:   # 원본(개인정보 포함)이 외부 API로 나가므로 확인을 받는다
+                raise ValueError("서류 원본이 업스테이지 API로 전송됩니다. 본인(또는 보호자) 동의를 확인하고 체크해 주세요")
+            try:
+                text, pages = self.doc_parser.parse(name, raw)
+            except docparse.DocParseUnavailable as e:
+                self.db.log_audit("document_parse_failed", "document", None, {"type": kind, "bytes": len(raw), "reason": str(e)[:200]})
+                return 502, {"error": f"{e}. 서류 텍스트를 직접 붙여 넣어 주세요"}
+            parser = "upstage"
+        else:
+            raise ValueError("PDF·PNG·JPG·텍스트(.txt) 파일만 읽을 수 있습니다")
+        r = recovery.extract_fields(text, client=self.llm)
+        self.db.log_audit("document_parsed", "document", None, {"type": kind, "bytes": len(raw), "pages": pages,
+                                                                 "parser": parser, "fields_found": 3 - len(r.output["missing"])})
+        return 200, {"text": mask(text)[:3000], "truncated": len(text) > 3000, "parser": parser, "pages": pages,
+                     **r.output, "ai_used": r.ai_used, "fallback_reason": r.fallback_reason}
+
     def recovery_report(self, data):
         fields = data.get("fields")
         if not isinstance(fields, dict):
@@ -320,7 +363,7 @@ class Features:
         return {"cases": self.db.list_records("case"), "reports": self.db.list_records("report"),
                 "aggregate": recovery.aggregate(self.db.list_records("survey")),
                 "households": list(self.households.values()), "stages": recovery.STAGES,
-                "damage_types": DAMAGE_TYPES, "notice": recovery.NOTICE,
+                "damage_types": DAMAGE_TYPES, "notice": recovery.NOTICE, "doc_parser": self.doc_parser is not None,
                 "zones": [{"id": z["id"], "name": z["name"]} for z in self.sc["zones"]]}
 
     # ------------------------------------------------------------------ ⑥ 봉사 코디

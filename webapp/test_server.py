@@ -53,6 +53,7 @@ class Client:
 class ServerBase(unittest.TestCase):
     """임시 DB와 시험 계정으로 서버를 띄우고 담당자로 로그인해 둔다."""
     port = None
+    extra_env = {"WEBAPP_INCIDENT_PER_MIN": "1000"}   # 시험은 한 IP에서 신고를 많이 보낸다
 
     @classmethod
     def setUpClass(cls):
@@ -61,6 +62,7 @@ class ServerBase(unittest.TestCase):
         cls.pw = make_users(db_path, {"담당자": "operator", "주민": "citizen", "잠금시험": "operator"})
         env = os.environ.copy(); env["WEBAPP_PORT"] = str(cls.port); env["LLM_MODE"] = "mock"
         env["DISASTER_DB_PATH"] = str(db_path)
+        env.update(cls.extra_env)
         cls.proc = subprocess.Popen([sys.executable, "webapp/server.py"], cwd=ROOT, env=env,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         cls.base = f"http://127.0.0.1:{cls.port}"
@@ -442,3 +444,88 @@ class TestDispatch(ServerBase):
 
 
 if __name__=='__main__': unittest.main()
+
+
+class TestNetworkSecurity(ServerBase):
+    """내부망 배포 대비: Host 허용 목록, 공개 신고 횟수 제한, 보안 헤더, 공개 조건 검사."""
+    port = 18772
+    extra_env = {"WEBAPP_INCIDENT_PER_MIN": "3"}
+
+    def test_unknown_host_rejected(self):
+        # DNS 리바인딩: 악성 사이트 주소(Host)로 들어온 요청은 처리하지 않는다
+        for method in ("GET", "POST"):
+            status, d, _ = self.staff.request(method, "/api/health" if method == "GET" else "/api/incidents",
+                                              {"text": "Z1 침수"} if method == "POST" else None,
+                                              headers={"Host": "evil.example:%d" % self.port})
+            self.assertEqual(status, 421, (method, d))
+
+    def test_incident_rate_limit_per_ip(self):
+        codes = [Client(self.base).post("/api/incidents", {"text": f"Z2 정전 시험 {i}"})[0] for i in range(4)]
+        self.assertEqual(codes, [201, 201, 201, 429])
+
+    def test_security_headers(self):
+        with urllib.request.urlopen(self.base + "/", timeout=2) as r:
+            self.assertEqual(r.headers["X-Frame-Options"], "DENY")
+            self.assertIn("frame-ancestors 'none'", r.headers["Content-Security-Policy"])
+            self.assertEqual(r.headers["Referrer-Policy"], "no-referrer")
+
+    def test_bind_policy(self):
+        # server 모듈을 불러오면 기본 DB를 건드리므로 별도 프로세스에서 검사한다
+        code = (
+            "import json,sys;from webapp import server as s;"
+            "cases={'local':s.check_bind_policy('127.0.0.1',{}),"
+            "'lan_no_optin':s.check_bind_policy('192.168.0.10',{}),"
+            "'all_ifaces':s.check_bind_policy('0.0.0.0',{'WEBAPP_ALLOW_LAN':'1'}),"
+            "'no_tls':s.check_bind_policy('192.168.0.10',{'WEBAPP_ALLOW_LAN':'1','WEBAPP_ALLOWED_HOSTS':'x'},1),"
+            "'http_ok':s.check_bind_policy('192.168.0.10',{'WEBAPP_ALLOW_LAN':'1','WEBAPP_ALLOW_HTTP_LAN':'1','WEBAPP_ALLOWED_HOSTS':'192.168.0.10:8765'},1),"
+            "'no_staff':s.check_bind_policy('192.168.0.10',{'WEBAPP_ALLOW_LAN':'1','WEBAPP_ALLOW_HTTP_LAN':'1','WEBAPP_ALLOWED_HOSTS':'192.168.0.10:8765'},0)};"
+            "print(json.dumps({k:v is None for k,v in cases.items()}))")
+        env = os.environ.copy(); env["DISASTER_DB_PATH"] = str(Path(self.tempdir.name) / "policy.db")
+        out = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(json.loads(out.stdout.strip().splitlines()[-1]),
+                         {"local": True, "lan_no_optin": False, "all_ifaces": False, "no_tls": False,
+                          "http_ok": True, "no_staff": False})
+
+
+GATEWAY_TOKEN = "test-gateway-token-0123456789"
+
+
+class TestSensorGateway(ServerBase):
+    """마이크로비트 게이트웨이(가상 센서 모드) → 서버 → 감시 판정 → 승인 대기열."""
+    port = 18773
+    extra_env = {"WEBAPP_INCIDENT_PER_MIN": "1000", "SENSOR_GATEWAY_TOKEN": GATEWAY_TOKEN}
+
+    def gateway(self, *args, token=GATEWAY_TOKEN):
+        env = os.environ.copy(); env["SENSOR_GATEWAY_TOKEN"] = token
+        return subprocess.run([sys.executable, "gateway/microbit_gateway.py", "--server", self.base, *args],
+                              cwd=ROOT, env=env, capture_output=True, text=True, timeout=60)
+
+    def test_simulated_flood_reaches_approval_queue_once(self):
+        out = self.gateway("--simulate", "flood", "--ticks", "6", "--interval", "0.05")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("승인 대기열에 올림", out.stdout)
+        pending = [a for a in self.get("/api/approvals")[1]["items"] if a["kind"] == "monitor_stage"]
+        self.assertEqual(len(pending), 1)
+        self.assertEqual((pending[0]["item"]["source"], pending[0]["item"]["hazards"]), ("gateway", ["침수"]))
+        status, st = self.get("/api/sensor/status")
+        self.assertEqual(status, 200)
+        self.assertTrue(st["gateway_enabled"])
+        self.assertTrue(next(s for s in st["sensors"] if s["key"] == "A.water_low")["over"])
+        self.assertEqual(Client(self.base).get("/api/sensor/status")[0], 401)   # 현황은 담당자만
+
+    def test_wrong_token_and_session_cannot_post(self):
+        out = self.gateway("--simulate", "normal", "--ticks", "1", token="wrong-token-wrong-token")
+        self.assertIn("HTTP 401", out.stdout)
+        # 담당자 로그인 쿠키로도 게이트웨이 경로는 쓸 수 없다(토큰 필수)
+        self.assertEqual(self.post("/api/sensor/readings", {"readings": []})[0], 401)
+
+
+class TestSensorGatewayDisabled(ServerBase):
+    port = 18774
+
+    def test_disabled_without_token(self):
+        status, d, _ = Client(self.base).request("POST", "/api/sensor/readings", {"readings": []},
+                                                 headers={"X-Gateway-Token": "x" * 20})
+        self.assertEqual(status, 503, d)
+        self.assertFalse(self.get("/api/sensor/status")[1]["gateway_enabled"])

@@ -31,6 +31,19 @@ class TestRecovery(unittest.TestCase):
         self.assertEqual(r.output["missing"], ["zone", "householder"]); self.assertTrue(r.output["manual_form_required"])
         r = R.extract_fields("서류", None); self.assertTrue(r.output["manual_form_required"])   # 파싱 실패 → 수동 폼
 
+    def test_rule_extraction_without_ai(self):
+        doc = "피해 신고서\n구역: Z3\n세대주: 가구 H05\n연락처: 010-1234-5678\n피해 내용: 주택침수 (반지하)"
+        r = R.extract_fields(doc, None)
+        self.assertFalse(r.ai_used)
+        self.assertEqual(r.output["fields"], {"zone": "Z3", "householder": "가구 H05", "damage_type": "주택침수"})
+        self.assertEqual(R.extract_fields("Z12구역 확인서", None).output["fields"]["zone"], "Z12")   # 한글이 바로 붙어도
+        self.assertEqual(R.extract_fields("7구역 뒷산 토사 유출", None).output["fields"],
+                         {"zone": "Z7", "householder": None, "damage_type": "사면유실"})
+
+    def test_ai_fields_must_be_short_strings(self):
+        r = R.extract_fields("서류", fake('{"zone":3,"householder":"%s","damage_type":"주택침수"}' % ("가" * 60)))
+        self.assertEqual(r.output["missing"], ["zone", "householder"])
+
     def test_draft_needs_human_and_case_flow(self):
         d = R.draft_report("H1", {}, ["주택침수"], RC)
         self.assertTrue(d.needs_approval); self.assertIn("피해 사진", d.output["checklist"])

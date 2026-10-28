@@ -1,6 +1,6 @@
 # 재난 안전 AI 에이전트 (구현 1차 — 8개 에이전트 + 조정자)
 
-실행: `python -m unittest discover -s tests -t . -v`  (2026-10-28 기준 112개 통과; Solar 단위 테스트는 가짜 응답 사용)
+실행: `python -m unittest discover -s tests -t . -v`  (2026-10-28 기준 134개 통과; Solar·문서 파싱 단위 테스트는 가짜 응답 사용)
 
 | 에이전트 | 파일 | LLM 용도 | 설정 |
 |---|---|---|---|
@@ -30,9 +30,9 @@
 - 안전 수치(연속 활동 시간·고온·체크인 지연)·활동 시간 상한: 공식 지침 확인 전이라 null → 규칙 미적용, '기준 미확정' 표시.
 - Groundedness 모델명: 콘솔 확인 후 SolarClient(model=...)로 주입. 선택 근거 검색(임베딩)은 미구현(문서 ID 매핑만).
 - 안내 문구(guidance.json)·물품 카탈로그·지원제도 규칙의 '확인 필요' 항목·as_of(기준일): 공식 자료로 교체·확인.
-- 업스테이지 문서 파싱 API 직접 연동은 미구현(텍스트로 변환된 서류에서 추출하는 단계까지).
+- 업스테이지 문서 파싱: 연동 코드는 있으나 실제 API로는 아직 호출해 보지 않음. 주소·모델명(`DOCUMENT_PARSE_URL`·`DOCUMENT_PARSE_MODEL`)을 콘솔에서 확인해야 함.
 - 수요 1건에 여러 명이 필요한 인력 배치(④ 자체)는 ⑥·⑧ 쪽에서 반복 추천으로 처리.
-- 웹앱/API 서버는 `webapp/`에 포함되어 있으며 SQLite 영속 저장을 사용합니다. 실제 마이크로비트 게이트웨이는 아직 미구현입니다.
+- 웹앱/API 서버는 `webapp/`에 포함되어 있으며 SQLite 영속 저장을 사용합니다. 마이크로비트 게이트웨이는 가상 센서 모드로만 시험했고, 실제 기기 배선·임계값은 설치 점검에서 확정해야 합니다.
 - ② 접수: 인명구조와 대민지원은 자동 병합하지 않음. 키워드 규칙은 폴백용이며 평가 세트(80건)로 1차 보강함. 별도 세트로 재측정 필요.
 
 
@@ -112,10 +112,10 @@ API: `GET /api/health`, `GET /api/agents`, `GET /api/incidents`, `GET /api/appro
 테스트:
 
 ```bash
-python -m unittest discover -s tests -t . -v      # 단위 테스트 112개
-python -m unittest webapp.test_server -v           # mock 모드 서버 API 26개(로그인·권한·CSRF 6개, 배치 8개 포함)
-python -m unittest webapp.test_features -v         # 현장 운영 기능 API 9개(①③⑤⑥⑦⑧)
-python -m unittest webapp.test_server_solar -v     # solar 경로 8개(가짜 로컬 서버, 실제 API 호출 없음)
+python -m unittest discover -s tests -t . -v      # 단위 테스트 134개
+python -m unittest webapp.test_server -v           # mock 모드 서버 API 33개(로그인·권한·CSRF, 배치, 내부망 보안 4개, 센서 게이트웨이 3개 포함)
+python -m unittest webapp.test_features -v         # 현장 운영 기능 API 11개(①③⑤⑥⑦⑧, 서류 파일 읽기 포함)
+python -m unittest webapp.test_server_solar -v     # solar 경로 9개(가짜 로컬 서버, 실제 API 호출 없음. 문서 파싱 포함)
 ```
 
 `test_server_solar`는 127.0.0.1에 가짜 OpenAI 호환 서버를 띄워 `LLM_MODE=solar` 경로(안내문 생성 → Groundedness 판정 → 승인 대기열)를 검사합니다. 가짜 키 문자열만 쓰며, **통과해도 실제 Solar 연결이나 안내 정확성이 확인된 것은 아닙니다.** 포트 18765~18768을 사용합니다.
@@ -211,3 +211,25 @@ python -m unittest webapp.test_server_solar -v     # solar 경로 8개(가짜 �
 새 API: `GET /login`, `POST /api/login`, `POST /api/logout`, `GET /api/me`. 마이그레이션 `002_sessions.sql`이 첫 실행 때 자동 적용됩니다.
 
 **아직 남은 한계:** 실행 PC 밖(학교 내부망)으로 열려면 서버 바인딩 주소를 바꿔야 하는데, 지금은 HTTP라 내부망에서 비밀번호가 암호화되지 않은 채 오갑니다. 내부망에 열기 전에 HTTPS(또는 리버스 프록시)를 붙이고 `WEBAPP_COOKIE_SECURE=1`로 쿠키에 Secure를 켜야 합니다. 봉사자 역할과 계정 관리 화면은 없습니다(계정은 스크립트로만 생성).
+
+
+## 2026-10-28 추가: 게이트웨이 · 문서 파싱 · 내부망 보안 · 시연 준비
+
+| 작업 | 파일 | 안내 문서 |
+|---|---|---|
+| 마이크로비트 게이트웨이(① 실시간 센서 입력) | `microbit/*.py`, `gateway/microbit_gateway.py`, `webapp/sensors.py` | `docs/마이크로비트_게이트웨이.md` |
+| 업스테이지 문서 파싱(⑤ PDF·사진 서류 읽기) | `common/docparse.py`, `POST /api/recovery/parse` | 아래 |
+| 학교 내부망 배포 준비(보안 강화) | `webapp/server.py` | `docs/내부망_배포_점검표.md` |
+| 시연 준비와 순서 | `scripts/demo_setup.py`, `data/demo/` | `docs/시연_시나리오.md` |
+
+**센서 게이트웨이**: 서버와 게이트웨이에 같은 `SENSOR_GATEWAY_TOKEN`(16자 이상, `python gateway/microbit_gateway.py --new-token`)을 설정한다. 기기 없이 `--simulate flood`로 시험할 수 있다. 확정 후보는 승인 대기열에 한 번만 올라가고 단계는 담당자가 확정한다. 새 API: `POST /api/sensor/readings`(게이트웨이 토큰), `GET /api/sensor/status`(담당자).
+
+**문서 파싱**: `LLM_MODE=solar`일 때 ⑤ 복구·지원 탭에서 PDF·PNG·JPG를 올리면 업스테이지 문서 파싱으로 텍스트를 뽑고 필드를 추출한다. 원본은 저장하지 않고, 외부 전송 전에 동의 체크가 필요하며, 원래 파일 이름도 보내지 않는다. 텍스트(.txt) 파일은 mock 모드에서도 외부로 보내지 않고 바로 읽는다. AI가 없을 때는 '구역: Z3', '세대주: …' 같은 서식을 규칙으로 읽는다.
+
+**코드 리뷰로 고친 것**
+- ② 접수: 신고문을 300자에서 잘라 뒤쪽의 인명구조 문장이 분류·저장에서 빠지던 문제 → 2000자(서버 입력 상한)까지 사용.
+- ② 접수: AI 출력을 그대로 펼쳐 신고문 속 지시로 접수번호(id)·내용(text)을 바꿀 수 있던 문제 → 필요한 네 키만 사용. 인원이 true·음수면 AI 출력 버림.
+- 중복 신고 검사가 마스킹 전 문장과 마스킹 후 저장 문장을 비교해, 전화번호가 있는 신고는 중복을 못 찾던 문제.
+- ⑧ 물품 배치 승인: 승인을 기록한 뒤 출고가 실패하면 '승인됐지만 출고 안 됨'이 남던 문제 → 승인 전에 저장하지 않는 사본으로 출고를 먼저 시험.
+- LLM 응답 캐시가 서버 실행 중 끝없이 늘던 문제(500개 상한). 서버 호출 한도를 `SOLAR_MAX_CALLS`로 조정 가능.
+- 남은 설계 한계(고치지 않음): 통제 구간은 '두 구역 사이 직접 이동'만 막는다. Z1↔Z6이 통제여도 Z2를 거쳐 가는 경로는 계산하지 않는다(격자 이동 시간 규칙의 단순화).

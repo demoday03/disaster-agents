@@ -5,6 +5,8 @@ data/*.db-shm
 data/*.db-journal
 
 # 비밀 값
+*.pem
+*.key
 .env
 .env.*
 !.env.example

@@ -84,7 +84,9 @@ def list_incidents(limit: int = 100) -> list[dict]:
 def find_duplicate_incident(text: str) -> dict | None:
     """Find an identical recent report (case/whitespace-insensitive) to avoid repeat submissions."""
     import re
-    normalized = re.sub(r"\s+", " ", text).strip().casefold()
+    from common.masking import mask
+    # 저장된 신고문은 마스킹돼 있으므로 같은 방식으로 마스킹한 뒤 비교한다(전화번호가 있으면 중복을 못 찾던 문제)
+    normalized = re.sub(r"\s+", " ", mask(text)).strip().casefold()
     if not normalized:
         return None
     # Recent list is deliberately bounded for this local demo.

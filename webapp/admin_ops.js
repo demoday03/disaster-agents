@@ -14,11 +14,11 @@
   const fail = (id, e) => show(id, '오류: ' + E(e.message), true);
   const checked = name => [...document.querySelectorAll(`input[name=${name}]:checked`)].map(x => x.value);
   const STATE_CLS = {완료: 'ok', 안전: 'ok', 반려: 'bad', 격상: 'bad', 보류: 'warn', '지연 응답': 'warn', 재추천: 'warn'};
-  let current = 'overview', META = null, refreshTimer = null;
+  let current = 'overview', META = null, refreshTimer = null, lastSensorApproval = null;
 
   // ---------------------------------------------------------------- 탭
   const LOADERS = {overview: loadSituation, supply: loadSupply, volunteer: loadVolunteer, recovery: loadRecovery,
-                   welfare: loadChecks, sensor: loadVerifyDocs, approvals: () => loadApprovals(), dispatch: () => { loadDispatch(); loadControl(); },
+                   welfare: loadChecks, sensor: () => { loadVerifyDocs(); loadSensorLive(); }, approvals: () => loadApprovals(), dispatch: () => { loadDispatch(); loadControl(); },
                    guidance: loadIncidents};
   function go(tab) {
     current = tab;
@@ -26,6 +26,7 @@
     document.querySelectorAll('section[data-tab]').forEach(s => { s.hidden = s.dataset.tab !== tab; });
     clearInterval(refreshTimer);
     if (tab === 'welfare') refreshTimer = setInterval(loadChecks, 3000);   // 남은 시간·격상 자동 갱신
+    if (tab === 'sensor') refreshTimer = setInterval(loadSensorLive, 2000);   // 게이트웨이 수신값 자동 갱신
     if (LOADERS[tab]) LOADERS[tab]();
     try { localStorage.setItem('adminTab', tab); } catch (e) { /* 저장 불가 환경 */ }
   }
@@ -160,6 +161,7 @@
     try {
       await loadMeta();
       const d = await api('/api/recovery');
+      if (!d.doc_parser) $('docParserNote').textContent = '문서 파싱 API가 연결되지 않아(mock 모드) 지금은 텍스트(.txt) 파일만 읽을 수 있습니다. PDF·사진은 LLM_MODE=solar로 실행하세요.';
       $('caseList').innerHTML = table(['케이스', '가구·구역', '현재 단계', '이력', '봉사 작업', '처리'], d.cases.map(c => {
         const idx = d.stages.indexOf(c.stage), next = d.stages[idx + 1];
         const tasks = Object.entries(c.tasks || {}).map(([t, s]) => chip(`${t} ${s}`, s === '완료' ? 'ok' : '')).join('') || '-';
@@ -241,6 +243,29 @@
   }
 
   // ---------------------------------------------------------------- ⑦ 검증
+  async function loadSensorLive() {
+    try {
+      const d = await api('/api/sensor/status');
+      if (!d.gateway_enabled) {
+        $('sensorLive').innerHTML = '게이트웨이가 꺼져 있습니다. 서버를 SENSOR_GATEWAY_TOKEN 환경변수와 함께 실행하고 <code>python gateway/microbit_gateway.py</code>를 켜세요(docs/마이크로비트_게이트웨이.md).';
+        return;
+      }
+      const age = s => s == null ? '-' : `${s}초 전`;
+      const ev = d.last_eval, o = ev && ev.output;
+      if (ev && ev.approval_id && ev.approval_id !== lastSensorApproval) { lastSensorApproval = ev.approval_id; loadApprovals(); }   // 대기열 숫자 갱신
+      $('sensorLive').innerHTML =
+        `<div>노드: ${d.nodes.map(n => chip(`${n.node} ${n.online ? '연결' : '끊김'} · ${age(n.last_seen_age_s)}`, n.online ? 'ok' : 'bad')).join(' ')}` +
+        ` · 받은 값 ${E(d.received)}개${d.rejected ? ` · 버린 값 ${E(d.rejected)}개` : ''} · 강우 단계 ${E(d.rain_stage)}</div>` +
+        table(['센서', '최근 값', '임계값', '받은 때'], d.sensors.map(s =>
+          `<tr><td>${E(s.key)}</td><td>${s.value == null ? '-' : chip(s.value, s.over ? 'bad' : 'ok')}</td><td>${E(s.threshold)}</td><td>${E(age(s.age_s))}</td></tr>`)) +
+        (o ? `<div>최근 판정: ${chip(o.status, o.status === '확정후보' ? 'bad' : o.status === '보류' ? 'warn' : 'ok')} 제안 단계 <b>${E(o.level)}</b> · ${E(o.summary)}` +
+             (ev.approval_id ? ` · 승인 대기열에 올림(${E(ev.approval_id)})` : ev.duplicate_of ? ' · 같은 단계가 이미 대기·확정 중' : '') + '</div>' +
+             (o.false_alarm_log.length ? `<div class="muted">${E(o.false_alarm_log.join(' / '))}</div>` : '')
+           : '<div class="muted">아직 받은 값이 없습니다. 게이트웨이를 실행하세요.</div>') +
+        (d.calibrated ? '' : '<div class="muted">임계값 보정 전(임시값)</div>');
+    } catch (e) { showError('sensorLive', e); }
+  }
+
   async function loadVerifyDocs() {
     if ($('vDocs').querySelector('input')) return;
     try {
@@ -313,17 +338,31 @@
           (r.verification.verdict ? `<p>안내 문장 검증: ${chip(r.verification.verdict, r.verification.displayable ? 'ok' : 'warn')} ${r.draft ? E(r.draft) : '<span class="muted">통과 전이라 문장으로 안내하지 않고 위 규칙 데이터만 보여 줍니다.</span>'}</p>` : '');
       } catch (err) { $('supportResult').innerHTML = '<span class="err">오류: ' + E(err.message) + '</span>'; }
     });
+    const fillExtract = (r, prefix = '') => {
+      const f = r.fields;
+      if (f.zone && [...$('rpZone').options].some(o => o.value === f.zone)) $('rpZone').value = f.zone;
+      if (f.householder) $('rpHolder').value = f.householder;
+      if (f.damage_type && [...$('rpDamage').options].some(o => o.value === f.damage_type)) $('rpDamage').value = f.damage_type;
+      $('extractResult').innerHTML = prefix + (r.manual_form_required
+        ? `<span class="err">추출하지 못한 필드(${E(r.missing.join(', '))})가 있어 아래 입력 폼으로 직접 채워 주세요.</span>${r.ai_used ? '' : ' <span class="muted">AI 미사용</span>'}`
+        : '추출한 값을 아래 폼에 채웠습니다. 확인 후 초안을 만드세요.');
+    };
     $('extractBtn').addEventListener('click', async () => {
+      try { fillExtract(await post('/api/recovery/extract', {text: $('docText').value})); }
+      catch (err) { $('extractResult').innerHTML = '<span class="err">오류: ' + E(err.message) + '</span>'; }
+    });
+    $('parseBtn').addEventListener('click', async () => {
+      const file = $('docFile').files[0];
+      if (!file) { $('extractResult').innerHTML = '<span class="err">파일을 먼저 고르세요.</span>'; return; }
+      if (file.size > 5 * 1024 * 1024) { $('extractResult').innerHTML = '<span class="err">파일은 5MB 이하여야 합니다.</span>'; return; }
+      const btn = $('parseBtn'); btn.disabled = true; $('extractResult').textContent = '파일을 읽는 중…';
       try {
-        const r = await post('/api/recovery/extract', {text: $('docText').value});
-        const f = r.fields;
-        if (f.zone) $('rpZone').value = f.zone;
-        if (f.householder) $('rpHolder').value = f.householder;
-        if (f.damage_type && [...$('rpDamage').options].some(o => o.value === f.damage_type)) $('rpDamage').value = f.damage_type;
-        $('extractResult').innerHTML = r.manual_form_required
-          ? `<span class="err">추출하지 못한 필드(${E(r.missing.join(', '))})가 있어 아래 입력 폼으로 직접 채워 주세요.</span>${r.ai_used ? '' : ' <span class="muted">AI 미사용</span>'}`
-          : '추출한 값을 아래 폼에 채웠습니다. 확인 후 초안을 만드세요.';
+        const data = await new Promise((ok, bad) => { const fr = new FileReader(); fr.onload = () => ok(String(fr.result).split(',')[1] || ''); fr.onerror = () => bad(new Error('파일을 읽지 못했습니다')); fr.readAsDataURL(file); });
+        const r = await post('/api/recovery/parse', {filename: file.name, data_base64: data, consent_external: $('docConsent').checked});
+        $('docText').value = r.text;
+        fillExtract(r, `${r.parser === 'upstage' ? '업스테이지 문서 파싱으로' : '텍스트 파일로'} 읽었습니다${r.pages ? `(${E(r.pages)}쪽)` : ''}${r.truncated ? ' · 길어서 앞부분만 표시' : ''}. `);
       } catch (err) { $('extractResult').innerHTML = '<span class="err">오류: ' + E(err.message) + '</span>'; }
+      finally { btn.disabled = false; }
     });
     $('reportForm').addEventListener('submit', async e => {
       e.preventDefault();
@@ -349,6 +388,7 @@
         loadChecks();
       } catch (err) { $('checkResult').innerHTML = '<span class="err">오류: ' + E(err.message) + '</span>'; }
     });
+    $('refreshSensor').addEventListener('click', loadSensorLive);
     $('sensorForm').addEventListener('submit', async e => {
       e.preventDefault();
       const now = Date.now() / 1000, rows = [];

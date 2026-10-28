@@ -25,6 +25,7 @@ def _http_transport(url, headers, body, timeout):
 
 
 class SolarClient:
+    CACHE_MAX = 500
     def __init__(self, base_url=None, api_key=None, model=None,
                  transport=None, timeout=20, max_calls=200):
         self.base_url = (base_url or os.getenv("SOLAR_BASE_URL")
@@ -59,6 +60,8 @@ class SolarClient:
             # 일부 예외 메시지에 URL/요청 세부정보가 포함될 수 있어 키는 출력하지 않는다.
             detail = str(e).replace(self.api_key, "[REDACTED]") if self.api_key else str(e)
             raise LLMUnavailable(f"호출 실패: {detail}") from e
+        if len(self._cache) >= self.CACHE_MAX:   # 서버처럼 오래 도는 프로세스에서 메모리가 끝없이 늘지 않게
+            self._cache.clear()
         self._cache[key] = text
         return text
 
