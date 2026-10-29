@@ -36,10 +36,15 @@ class SafetyChecker:
         return out
 
 
-def make_guidance(profile, level, control_zones, cfg, client=None, verifier=None):
-    """profile: {'flags': [...]}. verifier(draft, evidence) -> 'grounded'|'notGrounded'|'notSure'."""
+def make_guidance(profile, level, control_zones, cfg, client=None, verifier=None, hazard=None):
+    """profile: {'flags': [...]}. verifier(draft, evidence) -> 'grounded'|'notGrounded'|'notSure'.
+    hazard('호우'·'산사태'·'정전'·'도로'): 그 위험의 행동요령 조각을 extra_per_hazard개까지 덧붙인다(없으면 공통 조각만)."""
     flags = set(profile.get("flags", []))
-    frs = [f for f in cfg["fragments"] if level in f["levels"] and (not f["flags"] or flags & set(f["flags"]))]
+    fits = lambda f: level in f["levels"] and (not f["flags"] or flags & set(f["flags"]))
+    frs = [f for f in cfg["fragments"] if not f.get("hazard") and fits(f)]
+    if hazard:   # 가구 특성에 맞는 조각을 먼저, 그다음 일반 조각
+        extra = sorted((f for f in cfg["fragments"] if f.get("hazard") == hazard and fits(f)), key=lambda f: not f["flags"])
+        frs += extra[:cfg.get("extra_per_hazard", 3)]
     std = [f["text"] for f in frs]
     if control_zones:
         std.append(f"통제 구간({', '.join(control_zones)})은 피해서 이동하세요.")

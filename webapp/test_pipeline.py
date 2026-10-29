@@ -1,6 +1,6 @@
 """신고 → 다음 에이전트 연결과 예외 처리(잘못된 신고·필수 정보 누락·에이전트 오류) 시험. mock 모드, 실제 API 호출 없음.
 실행: python -m unittest webapp.test_pipeline -v"""
-import time, unittest
+import time, unittest, urllib.request
 from pathlib import Path
 from database import db
 from webapp.test_server import Client, ServerBase
@@ -237,6 +237,88 @@ class TestPipeline(ServerBase):
         self.assertTrue(self.get("/api/stage")[1]["confirmed"])
         for x in self.get("/api/dispatch")[1]["assignments"]:
             self.post(f"/api/dispatch/{x['id']}/release", {})
+
+    def test_staff_reclassify_and_fill_zone(self):
+        o = self.report("어딘지 모르겠는데 물이 차올라요 (분류 수정 시험)")
+        self.assertEqual(o["state"], "보완 필요")
+        path = f"/api/incidents/{o['id']}/classify"
+        self.assertIn(Client(self.base).post(path, {"type": "침수", "zone": "Z4", "urgency": 2})[0], (401, 403))
+        self.assertEqual(self.post(path, {"type": "없는유형", "zone": "Z4", "urgency": 2})[0], 400)
+        self.assertEqual(self.post(path, {"type": "침수", "zone": "Z99", "urgency": 2})[0], 400)
+        self.assertEqual(self.post(path, {"type": "침수", "zone": "Z4", "urgency": 9})[0], 400)
+        code, d = self.post(path, {"type": "침수", "zone": "Z4", "urgency": 2})
+        self.assertEqual((code, d["output"]["zone"], d["output"]["state"]), (200, "Z4", "접수"))   # 구역을 채우면 바로 다음 단계로
+        v = self.staff_view(o["id"])
+        self.assertEqual((v["classified_by"], v["label"]), ("담당자", "담당자 수정"))
+        self.assertTrue(v["linked"].get("dispatch"))
+        self.assertIn("담당자 분류 수정", " ".join(v["notes"]))
+        for x in self.get("/api/dispatch")[1]["assignments"]:
+            self.post(f"/api/dispatch/{x['id']}/release", {})
+
+    def test_shelter_occupancy_and_daily_report(self):
+        sh = lambda: next(s for s in self.get("/api/dispatch")[1]["shelters"] if s["id"] == "S3")
+        before = sh()
+        self.assertIn(Client(self.base).post("/api/shelters/S3/occupancy", {"delta": 1})[0], (401, 403))
+        self.assertEqual(self.post("/api/shelters/S3/occupancy", {"delta": 0})[0], 400)
+        self.assertEqual(self.post("/api/shelters/S9/occupancy", {"delta": 1})[0], 404)
+        code, d = self.post("/api/shelters/S3/occupancy", {"delta": 2})
+        self.assertEqual((code, d["occupied"]), (200, before["occupied"] + 2))
+        self.assertEqual(sh()["capacity_left"], before["capacity_left"] - 2)   # 배정 추천·시민 화면이 보는 남은 자리
+        self.assertEqual(self.post("/api/shelters/S3/occupancy", {"delta": -50})[0], 409)   # 0명 아래로는 못 내림
+        self.post("/api/shelters/S3/occupancy", {"delta": -2})
+        code, r = self.get("/api/report/daily")
+        self.assertEqual(code, 200)
+        self.assertIn("일일 상황 보고서", r["text"])
+        self.assertGreaterEqual(r["stats"]["incidents"], 1)
+        self.assertEqual(Client(self.base).get("/api/report/daily")[0], 401)
+
+    def test_citizen_home_safe_check_and_supply_flow(self):
+        anon = Client(self.base)
+        code, d = anon.get("/api/public/households")
+        self.assertEqual((code, len(d["items"])), (200, 20))
+        self.assertEqual(anon.get("/api/public/households/H99")[0], 404)
+        self.assertEqual(anon.post("/api/public/households/H05/safe", {})[0], 409)   # 안부 확인 전에는 응답할 것이 없음
+        self.post("/api/welfare/checks/start", {"zone": "Z3", "timeout_s": 600})
+        _, h = anon.get("/api/public/households/H05")
+        self.assertEqual(h["check"]["state"], "대기")
+        self.assertTrue(h["risks"])
+        self.assertNotIn("의약품", " ".join(h["catalog"]))
+        code, r = anon.post("/api/public/households/H05/safe", {})
+        self.assertEqual((code, r["state"]), (201, "안전"))
+        self.assertEqual(anon.post("/api/public/households/H05/safe", {})[0], 409)   # 두 번은 안 됨
+        self.assertEqual(anon.post("/api/public/supply", {"household": "H05", "item": "처방약", "qty": 1})[0], 400)
+        code, r = anon.post("/api/public/supply", {"household": "H05", "item": "담요", "qty": 2, "when": "지금"})
+        self.assertEqual(code, 201, r)
+        rid = r["requests"][0]["id"]
+        self.assertEqual(r["requests"][0]["state"], "검토")                   # 담당자 검토 전에는 출고 없음
+        self.assertEqual(anon.post(f"/api/public/supply/{rid}/receipt", {"household": "H01", "received": True})[0], 403)
+        self.assertEqual(anon.post(f"/api/public/supply/{rid}/receipt", {"household": "H05", "received": True})[0], 409)
+        _, h = anon.get("/api/public/households/H05")
+        self.assertIn(rid, [x["id"] for x in h["requests"]])
+
+    def test_volunteer_screen_only_acts_on_own_tasks(self):
+        anon = Client(self.base)
+        self.assertEqual(len(anon.get("/api/public/volunteers")[1]["items"]), 12)
+        _, v = self.post("/api/volunteer/requests", {"text": "마당 토사 치워 주세요", "zone": "Z3"})
+        t = next(x for x in v["tasks"] if x.get("pending_approval"))
+        team = t["last_recommendation"]["team"]
+        outsider = next(x["id"] for x in anon.get("/api/public/volunteers")[1]["items"] if x["id"] not in team)
+        self.assertEqual(anon.post(f"/api/public/volunteers/{team[0]}/tasks/{t['id']}/checkin", {})[0], 403)   # 승인 전
+        self.post(f"/api/approvals/{t['pending_approval']}/resolve", {"approved": True, "reason": "투입"})
+        self.assertEqual(anon.post(f"/api/public/volunteers/{outsider}/tasks/{t['id']}/checkin", {})[0], 403)
+        _, me = anon.get(f"/api/public/volunteers/{team[0]}")
+        self.assertIn(t["id"], [x["id"] for x in me["my_tasks"]])
+        self.assertEqual(anon.post(f"/api/public/volunteers/{team[0]}/tasks/{t['id']}/checkin", {})[1]["state"], "진행")
+        self.assertEqual(anon.post(f"/api/public/volunteers/{team[0]}/tasks/{t['id']}/complete", {})[1]["state"], "완료")
+        code, s = anon.post(f"/api/public/volunteers/{team[0]}/sos", {})
+        self.assertEqual((code, s["open"]), (201, True))
+        self.assertIn(s["id"], [x["id"] for x in self.get("/api/volunteer")[1]["sos"]])   # 담당자 화면에 뜸
+        code, dn = anon.post(f"/api/public/volunteers/{team[0]}/donations",
+                             {"item": "생수", "qty": 12, "unit": "병", "condition": "새것", "days_left": 200, "zone": "Z3"})
+        self.assertEqual((code, dn["state"]), (201, "검수 대기"))
+        with urllib.request.urlopen(f"{self.base}/api/public/volunteers/{team[0]}/activity.csv", timeout=3) as r:
+            body = r.read().decode("utf-8-sig")
+        self.assertIn("작업 봉사", body); self.assertIn("물품 기부", body)
 
     def test_labor_request_chains_to_volunteer(self):
         o = self.report("Z3 집 안 진흙 퍼낼 일손이 필요해요")

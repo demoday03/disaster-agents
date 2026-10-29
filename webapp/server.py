@@ -20,7 +20,7 @@ from common import scenario
 from agents import dispatch, intake, monitor, recovery, welfare, verify
 from coordinator import Coordinator
 from database import db as database
-from webapp import features, sensors
+from webapp import features, public_api, sensors, weather
 
 HOST = os.getenv("WEBAPP_HOST", "127.0.0.1")
 PORT = int(os.getenv("WEBAPP_PORT", "8765"))
@@ -81,6 +81,7 @@ class RateLimiter:
 
 
 INCIDENT_LIMIT = RateLimiter(int(os.getenv("WEBAPP_INCIDENT_PER_MIN", "10")), 60)   # 접속 IP당 분당 신고 수
+PUBLIC_LIMIT = RateLimiter(int(os.getenv("WEBAPP_PUBLIC_PER_MIN", "60")), 60)   # 시민·봉사자 화면의 기록 요청
 LOGIN_IP_LIMIT = RateLimiter(30, 600)   # 접속 IP당 10분에 로그인 시도 30번(계정별 5번 잠금과 별도)
 
 
@@ -262,7 +263,7 @@ def followups(incident_id):
                 else ("경계" if (o.get("urgency") or 4) <= 2 else "주의")
             flags = sorted(f for f, ws in GUIDANCE_FLAG_WORDS.items() if any(w in o["text"] for w in ws))
             ctrl = [c["name"] for c in current_control_zones() if c.get("active")]
-            g = generate_guidance(incident_id, level, flags, ctrl)
+            g = generate_guidance(incident_id, level, flags, ctrl, GUIDANCE_CFG.get("hazard_by_type", {}).get(o.get("type")))
             add["guidance"] = {"level": level, "status": g["output"].get("status"), "verdict": g["output"].get("verdict"),
                                "approval_id": g.get("approval_id"), "review_id": g.get("review_id"),
                                "blocked": bool(g.get("blocked"))}
@@ -437,6 +438,58 @@ SCENARIO = scenario.load()
 DISPATCH_CFG = dispatch.load_config()
 
 
+def scenario_now():
+    """대피소 운영(제안서 O6): 담당자가 기록한 입소·퇴소를 시나리오의 현재 인원에 더한다(0~수용량 사이)."""
+    delta = {r["id"]: r["delta"] for r in database.list_records("shelter_occ")}
+    return {**SCENARIO, "shelters": [{**s, "occupied": min(s["capacity"], max(0, s["occupied"] + delta.get(s["id"], 0)))}
+                                     for s in SCENARIO["shelters"]]}
+
+
+def daily_report():
+    """일일 상황 보고서 초안(제안서 O13): 규칙으로 집계하고 문장도 규칙으로 만든다(AI 미사용, 숫자 왜곡 없음).
+    사후 평가로 신고 접수부터 첫 승인까지 걸린 시간을 함께 낸다."""
+    incs = [x["output"] for x in database.list_incidents(1000)]
+    created = {o["id"]: o["ts"] if isinstance(o.get("ts"), (int, float)) else _epoch(o.get("ts")) for o in incs}
+    live = [o for o in incs if o.get("state") != INVALID]
+    by_type, by_urg = {}, {}
+    for o in live:
+        by_type[o.get("type", "미분류")] = by_type.get(o.get("type", "미분류"), 0) + 1
+        by_urg[str(o.get("urgency") or "미정")] = by_urg.get(str(o.get("urgency") or "미정"), 0) + 1
+    aps = database.list_approval_stats()
+    count = lambda st: sum(a["state"] == st for a in aps)
+    first = {}
+    for a in aps:
+        if a["state"] == "approved" and a["incident_id"] in created and a["resolved_at"]:
+            t = _epoch(a["resolved_at"]) - created[a["incident_id"]]
+            first[a["incident_id"]] = min(first.get(a["incident_id"], t), t)
+    mins = sorted(t / 60 for t in first.values() if t >= 0)
+    median = round(mins[len(mins) // 2], 1) if mins else None
+    stage = database.get_record("stage", "current") or {}
+    checks = database.list_records("check")
+    sup = database.list_records("supply_request")
+    tasks = database.list_records("task")
+    stats = {"incidents": len(live), "invalid": len(incs) - len(live), "by_type": by_type, "by_urgency": by_urg,
+             "waiting_info": sum(o.get("state") == "보완 필요" for o in live),
+             "approved": count("approved"), "rejected": count("rejected"), "pending": count("pending"),
+             "first_approval_median_min": median, "first_approval_n": len(mins),
+             "stage": stage.get("level", "정상") if stage.get("confirmed") else "정상(미확정)",
+             "escalated": sum(c["state"] == "격상" for c in checks),
+             "supply_done": sum(r["state"] == "완료" for r in sup), "supply_open": sum(r["state"] not in ("완료", "반려") for r in sup),
+             "tasks_done": sum(t["state"] == "완료" for t in tasks), "tasks_open": sum(t["state"] != "완료" for t in tasks)}
+    kinds = ", ".join(f"{k} {v}건" for k, v in sorted(by_type.items(), key=lambda kv: -kv[1])) or "없음"
+    text = "\n".join([
+        f"[일일 상황 보고서 초안 · {datetime.now().strftime('%Y-%m-%d %H:%M')} 기준 · 모의 데이터]",
+        f"1. 위기 단계: {stats['stage']}",
+        f"2. 신고: {stats['incidents']}건({kinds}). 긴급도 1은 {by_urg.get('1', 0)}건. "
+        f"정보 보완 대기 {stats['waiting_info']}건, 오접수 처리 {stats['invalid']}건.",
+        f"3. 결정: 승인 {stats['approved']}건, 반려 {stats['rejected']}건, 대기 {stats['pending']}건.",
+        f"4. 안부 확인: 무응답 격상 {stats['escalated']}가구.",
+        f"5. 물품: 완료 {stats['supply_done']}건, 진행 중 {stats['supply_open']}건. 봉사: 완료 {stats['tasks_done']}건, 진행·대기 {stats['tasks_open']}건.",
+        "6. 사후 평가: 신고 접수부터 첫 승인까지 " + (f"중앙값 {median}분({len(mins)}건 기준)." if mins else "기록 없음."),
+        "※ 규칙으로 집계한 초안입니다. 담당자가 확인한 뒤 사용하세요."])
+    return {"stats": stats, "text": text}
+
+
 def current_control_zones():
     """통제 구간(제안서 O5): 시나리오 기본값에 담당자가 등록·해제한 내용을 덮어쓴다."""
     saved = {r["id"]: r for r in database.list_records("control")}
@@ -475,7 +528,7 @@ def recommend_dispatch(incident_id, kind, data, output=None):
         dkind = "public"
     else:
         demand = scenario.shelter_demand(output, SCENARIO, data.get("people"), data.get("amenities", []))
-        candidates = scenario.shelter_candidates(SCENARIO, assigned)
+        candidates = scenario.shelter_candidates(scenario_now(), assigned)
         dkind = "shelter"
     # 같은 신고·같은 배치 종류에서 담당자가 거절한 1순위는 제외하고 다시 추천(제안서 5.7 거절 → 재추천)
     rejected = {((a["item"].get("recommendation") or {}).get("top") or {}).get("id")
@@ -565,7 +618,7 @@ def recheck_dispatch(approval):
         if top.get("id") in busy:
             return f"{top['id']}는 이미 다른 배치({busy[top['id']]['incident_id']})에 투입되어 있습니다. 다시 추천하세요"
     elif approval["kind"] == "dispatch_shelter":
-        shelter = next((s for s in scenario.shelter_candidates(SCENARIO, assigned) if s["id"] == top.get("id")), None)
+        shelter = next((s for s in scenario.shelter_candidates(scenario_now(), assigned) if s["id"] == top.get("id")), None)
         if shelter is None or shelter["capacity_left"] < approval["item"]["demand"]["people"]:
             return f"{top.get('id')}의 남은 수용량이 부족합니다. 다시 추천하세요"
     return None
@@ -574,9 +627,11 @@ def recheck_dispatch(approval):
 DOC_PARSER = DocumentParser(max_calls=LLM_MAX_CALLS) if MODE == "solar" else None
 FEATURES = features.Features(database, SCENARIO, travel, DISPATCH_CFG, GUIDANCE_CFG, LLM, VERIFY_LLM, DOC_PARSER)
 SENSORS = sensors.SensorHub(database)
+WEATHER = weather.WeatherFeed()   # 기상청 초단기실황·특보(참고 정보, 키 없으면 표시만 안 함)
+PUBLIC = public_api.PublicAPI(FEATURES, database, scenario_now)   # 시민·봉사자 화면(가상 코드 선택, 로그인 없음)
 
 
-def generate_guidance(incident_id, level, flags, control_zones):
+def generate_guidance(incident_id, level, flags, control_zones, hazard=None):
     """③ 안내문 → ⑦ 검증. grounded면 승인 대기열(welfare_guidance), notSure면 담당자 확인, notGrounded면 차단.
     AI를 쓸 수 없으면(검증기 없음 포함) 표준 원문만 만든다(fail closed). 응답에는 승인 전 AI 문구를 넣지 않는다."""
     verifier_fn = guidance_client = None
@@ -584,7 +639,7 @@ def generate_guidance(incident_id, level, flags, control_zones):
         guidance_client = LLM
         verifier_fn = lambda draft, evidence: verify.verify_text(draft, evidence, client=VERIFY_LLM)[0]
     result = welfare.make_guidance(profile={"flags": flags}, level=level, control_zones=control_zones,
-                                   cfg=GUIDANCE_CFG, client=guidance_client, verifier=verifier_fn)
+                                   cfg=GUIDANCE_CFG, client=guidance_client, verifier=verifier_fn, hazard=hazard)
     row = result_dict(result)
     output = row.get("output", {})
     if output.get("status") == "승인 대기" and output.get("verdict") == "grounded" and output.get("displayable") is True:
@@ -637,13 +692,15 @@ def public_status():
             break
     _, assigned = dispatch_state()
     shelters = [{k: s[k] for k in ("name", "type", "zone", "capacity", "capacity_left", "amenities")}
-                for s in scenario.shelter_candidates(SCENARIO, assigned)]
+                for s in scenario.shelter_candidates(scenario_now(), assigned)]
     return {"stage": {"level": stage.get("level", "정상"), "hazards": stage.get("hazards", []),
                       "confirmed": bool(stage.get("confirmed")), "at": stage.get("at")},
             "notices": notices, "shelters": shelters,
             "control_zones": [{"name": c["name"], "between": c.get("between", [])}
                               for c in current_control_zones() if c.get("active")],
-            "zones": {z["id"]: z["name"] for z in SCENARIO["zones"]}}
+            "zones": {z["id"]: z["name"] for z in SCENARIO["zones"]},
+            "zone_grid": [{k: z[k] for k in ("id", "name", "risk", "row", "col")} for z in SCENARIO["zones"]],
+            "weather": WEATHER.status()}
 
 
 def read_json_body(handler, limit=MAX_BODY):
@@ -739,6 +796,53 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header(k, v)
         self.end_headers(); self.wfile.write(body)
 
+    def public_call(self, method, path, data):
+        """시민·봉사자 공개 경로(public_api). 오류는 404/403/409/400으로 돌려준다."""
+        p = path.strip("/").split("/")[2:]   # api/public/ 뒤
+        routes = {
+            ("GET", "households"): lambda: {"items": PUBLIC.households()},
+            ("GET", "households", "*"): lambda: PUBLIC.household(p[1]),
+            ("POST", "households", "*", "safe"): lambda: PUBLIC.respond_check(p[1]),
+            ("POST", "supply"): lambda: PUBLIC.supply_request(data),
+            ("POST", "supply", "*", "receipt"): lambda: PUBLIC.receipt(p[1], data),
+            ("GET", "volunteers"): lambda: {"items": PUBLIC.volunteers()},
+            ("GET", "volunteers", "*"): lambda: PUBLIC.volunteer(p[1]),
+            ("POST", "volunteers", "*", "tasks", "*", "checkin"): lambda: PUBLIC.checkin(p[1], p[3]),
+            ("POST", "volunteers", "*", "tasks", "*", "complete"): lambda: PUBLIC.complete(p[1], p[3]),
+            ("POST", "volunteers", "*", "sos"): lambda: PUBLIC.sos(p[1], data),
+            ("POST", "volunteers", "*", "donations"): lambda: PUBLIC.donation(p[1], data),
+        }
+        key = (method, *[x if i % 2 == 0 else "*" for i, x in enumerate(p)])
+        if method == "GET" and len(p) == 3 and p[0] == "volunteers" and p[2] == "activity.csv":
+            try:
+                with FEATURES.lock:
+                    body = PUBLIC.export_csv(p[1]).encode("utf-8")
+            except KeyError:
+                return self.send_json(404, {"error": "봉사자를 찾을 수 없습니다"})
+            self.send_response(200)
+            self.send_header("Content-Type", "text/csv; charset=utf-8")
+            self.send_header("Content-Disposition", f'attachment; filename="activity_{p[1]}.csv"')
+            self.send_header("Content-Length", str(len(body)))
+            for k, v in SECURITY_HEADERS.items():
+                self.send_header(k, v)
+            self.end_headers(); self.wfile.write(body)
+            return
+        fn = routes.get(key)
+        if fn is None or any(len(x) > 40 for x in p):
+            return self.send_json(404, {"error": "찾을 수 없는 경로입니다"})
+        try:
+            with FEATURES.lock:
+                res = fn()
+        except KeyError:
+            return self.send_json(404, {"error": "가구·봉사자·요청을 찾을 수 없습니다"})
+        except PermissionError as e:
+            return self.send_json(403, {"error": str(e)})
+        except features.Conflict as e:
+            return self.send_json(409, {"error": str(e)})
+        except ValueError as e:
+            return self.send_json(400, {"error": str(e)})
+        return self.send_json(201 if method == "POST" else 200, res)
+
     def do_GET(self):
         path = urlparse(self.path).path
         if not self.host_allowed():
@@ -749,8 +853,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_html("admin.html")
         if path == "/login":
             return self.send_html("login.html")
-        if path == "/static/admin_ops.js":   # 정해진 파일만 제공(경로 조작 방지)
-            return self.send_html("admin_ops.js", "application/javascript; charset=utf-8")
+        if path in ("/static/admin_ops.js", "/static/zonemap.js"):   # 정해진 파일만 제공(경로 조작 방지)
+            return self.send_html(path.rsplit("/", 1)[-1], "application/javascript; charset=utf-8")
         if path == "/api/me":
             _, s = self.session()
             if s is None:
@@ -791,6 +895,18 @@ class Handler(BaseHTTPRequestHandler):
             if not self.require_staff():
                 return
             return self.send_json(200, {**SENSORS.status(), "gateway_enabled": bool(SENSOR_TOKEN)})
+        if path in ("/volunteer",):
+            return self.send_html("volunteer.html")
+        if path.startswith("/api/public/") and path != "/api/public/status":
+            return self.public_call("GET", path, {})
+        if path == "/api/weather":   # 기상청 실제 강수·특보(참고 정보)와 지금 감시 에이전트가 쓰는 강우 단계
+            if not self.require_staff():
+                return
+            return self.send_json(200, {**WEATHER.status(), "applied_rain_stage": SENSORS.rain_stage})
+        if path == "/api/report/daily":   # 일일 상황 보고서 초안과 사후 평가(O13)
+            if not self.require_staff():
+                return
+            return self.send_json(200, daily_report())
         if path == "/api/dispatch":   # 현재 투입 현황과 자원·대피소 상태
             if not self.require_staff():
                 return
@@ -798,7 +914,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {
                 "assignments": database.list_dispatch_approvals(),
                 "public": scenario.public_candidates(SCENARIO, set(busy)),
-                "shelters": scenario.shelter_candidates(SCENARIO, assigned),
+                "shelters": scenario.shelter_candidates(scenario_now(), assigned),
                 "control_zones": current_control_zones(), "zones": SCENARIO["zones"]})
         return self.send_json(404, {"error": "찾을 수 없는 경로입니다"})
 
@@ -887,6 +1003,74 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(409, {"error": f"이 신고에는 승인 대기 중인 배치 추천({waiting})이 있습니다. 먼저 승인하거나 거절하세요",
                                                 "approval_id": waiting})
                 return self.send_json(200, create_dispatch(incident_id, kind, data))   # 입력 오류는 ValueError → 400
+            if path.startswith("/api/public/"):
+                if not PUBLIC_LIMIT.allow(self.client_ip()):
+                    return self.send_json(429, {"error": "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요"})
+                return self.public_call("POST", path, data)
+            if path.startswith("/api/incidents/") and path.endswith("/classify"):   # 담당자: 분류 직접 수정(O3)
+                s = self.require_staff(check_csrf=True)
+                if not s:
+                    return
+                iid = path.strip("/").split("/")[2]
+                typ, zone, urg = data.get("type"), data.get("zone"), data.get("urgency")
+                zone_ids = {z["id"] for z in SCENARIO["zones"]}
+                if typ not in intake.load_cfg()["types"] or (zone != "미상" and zone not in zone_ids) \
+                        or not isinstance(urg, int) or isinstance(urg, bool) or not 1 <= urg <= 4:
+                    return self.send_json(400, {"error": "유형·구역(Z1~Z10 또는 미상)·긴급도(1~4)를 확인해 주세요"})
+                with _incident_lock:
+                    row = incident_output(iid)
+                    if row is None:
+                        return self.send_json(404, {"error": "접수번호를 찾을 수 없습니다"})
+                    o = row["output"]
+                    if o.get("state") == INVALID:
+                        return self.send_json(409, {"error": "오접수로 처리된 신고입니다"})
+                    before = {k: o.get(k) for k in ("type", "zone", "urgency")}
+                    after = {"type": typ, "zone": zone, "urgency": urg}
+                    if before == after:
+                        return self.send_json(200, public_row(row))
+                    note = ("담당자 분류 수정: " + ", ".join(f"{k} {before[k]}→{after[k]}" for k in after if before[k] != after[k])
+                            + (" · 이미 만든 배치·안내는 그대로이니 필요하면 해당 화면에서 다시 추천하세요" if o.get("linked") else ""))
+                    o.update(after, label="담당자 수정", classified_by=s["username"])
+                    relink = o.get("state") == "보완 필요" and zone in zone_ids
+                    if relink:   # 담당자가 구역을 채워 주면 신고자 보완을 기다리지 않고 다음 에이전트로 넘긴다
+                        o["missing"] = [m for m in (o.get("missing") or []) if not m.startswith("위치")]
+                        row = link_incident(row)   # 메모를 새로 쓰므로 수정 메모는 그 뒤에 붙인다
+                    row["output"]["notes"] = list(row["output"].get("notes") or []) + [note]
+                    row = database.update_incident(row)
+                database.log_audit("incident_reclassified", "incident", iid, {"before": before, "after": after, "by": s["username"]})
+                if relink and row["output"].get("state") == "접수":
+                    start_followups(iid)
+                return self.send_json(200, public_row(row))
+            if path == "/api/weather/apply-rain":   # 담당자: 실제 강수량으로 감시 에이전트의 강우 단계를 맞춘다
+                s = self.require_staff(check_csrf=True)
+                if not s:
+                    return
+                w = WEATHER.status()
+                if not w.get("available") or not w.get("rain"):
+                    return self.send_json(409, {"error": "실제 강수 정보를 받지 못해 적용할 수 없습니다. 센서 탭에서 강우 단계를 직접 고르세요"})
+                with SENSORS.lock:
+                    SENSORS.rain_stage = w["rain"]["stage"]
+                database.log_audit("rain_stage_from_kma", "monitor", "rain_stage",
+                                   {"stage": w["rain"]["stage"], "mm_per_h": w["rain"]["mm_per_h"], "at": w["rain"]["at"], "by": s["username"]})
+                return self.send_json(200, {"applied_rain_stage": SENSORS.rain_stage, "rain": w["rain"]})
+            if path.startswith("/api/shelters/") and path.endswith("/occupancy"):   # 담당자: 대피소 입소·퇴소(O6)
+                s = self.require_staff(check_csrf=True)
+                if not s:
+                    return
+                sid, delta = path.strip("/").split("/")[2], data.get("delta")
+                shelter = next((x for x in SCENARIO["shelters"] if x["id"] == sid), None)
+                if shelter is None:
+                    return self.send_json(404, {"error": "대피소를 찾을 수 없습니다"})
+                if not isinstance(delta, int) or isinstance(delta, bool) or delta == 0 or abs(delta) > 50:
+                    return self.send_json(400, {"error": "입소(+)·퇴소(−) 인원은 1~50명이어야 합니다"})
+                with _dispatch_lock:
+                    now_occ = next(x["occupied"] for x in scenario_now()["shelters"] if x["id"] == sid)
+                    new_occ = now_occ + delta
+                    if not 0 <= new_occ <= shelter["capacity"]:
+                        return self.send_json(409, {"error": f"현재 {now_occ}명이라 {delta:+d}명은 반영할 수 없습니다(수용량 {shelter['capacity']}명)"})
+                    database.put_record("shelter_occ", sid, {"id": sid, "delta": new_occ - shelter["occupied"], "by": s["username"]})
+                database.log_audit("shelter_occupancy", "shelter", sid, {"delta": delta, "occupied": new_occ, "by": s["username"]})
+                return self.send_json(200, {"id": sid, "occupied": new_occ, "capacity": shelter["capacity"]})
             if path == "/api/control-zones" or (path.startswith("/api/control-zones/") and path.endswith("/toggle")):
                 s = self.require_staff(check_csrf=True)
                 if not s:
@@ -937,7 +1121,7 @@ class Handler(BaseHTTPRequestHandler):
                     rec = item["recommendation"]
                     busy, assigned = dispatch_state()
                     cands = (scenario.public_candidates(SCENARIO, set(busy)) if kind == "public"
-                             else scenario.shelter_candidates(SCENARIO, assigned))
+                             else scenario.shelter_candidates(scenario_now(), assigned))
                     cand = next((c for c in cands if c["id"] == cand_id), None)
                     if cand is None:
                         return self.send_json(400, {"error": "후보 목록에 없는 자원입니다"})
@@ -1022,7 +1206,8 @@ class Handler(BaseHTTPRequestHandler):
                         "error": "control_zones는 최대 20개의 문자열 배열이어야 합니다"
                     })
 
-                row = generate_guidance(incident_id, level, flags, control_zones)
+                typ = (incident_output(incident_id) or {}).get("output", {}).get("type")
+                row = generate_guidance(incident_id, level, flags, control_zones, GUIDANCE_CFG.get("hazard_by_type", {}).get(typ))
                 row["incident_id"] = incident_id
                 return self.send_json(200, row)
 

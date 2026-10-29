@@ -535,6 +535,14 @@ class TestSensorGatewayDisabled(ServerBase):
 class TestPublicStatus(ServerBase):
     """접수 사이트 첫 화면의 공개 상황: 로그인 없이 보이고, 확정된 단계만, 담당자 이름은 숨긴다."""
     port = 18777
+    extra_env = {"WEBAPP_INCIDENT_PER_MIN": "1000", "KMA_API_KEY": ""}   # 시험에서는 기상청을 부르지 않는다
+
+    def test_weather_without_key_degrades(self):
+        self.assertFalse(Client(self.base).get("/api/public/status")[1]["weather"]["available"])
+        status, w = self.get("/api/weather")
+        self.assertEqual((status, w["available"]), (200, False))
+        self.assertEqual(Client(self.base).get("/api/weather")[0], 401)
+        self.assertEqual(self.post("/api/weather/apply-rain", {})[0], 409)   # 실제 강수 없이는 적용 안 됨
 
     def test_anonymous_sees_stage_shelters_without_staff_names(self):
         anon = Client(self.base)
@@ -543,6 +551,9 @@ class TestPublicStatus(ServerBase):
         self.assertEqual((d["stage"]["level"], d["stage"]["confirmed"]), ("정상", False))
         self.assertTrue(d["shelters"])
         self.assertTrue(all("capacity_left" in s for s in d["shelters"]))
+        self.assertTrue(all({"id", "row", "col", "risk"} <= set(z) for z in d["zone_grid"]))   # 구역도용
+        with urllib.request.urlopen(self.base + "/static/zonemap.js", timeout=2) as r:
+            self.assertIn(b"renderZoneMap", r.read())
         aid = self._new_approval()
         self.assertFalse(anon.get("/api/public/status")[1]["stage"]["confirmed"])   # 승인 전에는 그대로
         self.assertEqual(self.post(f"/api/approvals/{aid}/resolve", {"approved": True, "reason": "센서 두 개 동시 확인"})[0], 200)

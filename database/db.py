@@ -349,6 +349,13 @@ def get_approved_guidance(incident_id: str) -> dict | None:
     return {"item": json.loads(row["item_json"]), "approved_at": row["resolved_at"]}
 
 
+def list_approval_stats() -> list[dict]:
+    """모든 승인 항목의 종류·상태·시각(일일 보고서·사후 평가용, 내용 JSON은 읽지 않는다)."""
+    with connect() as conn:
+        rows = conn.execute("SELECT id, incident_id, kind, state, created_at, resolved_at FROM approvals").fetchall()
+    return [dict(r) for r in rows]
+
+
 def list_guidance_incident_ids(limit: int = 20) -> list[str]:
     """안내문이 승인된 신고의 접수번호(최근 승인 순, 중복 없이). 공개 상황판용."""
     with connect() as conn:
