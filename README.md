@@ -138,7 +138,7 @@ API: `GET /api/health`, `GET /api/agents`, `GET /api/incidents`, `GET /api/appro
 
 ```bash
 python -m unittest discover -s tests -t . -v      # 단위 테스트 145개(서류 5종 정답표·물품 평가 세트 40건·기상청 연결 포함)
-python -m unittest webapp.test_server -v           # mock 모드 서버 API 35개(로그인·권한·CSRF, 배치, 내부망 보안 4개, 센서 게이트웨이 3개, 공개 상황판 포함)
+python -m unittest webapp.test_server -v           # mock 모드 서버 API 37개(사이트 접속 코드·클라우드 모드 포함, 로그인·권한·CSRF, 배치, 내부망 보안 4개, 센서 게이트웨이 3개, 공개 상황판 포함)
 python -m unittest webapp.test_features -v         # 현장 운영 기능 API 11개(①③⑤⑥⑦⑧, 서류 파일 읽기 포함)
 python -m unittest webapp.test_server_solar -v     # solar 경로 10개(가짜 로컬 서버, 실제 API 호출 없음. 문서 파싱 포함)
 python -m unittest webapp.test_pipeline -v         # 신고 → 다음 에이전트 연결·일괄 승인·예외 처리·분류 수정·대피소 운영·시민·봉사자 화면 25개
@@ -319,3 +319,9 @@ python scripts/rehearse_demo.py            # 실패한 장면이 있으면 종�
 - **참고 정보다.** 위기 단계를 바꾸지 않는다. 강우 단계도 담당자가 센서 탭의 '실제 강수량을 강우 단계로 적용'을 눌러야 감시 에이전트에 들어간다(감사 기록 남김).
 - 화면: 담당자 위기 단계 띠 오른쪽, 센서 탭 '실제 날씨', 시민 화면 띠 아래.
 - 승인 대기: 산림청 산사태예측정보(같은 키), 긴급재난문자 이력(재난안전데이터공유플랫폼, 별도 키 `SAFETY_API_KEY`).
+
+### 팀 공유용 배포(Render, 2026-10-29)
+
+`render.yaml`과 `docs/배포_Render.md`. 클라우드 모드(`RENDER=true` 또는 `WEBAPP_CLOUD=1`)에서는 `0.0.0.0:$PORT`로 열고,
+**사이트 접속 코드(`SITE_ACCESS_CODE`)를 아는 사람만** 화면·API를 쓸 수 있다. 접속 코드와 담당자 계정이 없으면 서버가 시작하지 않는다.
+무료 서버는 다시 시작하면 데이터가 비므로 `DEMO_SEED_ON_START=1`로 시작할 때 시연 데이터를 넣는다.

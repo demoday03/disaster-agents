@@ -8,7 +8,7 @@ from datetime import datetime
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -22,8 +22,12 @@ from coordinator import Coordinator
 from database import db as database
 from webapp import features, public_api, sensors, weather
 
-HOST = os.getenv("WEBAPP_HOST", "127.0.0.1")
-PORT = int(os.getenv("WEBAPP_PORT", "8765"))
+# 클라우드 모드(Render 등): 플랫폼이 HTTPS를 앞에서 처리하고 PORT를 정해 준다. 이때는 사이트 접속 코드가 필수다.
+CLOUD = os.getenv("WEBAPP_CLOUD") == "1" or os.getenv("RENDER") == "true"
+HOST = os.getenv("WEBAPP_HOST", "0.0.0.0" if CLOUD else "127.0.0.1")
+PORT = int(os.getenv("WEBAPP_PORT") or (os.getenv("PORT") if CLOUD else None) or "8765")
+# 링크와 이 코드를 함께 받은 사람만 사이트를 볼 수 있다(비어 있으면 끔. 로컬 실행에서는 보통 끔)
+SITE_CODE = os.getenv("SITE_ACCESS_CODE", "").strip()
 MAX_BODY = 64 * 1024
 MAX_UPLOAD_BODY = 7 * 1024 * 1024   # 서류 파일(5MB)을 base64로 담은 요청. 이 경로만 크게 받는다
 UPLOAD_PATHS = {"/api/recovery/parse"}
@@ -51,12 +55,13 @@ database.init_db()
 STAFF_ROLES = {"operator", "admin"}   # 관리자 화면·승인·안내문 생성 권한
 TLS_CERT, TLS_KEY = os.getenv("WEBAPP_TLS_CERT", "").strip(), os.getenv("WEBAPP_TLS_KEY", "").strip()
 # HTTPS로 배포할 때 켠다. 인증서를 직접 지정하면 자동으로 켠다.
-COOKIE_SECURE = os.getenv("WEBAPP_COOKIE_SECURE") == "1" or bool(TLS_CERT)
+COOKIE_SECURE = os.getenv("WEBAPP_COOKIE_SECURE") == "1" or bool(TLS_CERT) or CLOUD
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 # 요청의 Host 헤더 허용 목록(DNS 리바인딩 방지). 내부망으로 열 때는 서버 주소를 WEBAPP_ALLOWED_HOSTS에 쉼표로 적는다.
 ALLOWED_HOSTS = ({f"{h}:{PORT}" for h in ("127.0.0.1", "localhost", "[::1]")}
                  | ({"127.0.0.1", "localhost", "[::1]"} if PORT in (80, 443) else set())   # 기본 포트면 브라우저가 포트를 빼고 보낸다
-                 | {h.strip().lower() for h in os.getenv("WEBAPP_ALLOWED_HOSTS", "").split(",") if h.strip()})
+                 | {h.strip().lower() for h in os.getenv("WEBAPP_ALLOWED_HOSTS", "").split(",") if h.strip()}
+                 | ({os.getenv("RENDER_EXTERNAL_HOSTNAME", "").lower()} - {""}))   # Render가 알려 주는 배포 주소
 LOGIN_MAX_FAILS, LOGIN_WINDOW_S = 5, 600
 _login_fails, _login_lock = {}, threading.Lock()
 
@@ -99,6 +104,14 @@ def record_login(username, ok):
             _login_fails.pop(username, None)
         else:
             _login_fails.setdefault(username, []).append(time.time())
+
+
+SITE_TOKEN = hmac.new(SITE_CODE.encode(), b"site-access-v1", "sha256").hexdigest() if SITE_CODE else ""
+GATE_FREE = {"/access", "/api/access", "/api/health", "/api/sensor/readings"}   # 게이트웨이는 자기 토큰으로 인증
+
+
+def site_cookie(max_age=30 * 24 * 3600):
+    return (f"site={SITE_TOKEN}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}" + ("; Secure" if COOKIE_SECURE else ""))
 
 
 def session_cookie(token, max_age):
@@ -765,7 +778,38 @@ class Handler(BaseHTTPRequestHandler):
         return self.headers.get("Host", "").strip().lower() in ALLOWED_HOSTS
 
     def client_ip(self):
+        if CLOUD:   # 플랫폼 프록시 뒤에서는 모든 요청이 프록시 주소로 온다. 원래 접속 IP는 X-Forwarded-For 맨 앞
+            fwd = self.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+            if fwd:
+                return fwd
         return self.client_address[0]
+
+    def site_ok(self):
+        """사이트 접속 코드가 켜져 있으면 코드 쿠키가 있는 요청만 통과시킨다."""
+        if not SITE_CODE:
+            return True
+        cookie = SimpleCookie()
+        try:
+            cookie.load(self.headers.get("Cookie", ""))
+        except Exception:
+            return False
+        got = cookie.get("site")
+        return bool(got) and hmac.compare_digest(got.value.encode(), SITE_TOKEN.encode())
+
+    def gate(self, path, method):
+        """접속 코드가 없으면 화면은 /access로 보내고 API는 401. 처리했으면 True."""
+        if path in GATE_FREE or self.site_ok():
+            return False
+        if method == "GET" and not path.startswith("/api/"):
+            self.send_response(302)
+            self.send_header("Location", "/access?next=" + quote(path))
+            self.send_header("Content-Length", "0")
+            for k, v in SECURITY_HEADERS.items():
+                self.send_header(k, v)
+            self.end_headers()
+        else:
+            self.send_json(401, {"error": "접속 코드가 필요합니다. 받은 링크로 다시 들어가 코드를 입력하세요", "need_access_code": True})
+        return True
 
     def same_origin(self):
         """브라우저가 다른 사이트에서 보낸 POST를 막는다(Origin이 없는 비브라우저 요청은 허용)."""
@@ -847,6 +891,10 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if not self.host_allowed():
             return self.send_json(421, {"error": "허용되지 않은 주소로 들어온 요청입니다(WEBAPP_ALLOWED_HOSTS 확인)"})
+        if self.gate(path, "GET"):
+            return
+        if path == "/access":
+            return self.send_html("access.html")
         if path in {"/", "/report"}:
             return self.send_html("report.html")
         if path == "/admin":
@@ -924,6 +972,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(421, {"error": "허용되지 않은 주소로 들어온 요청입니다(WEBAPP_ALLOWED_HOSTS 확인)"})
         if not self.same_origin():
             return self.send_json(403, {"error": "다른 사이트에서 보낸 요청은 받지 않습니다"})
+        if self.gate(path, "POST"):
+            return
         try:
             if path in UPLOAD_PATHS:   # 큰 본문은 로그인·CSRF를 먼저 확인한 뒤에만 읽는다
                 if not self.require_staff(check_csrf=True):
@@ -931,6 +981,15 @@ class Handler(BaseHTTPRequestHandler):
                 data = read_json_body(self, MAX_UPLOAD_BODY)
             else:
                 data = read_json_body(self)
+            if path == "/api/access":   # 사이트 접속 코드(링크와 함께 받은 코드)
+                if not SITE_CODE:
+                    return self.send_json(200, {"ok": True})
+                if not LOGIN_IP_LIMIT.allow(self.client_ip()):
+                    return self.send_json(429, {"error": "시도가 너무 많습니다. 10분 뒤 다시 시도하세요"})
+                code = data.get("code")
+                if not isinstance(code, str) or not hmac.compare_digest(code.strip().encode(), SITE_CODE.encode()):
+                    return self.send_json(403, {"error": "접속 코드가 맞지 않습니다"})
+                return self.send_json(200, {"ok": True}, headers={"Set-Cookie": site_cookie()})
             if path == "/api/login":
                 username, password = data.get("username"), data.get("password")
                 if not isinstance(username, str) or not isinstance(password, str) or len(username) > 50 or len(password) > 200:
@@ -1403,6 +1462,12 @@ def check_bind_policy(host=HOST, env=os.environ, staff_count=None):
     - 담당자 계정이 있고, 접속 주소가 WEBAPP_ALLOWED_HOSTS에 있어야 한다."""
     if host in LOCAL_HOSTS:
         return None
+    if env.get("WEBAPP_CLOUD") == "1" or env.get("RENDER") == "true":   # HTTPS는 플랫폼이 처리한다
+        if len(env.get("SITE_ACCESS_CODE", "").strip()) < 6:
+            return "클라우드에 올릴 때는 SITE_ACCESS_CODE(6자 이상)를 정해야 합니다. 링크를 받은 사람만 들어오게 하는 코드입니다."
+        if (database.count_users() if staff_count is None else staff_count) == 0:
+            return "담당자 계정이 없습니다. DEMO_SEED_ON_START=1과 DEMO_ADMIN_PASSWORD(8자 이상)를 설정하세요."
+        return None
     if env.get("WEBAPP_ALLOW_LAN") != "1":
         return ("안전상 기본은 localhost만 허용합니다. 학교 내부망으로 열려면 docs/내부망_배포_점검표.md를 확인하고 "
                 "WEBAPP_ALLOW_LAN=1을 설정하세요.")
@@ -1419,7 +1484,20 @@ def check_bind_policy(host=HOST, env=os.environ, staff_count=None):
     return None
 
 
+def seed_demo_if_empty():
+    """클라우드 무료 서버는 다시 시작하면 디스크가 비므로, 비어 있을 때 시연 계정과 신고 6건을 넣는다(scripts/demo_setup.py와 같은 내용)."""
+    if os.getenv("DEMO_SEED_ON_START") != "1" or database.count_users():
+        return
+    password = os.getenv("DEMO_ADMIN_PASSWORD", "")
+    if len(password) < 8:
+        raise SystemExit("DEMO_SEED_ON_START=1이면 DEMO_ADMIN_PASSWORD(8자 이상)를 정해야 합니다")
+    from scripts import demo_setup
+    demo_setup.seed(password)
+    print(f"시연 데이터를 넣었습니다: 담당자 {demo_setup.DEMO_USER}, 신고 {len(demo_setup.REPORTS)}건")
+
+
 def main():
+    seed_demo_if_empty()
     problem = check_bind_policy()
     if problem:
         raise SystemExit(problem)

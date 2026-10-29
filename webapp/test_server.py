@@ -45,7 +45,9 @@ class Client:
     def login(self, username, password):
         status, d, headers = self.request("POST", "/api/login", {"username": username, "password": password})
         if status == 200:
-            self.cookie = headers["Set-Cookie"].split(";")[0]
+            sid = headers["Set-Cookie"].split(";")[0]
+            keep = [c for c in (self.cookie or "").split("; ") if c and not c.startswith("sid=")]   # 사이트 접속 코드 쿠키는 유지
+            self.cookie = "; ".join(keep + [sid])
             self.csrf = d["csrf_token"]
         return status, d
 
@@ -72,6 +74,10 @@ class ServerBase(unittest.TestCase):
             except Exception: time.sleep(.1)
         else: raise RuntimeError("dashboard server did not start")
         cls.staff = Client(cls.base)
+        if cls.extra_env.get("SITE_ACCESS_CODE"):   # 사이트 접속 코드가 켜진 서버는 코드부터 넣는다
+            status, _, h = cls.staff.request("POST", "/api/access", {"code": cls.extra_env["SITE_ACCESS_CODE"]})
+            assert status == 200
+            cls.staff.cookie = h["Set-Cookie"].split(";")[0]
         assert cls.staff.login("담당자", cls.pw["담당자"])[0] == 200
     @classmethod
     def tearDownClass(cls):
@@ -564,3 +570,39 @@ class TestPublicStatus(ServerBase):
         self.assertNotIn("담당자", text)
         self.assertNotIn(aid, text)
         self.assertEqual(d["notices"], [])   # mock 모드는 안내문 승인 대기열을 만들지 않는다
+
+
+class TestSiteAccessCode(ServerBase):
+    """팀 공유용 배포: 링크와 접속 코드를 받은 사람만 화면·API를 쓴다."""
+    port = 18778
+    extra_env = {"WEBAPP_INCIDENT_PER_MIN": "1000", "SITE_ACCESS_CODE": "team-code-2026", "KMA_API_KEY": ""}
+
+    def test_gate_blocks_until_code(self):
+        anon = Client(self.base)
+        status, d = anon.get("/api/public/status")
+        self.assertEqual((status, d.get("need_access_code")), (401, True))
+        self.assertEqual(anon.post("/api/incidents", {"text": "Z2 침수"})[0], 401)
+        self.assertEqual(anon.get("/api/health")[0], 200)                       # 플랫폼 상태 확인은 열어 둔다
+        req = urllib.request.Request(self.base + "/admin")
+        with urllib.request.urlopen(req, timeout=3) as r:                       # 화면은 코드 입력 페이지로 보낸다
+            self.assertIn("/access?next=/admin", r.geturl())
+            self.assertIn("접속 코드".encode(), r.read())
+        self.assertEqual(anon.post("/api/access", {"code": "wrong"})[0], 403)
+        status, _, h = anon.request("POST", "/api/access", {"code": "team-code-2026"})
+        self.assertEqual(status, 200)
+        self.assertIn("HttpOnly", h["Set-Cookie"])
+        anon.cookie = h["Set-Cookie"].split(";")[0]
+        self.assertEqual(anon.get("/api/public/status")[0], 200)
+        self.assertEqual(anon.get("/api/incidents")[0], 401)                     # 코드가 있어도 담당자 기능은 로그인 필요
+        self.assertEqual(self.get("/api/incidents")[0], 200)
+
+    def test_cloud_bind_policy(self):
+        # server 모듈을 불러오면 기본 DB를 건드리므로 별도 프로세스에서 검사한다(test_bind_policy와 같은 방식)
+        code = ("import json;from webapp import server as s;c={'WEBAPP_CLOUD':'1'};k={**c,'SITE_ACCESS_CODE':'abcdef'};"
+                "print(json.dumps([s.check_bind_policy('0.0.0.0',c,1) is None,s.check_bind_policy('0.0.0.0',k,0) is None,"
+                "s.check_bind_policy('0.0.0.0',k,1) is None,s.check_bind_policy('0.0.0.0',{},1) is None]))")
+        env = os.environ.copy(); env["DISASTER_DB_PATH"] = str(Path(self.tempdir.name) / "policy.db")
+        out = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        # 코드 없음 거부 · 담당자 없음 거부 · 둘 다 있으면 허용 · 클라우드가 아니면 0.0.0.0 금지 그대로
+        self.assertEqual(json.loads(out.stdout.strip().splitlines()[-1]), [False, False, True, False])

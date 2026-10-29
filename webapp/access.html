@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>재난 안전 AI · 접속 코드</title>
+<style>
+:root{--ink:#16233B;--muted:#5A6880;--paper:#EEF2F7;--line:#D5DCE7;--action:#1F5FD1;--s-normal:#1E7A4F;font-family:Pretendard,"Pretendard Variable","Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",system-ui,sans-serif;font-size:16px;line-height:1.6;color:var(--ink);background:var(--paper)}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;border-top:6px solid var(--s-normal)}:focus-visible{outline:3px solid var(--action);outline-offset:2px;border-radius:4px}
+.wrap{max-width:420px;margin:56px auto;padding:0 18px}h1{margin:0;font-size:1.5rem;font-weight:800;letter-spacing:-.02em}.lead{margin:4px 0 18px;color:var(--muted)}
+.card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:22px}label{display:block;font-weight:700;margin:0 0 6px}
+input{width:100%;font:inherit;padding:12px;border:1px solid #BFC9D8;border-radius:10px;color:var(--ink);letter-spacing:.05em}
+button{font:inherit;font-weight:700;background:var(--ink);color:#fff;border:0;border-radius:10px;padding:12px 16px;min-height:46px;cursor:pointer;margin-top:16px;width:100%}button:disabled{opacity:.6}
+.err{color:#A3182A;margin-top:12px;min-height:1.2em}.note{font-size:.86rem;color:var(--muted);margin-top:14px}
+</style></head><body>
+<main class="wrap"><h1>재난 안전 AI 에이전트</h1><p class="lead">팀 공유용 시연 사이트입니다. 링크와 함께 받은 접속 코드를 입력하세요.</p>
+<section class="card"><form id="f"><label for="code">접속 코드</label><input id="code" autocomplete="off" maxlength="100" required autofocus><button id="b" type="submit">들어가기</button><div id="msg" class="err" role="alert"></div></form></section>
+<p class="note">교육용 시연 시스템입니다. 모든 신고·주민·자원은 가상 데이터이고 실제 출동·문자 발송은 일어나지 않습니다. 실제 개인정보를 입력하지 마세요.</p></main>
+<script>
+const $=id=>document.getElementById(id);
+function nextPath(){const n=new URLSearchParams(location.search).get('next')||'/';return /^\/(?!\/)/.test(n)&&n!=='/access'?n:'/'}
+$('f').addEventListener('submit',async e=>{e.preventDefault();$('b').disabled=true;$('msg').textContent='';try{const r=await fetch('/api/access',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:$('code').value})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||`HTTP ${r.status}`);location.href=nextPath()}catch(err){$('msg').textContent=err.message;$('code').select()}finally{$('b').disabled=false}});
+</script></body></html>
