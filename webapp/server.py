@@ -119,14 +119,14 @@ def session_cookie(token, max_age):
             + ("; Secure" if COOKIE_SECURE else ""))
 
 AGENTS = [
-    {"id": "monitor", "name": "감시", "mode": "규칙 기반", "status": "demo-ready"},
-    {"id": "intake", "name": "신고 접수", "mode": "규칙 + 선택적 LLM", "status": "demo-ready"},
-    {"id": "welfare", "name": "안부·안내", "mode": "규칙 기반 + 선택적 LLM", "status": "demo-ready"},
-    {"id": "dispatch", "name": "배치 추천", "mode": "규칙 기반", "status": "demo-ready"},
-    {"id": "recovery", "name": "복구·지원", "mode": "규칙 + 선택적 LLM", "status": "demo-ready"},
-    {"id": "volunteer", "name": "봉사 코디", "mode": "규칙 + 선택적 LLM", "status": "demo-ready"},
-    {"id": "verify", "name": "내용 검증", "mode": "규칙 + 선택적 LLM", "status": "demo-ready"},
-    {"id": "supply", "name": "물품 수급", "mode": "규칙 + 선택적 LLM", "status": "demo-ready"},
+    {"id": "monitor", "name": "감시", "mode": "규칙 (AI 없음)", "status": "demo-ready"},
+    {"id": "intake", "name": "신고 접수", "mode": "규칙 + AI 보조", "status": "demo-ready"},
+    {"id": "welfare", "name": "안부·안내", "mode": "규칙 + AI 보조", "status": "demo-ready"},
+    {"id": "dispatch", "name": "배치 추천", "mode": "규칙 (AI 없음)", "status": "demo-ready"},
+    {"id": "recovery", "name": "복구·지원", "mode": "규칙 + AI 보조", "status": "demo-ready"},
+    {"id": "volunteer", "name": "봉사 코디", "mode": "규칙 + AI 보조", "status": "demo-ready"},
+    {"id": "verify", "name": "내용 검증", "mode": "규칙 + AI 보조", "status": "demo-ready"},
+    {"id": "supply", "name": "물품 수급", "mode": "규칙 + AI 보조", "status": "demo-ready"},
 ]
 
 FEATURE_AGENTS = {"/api/stage": "monitor", "/api/welfare/": "welfare", "/api/verify": "verify",
