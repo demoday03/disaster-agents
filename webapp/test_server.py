@@ -530,3 +530,26 @@ class TestSensorGatewayDisabled(ServerBase):
                                                  headers={"X-Gateway-Token": "x" * 20})
         self.assertEqual(status, 503, d)
         self.assertFalse(self.get("/api/sensor/status")[1]["gateway_enabled"])
+
+
+class TestPublicStatus(ServerBase):
+    """접수 사이트 첫 화면의 공개 상황: 로그인 없이 보이고, 확정된 단계만, 담당자 이름은 숨긴다."""
+    port = 18777
+
+    def test_anonymous_sees_stage_shelters_without_staff_names(self):
+        anon = Client(self.base)
+        status, d = anon.get("/api/public/status")
+        self.assertEqual(status, 200)
+        self.assertEqual((d["stage"]["level"], d["stage"]["confirmed"]), ("정상", False))
+        self.assertTrue(d["shelters"])
+        self.assertTrue(all("capacity_left" in s for s in d["shelters"]))
+        aid = self._new_approval()
+        self.assertFalse(anon.get("/api/public/status")[1]["stage"]["confirmed"])   # 승인 전에는 그대로
+        self.assertEqual(self.post(f"/api/approvals/{aid}/resolve", {"approved": True, "reason": "센서 두 개 동시 확인"})[0], 200)
+        d = anon.get("/api/public/status")[1]
+        self.assertTrue(d["stage"]["confirmed"])
+        self.assertIn("침수", d["stage"]["hazards"])
+        text = json.dumps(d, ensure_ascii=False)
+        self.assertNotIn("담당자", text)
+        self.assertNotIn(aid, text)
+        self.assertEqual(d["notices"], [])   # mock 모드는 안내문 승인 대기열을 만들지 않는다

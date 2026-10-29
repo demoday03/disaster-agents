@@ -36,7 +36,10 @@
   loadApprovals = async function () {
     await baseLoadApprovals();
     await addDispatchControls();
-    try { $('approvalCount').textContent = (await api('/api/approvals')).items.length; } catch (e) { /* 배지만 */ }
+    try {   // 첫 응답 전에는 숨겨 둔다(0이 잠깐 보였다가 바뀌지 않게)
+      $('approvalCount').textContent = (await api('/api/approvals')).items.length;
+      $('approvalCount').hidden = false;
+    } catch (e) { /* 배지만 */ }
     if (current !== 'approvals' && LOADERS[current] && current !== 'dispatch') LOADERS[current]();
   };
 

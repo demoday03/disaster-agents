@@ -147,6 +147,8 @@ class Features:
             self.db.put_record("stage", "current", {
                 "level": item.get("level"), "hazards": item.get("hazards", []), "summary": item.get("summary"),
                 "confirmed": True, "approval_id": approval["id"], "approved_by": who, "at": time.time()})
+        elif kind == "welfare_check" and approved:   # 신고 자동 연결: 승인되면 그 구역 가구에 안부 확인 시작
+            self.checks_start({"zone": item["zone"], "timeout_s": item.get("timeout_s", self.gcfg["timeout_s"])})
         elif kind == "volunteer_task":
             task = self.db.get_record("task", item["task"]["id"])
             if task is None:

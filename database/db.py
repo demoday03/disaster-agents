@@ -349,6 +349,17 @@ def get_approved_guidance(incident_id: str) -> dict | None:
     return {"item": json.loads(row["item_json"]), "approved_at": row["resolved_at"]}
 
 
+def list_guidance_incident_ids(limit: int = 20) -> list[str]:
+    """안내문이 승인된 신고의 접수번호(최근 승인 순, 중복 없이). 공개 상황판용."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT incident_id, MAX(resolved_at) AS last FROM approvals WHERE kind='welfare_guidance' "
+            "AND state='approved' AND incident_id IS NOT NULL GROUP BY incident_id ORDER BY last DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [r["incident_id"] for r in rows]
+
+
 def get_incident(incident_id: str) -> dict | None:
     """Return one persisted incident by its public receipt ID."""
     with connect() as conn:

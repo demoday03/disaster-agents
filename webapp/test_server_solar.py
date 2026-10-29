@@ -206,6 +206,21 @@ class TestSolarPathWithVerifier(SolarPathBase):
         self.assertEqual(shown["doc_ids"], g["output"]["doc_ids"])
         self.assertNotIn("담당자", json.dumps(shown, ensure_ascii=False))   # 승인자 이름은 공개하지 않음
 
+    def test_approved_guidance_on_public_status_until_invalidated(self):
+        iid = self.incident("Z2 구역 침수 (공개 상황판 테스트)")
+        STATE.update(verdict="grounded", label="카")
+        _, g = self.guidance(iid, "f-pub")
+        anon = ts.Client(self.base)
+        notices = lambda: [n for n in anon.get("/api/public/status")[1]["notices"] if "AI가 다듬은 안내(카)" in n["text"]]
+        self.assertEqual(notices(), [])   # 승인 전에는 공개하지 않음
+        self.assertEqual(self.resolve(g["approval_id"], True)[0], 200)
+        shown = notices()
+        self.assertEqual(len(shown), 1)
+        self.assertEqual((shown[0]["zone"], shown[0]["evidence"]), ("Z2", g["output"]["standard"]))
+        self.assertNotIn("공개 상황판 테스트", json.dumps(shown, ensure_ascii=False))   # 신고 원문은 내보내지 않음
+        self.assertEqual(self.post(f"/api/incidents/{iid}/invalidate", {"reason": "현장 이상 없음"})[0], 200)
+        self.assertEqual(notices(), [])   # 오접수 처리하면 내려감
+
     def test_rejected_or_review_guidance_is_not_shown(self):
         iid = self.incident("Z2 구역 침수 (반려·확인 건 비표시 테스트)")
         STATE.update(verdict="grounded", label="자")

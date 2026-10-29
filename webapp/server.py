@@ -17,7 +17,7 @@ from common.llm import SolarClient
 from common.docparse import DocumentParser
 from common.masking import mask
 from common import scenario
-from agents import dispatch, intake, monitor, welfare, verify
+from agents import dispatch, intake, monitor, recovery, welfare, verify
 from coordinator import Coordinator
 from database import db as database
 from webapp import features, sensors
@@ -270,6 +270,46 @@ def followups(incident_id):
         except Exception as e:
             agent_failed("welfare", e)
             notes.append("안내문 자동 작성 실패: 담당자가 ③ 안내 화면에서 직접 만드세요")
+    done = o.get("linked") or {}   # 보완 뒤 다시 불려도 같은 항목을 두 번 만들지 않는다
+    if o.get("type") in STAGE_HAZARD and "monitor" not in done:
+        try:
+            add["monitor"] = sensor_crosscheck(o)
+            agent_ok("monitor")
+        except Exception as e:
+            agent_failed("monitor", e)
+            notes.append("센서 교차 확인 실패: 담당자가 ① 센서 화면에서 확인하세요")
+    if (o.get("type") in GUIDANCE_TYPES and (o.get("urgency") or 4) <= WELFARE_CHECK_MAX_URGENCY
+            and not repeat and "welfare_check" not in done):
+        try:
+            wid, why = queue_welfare_check(o)
+            if wid:
+                add["welfare_check"] = wid
+            if why:
+                notes.append("안부 확인: " + why)
+        except Exception as e:
+            agent_failed("welfare", e)
+            notes.append("안부 확인 연결 실패: 담당자가 ③ 안부 화면에서 시작하세요")
+    if (o.get("type") in SHELTER_TYPES and isinstance(o.get("people"), int) and o["people"] > 0
+            and not repeat and "shelter" not in done):
+        try:
+            d = create_dispatch(incident_id, "shelter", {"people": o["people"]}, auto=True, output=o)
+            if d.get("approval_id"):
+                add["shelter"] = [d["approval_id"]]
+            else:
+                notes.append("대피소 후보가 없습니다: " + " · ".join(d["output"].get("options", [])))
+            agent_ok("dispatch")
+        except ValueError as e:
+            notes.append(f"대피소 배정 추천을 만들지 못함({e})")
+        except Exception as e:
+            agent_failed("dispatch", e)
+            notes.append("대피소 배정 연결 실패: 담당자가 ④ 배치 화면에서 직접 추천하세요")
+    if o.get("type") in RECOVERY_DAMAGE and "recovery" not in done:
+        try:
+            add["recovery"] = recovery_candidates(o)
+            agent_ok("recovery")
+        except Exception as e:
+            agent_failed("recovery", e)
+            notes.append("지원제도 후보 연결 실패: 담당자가 ⑤ 복구·지원 화면에서 찾으세요")
     if o.get("type") == "대민지원" and any(w in o["text"] for w in LABOR_WORDS):
         try:
             with FEATURES.lock:
@@ -293,6 +333,50 @@ def followups(incident_id):
         co["linked"] = {**(co.get("linked") or {}), **add}
         co["notes"] = list(co.get("notes") or []) + notes
         database.update_incident(cur)
+
+
+def sensor_crosscheck(o):
+    """① 감시 교차 확인. 신고 하나로는 위험 단계를 올리지 않는다(오탐 방지, 제안서 6장 감시 규칙).
+    최근 센서 판정이 같은 위험을 가리키고 단계 확정 요청이 대기 중이면, 그 요청을 이 신고의 승인 묶음에 넣는다."""
+    hazard = STAGE_HAZARD[o["type"]]
+    ev = SENSORS.status().get("last_eval") or {}
+    out = (ev.get("output") or {}) if time.time() - (ev.get("at") or 0) <= SENSOR_FRESH_SEC else {}
+    res = {"hazard": hazard, "sensor_status": out.get("status", "최근 수신 없음"), "level": out.get("level"),
+           "agrees": hazard in (out.get("hazards") or []), "approval_id": None}
+    # 게이트웨이든 센서 시뮬레이터든, 같은 위험의 단계 확정 요청이 대기 중이면 센서가 이미 확정 후보로 본 것이다
+    stage = next((a for a in database.list_pending_approvals()
+                  if a["kind"] == "monitor_stage" and hazard in a["item"].get("hazards", [])), None)
+    if stage:
+        res.update(agrees=True, approval_id=stage["id"], level=stage["item"].get("level"),
+                   sensor_status=stage["item"].get("status", "확정후보"))
+    return res
+
+
+def queue_welfare_check(o):
+    """③ 안부 확인 시작을 승인 대기열에(담당자가 승인해야 가구에 확인 요청이 나간다). 그 구역에 이미 진행 중이거나
+    대기 중인 안부 확인이 있으면 새로 만들지 않는다. 돌려주는 값: (승인 ID 또는 None, 메모 또는 None)."""
+    zone = o["zone"]
+    with _welfare_lock:   # 같은 구역 신고가 동시에 들어와도 안부 확인 요청은 하나만
+        for a in database.list_pending_approvals():
+            if a["kind"] == "welfare_check" and a["item"].get("zone") == zone:
+                return None, f"{zone} 안부 확인 시작이 이미 승인 대기 중({a['id']})"
+        if any(r["zone"] == zone and r["state"] in ("대기", "격상") for r in database.list_records("check")):
+            return None, f"{zone} 안부 확인이 이미 진행 중"
+        hh = [h for h in FEATURES.households.values() if h["zone"] == zone and h["consent"]]
+        if not hh:
+            return None, f"{zone}에 안부 확인에 동의한 가구가 없음"
+        item = {"incident_id": o["id"], "zone": zone, "households": [h["id"] for h in hh],
+                "vulnerable": [h["id"] for h in hh if h["factors"]], "timeout_s": FEATURES.gcfg["timeout_s"]}
+        return database.create_approval("welfare_check", item, incident_id=o["id"])["id"], None
+
+
+def recovery_candidates(o):
+    """⑤ 복구·지원: 신고 유형으로 해당 가능성이 있는 지원 항목(규칙만, AI 호출 없음). 참고용이라 승인 대상이 아니다."""
+    hh = {"id": o["id"], "area": "거제시", "damage_types": RECOVERY_DAMAGE[o["type"]], "housing": "단독주택",
+          "long_term_evacuation": False, "lease_signed": False}
+    m = recovery.match_support(hh, FEATURES.rcfg).output
+    return {"candidates": [{k: c[k] for k in ("id", "title", "status")} for c in m["candidates"]],
+            "basis": f"{', '.join(hh['damage_types'])} · 거제시 · 주거 형태 미확인(단독주택 기준)", "notice": m["notice"]}
 
 
 def link_pending_incidents():
@@ -366,6 +450,7 @@ def travel():
 FEATURE_PREFIXES = ("/api/stage", "/api/welfare/", "/api/verify", "/api/recovery", "/api/volunteer", "/api/supply")
 _incident_lock = threading.Lock()   # 신고 보완·오접수 처리가 같은 신고를 동시에 고치지 않게
 _dispatch_lock = threading.Lock()   # 배치 승인 직전 재검사와 승인 기록을 한 번에(같은 자원 이중 투입 방지)
+_welfare_lock = threading.Lock()    # 구역별 안부 확인 요청 중복 방지
 
 
 def dispatch_state():
@@ -425,6 +510,12 @@ AUTO_FOLLOWUPS = os.getenv("AUTO_FOLLOWUPS", "1") != "0"
 GUIDANCE_TYPES = {"인명구조", "침수", "산사태·토사", "단전·단수", "도로·시설 장애"}
 GUIDANCE_FLAG_WORDS = {"반지하": ["반지하"], "거동불편": ["거동", "휠체어", "누워 계"], "영유아": ["아기", "영유아", "분유", "기저귀"]}
 LABOR_WORDS = ("일손", "치울", "치워", "정리", "도와줄", "도와주실", "옮길", "옮겨", "청소", "퍼낼", "세척")
+# 신고 유형 → ① 감시가 보는 위험(센서 교차 확인), ④ 대피소 배정, ⑤ 지원제도 후보의 피해 유형
+STAGE_HAZARD = {"인명구조": "침수", "침수": "침수", "산사태·토사": "사면"}
+SHELTER_TYPES = {"인명구조", "침수", "산사태·토사"}
+RECOVERY_DAMAGE = {"침수": ["주택침수"], "산사태·토사": ["사면유실"]}
+WELFARE_CHECK_MAX_URGENCY = 2   # 이만큼 급한 위험 신고면 그 구역 가구 ③ 안부 확인 시작을 승인 묶음에 넣는다
+SENSOR_FRESH_SEC = 120          # 이보다 오래된 센서 판정은 교차 확인 근거로 쓰지 않는다
 
 
 def _epoch(ts):
@@ -530,6 +621,30 @@ def public_guidance(incident_id):
         return None
     return {"text": g["text"], "verdict": "grounded", "approved": True, "approved_at": row["approved_at"],
             "source": g.get("source", ""), "doc_ids": g.get("doc_ids", []), "evidence": g.get("standard", "")}
+
+def public_status():
+    """접수 사이트 첫 화면용 공개 상황(로그인 없음). 담당자 이름·승인 ID·신고 원문은 넣지 않는다."""
+    stage = database.get_record("stage", "current") or {}
+    notices = []
+    for iid in database.list_guidance_incident_ids(20):
+        inc = database.get_incident(iid)
+        out = (inc or {}).get("result", {}).get("output", {})
+        g = public_guidance(iid) if inc and out.get("state") != INVALID else None
+        if g:
+            notices.append({"zone": out.get("zone"), "type": out.get("type"), "text": g["text"],
+                            "approved_at": g["approved_at"], "source": g["source"], "evidence": g["evidence"]})
+        if len(notices) >= 5:
+            break
+    _, assigned = dispatch_state()
+    shelters = [{k: s[k] for k in ("name", "type", "zone", "capacity", "capacity_left", "amenities")}
+                for s in scenario.shelter_candidates(SCENARIO, assigned)]
+    return {"stage": {"level": stage.get("level", "정상"), "hazards": stage.get("hazards", []),
+                      "confirmed": bool(stage.get("confirmed")), "at": stage.get("at")},
+            "notices": notices, "shelters": shelters,
+            "control_zones": [{"name": c["name"], "between": c.get("between", [])}
+                              for c in current_control_zones() if c.get("active")],
+            "zones": {z["id"]: z["name"] for z in SCENARIO["zones"]}}
+
 
 def read_json_body(handler, limit=MAX_BODY):
     raw_len = handler.headers.get("Content-Length", "0")
@@ -647,6 +762,8 @@ class Handler(BaseHTTPRequestHandler):
                 "warning": "시뮬레이션/프로토타입입니다. 실제 출동·재난 경보 시스템이 아닙니다."})
         if path == "/api/agents":
             return self.send_json(200, {"items": agents_status()})
+        if path == "/api/public/status":   # 접수 사이트 첫 화면: 확정 단계·승인된 안내문·대피소·통제 구간
+            return self.send_json(200, public_status())
         if path == "/api/incidents":   # 전체 목록은 담당자만. 접수번호 단건 조회는 공개
             if not self.require_staff():
                 return
@@ -977,7 +1094,13 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(409, {"error": "오접수로 처리된 신고입니다"})
                 approved, skipped = [], []
                 with _dispatch_lock:   # 항목마다 승인 직전 재검사(중복 투입·재고 부족이면 그 항목만 건너뜀)
-                    for a in database.list_pending_approvals_for(parts[2]):
+                    items = database.list_pending_approvals_for(parts[2])
+                    # ① 센서와 신고가 같은 위험을 가리켜 묶어 둔 단계 확정 요청(신고 ID가 없는 공용 항목)
+                    mid = ((row["output"].get("linked") or {}).get("monitor") or {}).get("approval_id")
+                    stage = database.get_approval(mid) if mid else None
+                    if stage and stage["state"] == "pending" and stage["kind"] == "monitor_stage":
+                        items.insert(0, stage)
+                    for a in items:
                         if a["kind"] in BULK_SKIP_KINDS:
                             skipped.append({"id": a["id"], "kind": a["kind"], "reason": "검증이 불확실한 안내문은 따로 확인하세요"})
                             continue
@@ -1070,8 +1193,11 @@ class Handler(BaseHTTPRequestHandler):
                                                            s["user_id"])
                         with FEATURES.lock:   # 승인 결과 반영(단계 확정, 봉사 투입, 물품 출고·예약 해제)
                             FEATURES.after_resolve(current, approved, s)
-                        if not approved and current and current["kind"] == "dispatch_public":
-                            detach_dispatch(aid, current["incident_id"], rebuild=False)   # 연결만 해 둔 반복 신고에 알림
+                    if not approved and current and current["kind"] == "dispatch_public":
+                        # 연결만 해 둔 반복 신고에 알림. 백그라운드 후속 처리와 같은 신고를 동시에 쓰지 않게 잠근다
+                        # (_incident_lock → _dispatch_lock 순서를 지키려고 배치 잠금을 푼 뒤에 잡는다)
+                        with _incident_lock:
+                            detach_dispatch(aid, current["incident_id"], rebuild=False)
                 except KeyError:
                     return self.send_json(404, {"error": "승인 요청을 찾을 수 없습니다"})
                 except ValueError as e:

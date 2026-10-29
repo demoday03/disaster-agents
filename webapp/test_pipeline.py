@@ -206,6 +206,38 @@ class TestPipeline(ServerBase):
         g = self.wait_linked(o["id"], "guidance")["linked"]["guidance"]
         self.assertEqual((g["level"], g["status"]), ("주의", "표준 원문"))   # mock: AI 없이 표준 원문(승인 대기 없음)
 
+    def test_hazard_report_runs_every_agent_then_one_approval(self):
+        o = self.report("Z8 반지하 집에 물이 차서 주민 3명이 대피해야 해요 (전 에이전트 시험)")
+        self.assertEqual((o["type"], o["urgency"], o["people"]), ("침수", 2, 3))
+        L = self.wait_linked(o["id"], "guidance")["linked"]
+        m = L["monitor"]                                                     # ① 신고만으로는 단계를 올리지 않음
+        self.assertEqual((m["hazard"], m["agrees"], m["approval_id"]), ("침수", False, None))
+        self.assertTrue(L["recovery"]["candidates"])                         # ⑤ 지원 후보(참고용, 승인 대상 아님)
+        kinds = sorted(a["kind"] for a in self.pending(o["id"]))
+        self.assertEqual(kinds, ["dispatch_public", "dispatch_shelter", "welfare_check"])   # ④ 인력·대피소, ③ 안부
+        z8 = lambda: [c for c in self.get("/api/welfare/checks")[1]["checks"] if c["zone"] == "Z8"]
+        self.assertEqual(z8(), [])                                           # 승인 전에는 가구에 요청하지 않음
+        code, r = self.post(f"/api/incidents/{o['id']}/approve-all", {"reason": "반지하 침수, 일괄 승인"})
+        self.assertEqual((code, len(r["approved"]), r["skipped"]), (200, 3, []))
+        self.assertTrue(z8())
+        again = self.report("Z8 반지하 침수 계속돼요 주민 2명 (전 에이전트 시험)")
+        L2 = self.wait_linked(again["id"], "monitor")["linked"]
+        self.assertNotIn("welfare_check", L2)                                # 같은 사건 반복 신고는 묶기만
+        self.assertNotIn("shelter", L2)
+        for x in self.get("/api/dispatch")[1]["assignments"]:
+            self.post(f"/api/dispatch/{x['id']}/release", {})
+
+    def test_sensor_and_report_agree_stage_joins_bundle(self):
+        aid = self._new_approval()                                           # 센서: 침수 확정 후보(승인 대기)
+        o = self.report("Z6 마을 길이 침수됐어요 (센서 교차 시험)")
+        m = self.wait_linked(o["id"], "monitor")["linked"]["monitor"]
+        self.assertEqual((m["agrees"], m["approval_id"]), (True, aid))
+        code, r = self.post(f"/api/incidents/{o['id']}/approve-all", {"reason": "센서와 신고 일치"})
+        self.assertIn(aid, [x["id"] for x in r["approved"]])
+        self.assertTrue(self.get("/api/stage")[1]["confirmed"])
+        for x in self.get("/api/dispatch")[1]["assignments"]:
+            self.post(f"/api/dispatch/{x['id']}/release", {})
+
     def test_labor_request_chains_to_volunteer(self):
         o = self.report("Z3 집 안 진흙 퍼낼 일손이 필요해요")
         self.assertEqual(o["type"], "대민지원")
@@ -236,8 +268,8 @@ class TestPipeline(ServerBase):
         self.assertEqual(top_a, top_b)                                       # 둘 다 같은 팀을 1순위로 추천
         self.post(f"/api/incidents/{a['id']}/approve-all", {"reason": "먼저 투입"})
         code, r = self.post(f"/api/incidents/{b['id']}/approve-all", {"reason": "다음 투입"})
-        self.assertEqual((code, r["approved"]), (200, []))
-        self.assertIn("이미 다른 배치", r["skipped"][0]["reason"])          # 중복 투입은 막고 재추천을 안내
+        self.assertEqual((code, [x for x in r["approved"] if x["kind"].startswith("dispatch")]), (200, []))
+        self.assertIn("이미 다른 배치", next(x for x in r["skipped"] if x["kind"] == "dispatch_public")["reason"])          # 중복 투입은 막고 재추천을 안내
         for x in self.get("/api/dispatch")[1]["assignments"]:
             self.post(f"/api/dispatch/{x['id']}/release", {})
 
