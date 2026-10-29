@@ -58,7 +58,8 @@ def start_app(port, db_path, groundedness=True):
                 "SOLAR_BASE_URL": f"http://127.0.0.1:{FAKE_PORT}/v1",
                 "SOLAR_MODEL": "fake-solar", "DISASTER_DB_PATH": str(db_path),
                 "DOCUMENT_PARSE_URL": f"http://127.0.0.1:{FAKE_PORT}/v1/document-digitization",
-                "WEBAPP_INCIDENT_PER_MIN": "1000"})
+                "WEBAPP_INCIDENT_PER_MIN": "1000",
+                "AUTO_FOLLOWUPS": "0"})   # 여기서는 담당자가 요청하는 안내문 경로를 시험(자동 후속 처리는 test_pipeline)
     if groundedness:
         env["GROUNDEDNESS_MODEL"] = "fake-ground"
     else:

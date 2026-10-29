@@ -168,8 +168,8 @@ def classify_incident(rid, text, ts, max_text=intake.MAX_TEXT):
 def auto_dispatch(out, linked, notes):
     """급한 신고(긴급도 ≤ AUTO_DISPATCH_MAX_URGENCY) → ④ 공공 인력 배치 추천을 승인 대기열에. 같은 사건의 배치가
     진행 중이면 연결만 한다. 신고 내용 때문에 못 만들면 메모만, 예상 못 한 오류면 배치 에이전트를 수동 처리로."""
-    if not (out.get("type") in SCENARIO["type_skills"] and isinstance(out.get("urgency"), int)
-            and out["urgency"] <= AUTO_DISPATCH_MAX_URGENCY):
+    if not (out.get("type") in SCENARIO["type_skills"] and out["type"] not in AUTO_DISPATCH_EXCLUDE
+            and isinstance(out.get("urgency"), int) and out["urgency"] <= AUTO_DISPATCH_MAX_URGENCY):
         return
     try:
         same = ongoing_dispatch(out)
@@ -242,6 +242,77 @@ def link_incident(row):
             notes.append("물품 수급 연결 실패: 담당자가 ⑧ 물품 화면에서 직접 등록하세요")
     out.update(missing=missing, linked=linked, notes=notes, state="보완 필요" if missing else "접수")
     return row
+
+
+def followups(incident_id):
+    """접수·보완 직후 별도 스레드에서 실행: 신고자를 기다리게 하지 않고 다음 에이전트로 이어서 넘긴다.
+    - 위험 유형 신고 → ③ 안내문(현재 확정 단계, 없으면 긴급도로 주의/경계) → ⑦ 검증 → 통과분만 승인 대기열
+    - 대민지원 중 일손 요청 → ⑥ 작업 분해·봉사자 추천 → 투입 승인 대기열
+    같은 사건의 반복 신고(다른 신고의 배치에 연결만 된 경우)는 안내문을 다시 만들지 않는다."""
+    row = incident_output(incident_id)
+    o = (row or {}).get("output", {})
+    if not row or o.get("state") != "접수" or o.get("zone") in (None, "미상"):
+        return
+    repeat = any("이미 진행 중" in n for n in o.get("notes", []))
+    add, notes = {}, []
+    if o.get("type") in GUIDANCE_TYPES and not repeat:
+        try:
+            stage = database.get_record("stage", "current") or {}
+            level = stage["level"] if stage.get("confirmed") and stage.get("level") in ("주의", "경계", "위험") \
+                else ("경계" if (o.get("urgency") or 4) <= 2 else "주의")
+            flags = sorted(f for f, ws in GUIDANCE_FLAG_WORDS.items() if any(w in o["text"] for w in ws))
+            ctrl = [c["name"] for c in current_control_zones() if c.get("active")]
+            g = generate_guidance(incident_id, level, flags, ctrl)
+            add["guidance"] = {"level": level, "status": g["output"].get("status"), "verdict": g["output"].get("verdict"),
+                               "approval_id": g.get("approval_id"), "review_id": g.get("review_id"),
+                               "blocked": bool(g.get("blocked"))}
+            agent_ok("welfare")
+        except Exception as e:
+            agent_failed("welfare", e)
+            notes.append("안내문 자동 작성 실패: 담당자가 ③ 안내 화면에서 직접 만드세요")
+    if o.get("type") == "대민지원" and any(w in o["text"] for w in LABOR_WORDS):
+        try:
+            with FEATURES.lock:
+                v = FEATURES.volunteer_request({"text": o["text"][:300], "zone": o["zone"], "incident_id": incident_id})
+            add["volunteer"] = [t["id"] for t in v["tasks"]]
+            if not v["tasks"]:
+                notes.append("일손 요청으로 보이지만 작업을 나누지 못함: 담당자가 ⑥ 봉사 화면에서 등록하세요")
+            agent_ok("volunteer")
+        except ValueError as e:
+            notes.append(f"봉사 요청을 만들지 못함({e})")
+        except Exception as e:
+            agent_failed("volunteer", e)
+            notes.append("봉사자 추천 연결 실패: 담당자가 ⑥ 봉사 화면에서 직접 등록하세요")
+    if not add and not notes:
+        return
+    with _incident_lock:   # 그사이 보완·오접수 처리가 있었을 수 있어 최신 상태를 다시 읽고 합친다
+        cur = incident_output(incident_id)
+        co = cur["output"]
+        if co.get("state") == INVALID:
+            return
+        co["linked"] = {**(co.get("linked") or {}), **add}
+        co["notes"] = list(co.get("notes") or []) + notes
+        database.update_incident(cur)
+
+
+def start_followups(incident_id):
+    if AUTO_FOLLOWUPS:
+        threading.Thread(target=followups, args=(incident_id,), daemon=True).start()
+
+
+def approve_one(current, s, reason):
+    """승인 직전 재검사 → 승인 기록 → 결과 반영. 문제가 있으면 승인하지 않고 사유 문자열을 돌려준다.
+    호출하는 쪽에서 _dispatch_lock을 잡는다."""
+    problem = recheck_dispatch(current) if current["kind"].startswith("dispatch_") else FEATURES.before_approve(current)
+    if problem:
+        return problem
+    database.resolve_approval(current["id"], True, s["username"], reason, s["user_id"])
+    with FEATURES.lock:
+        FEATURES.after_resolve(current, True, s)
+    return None
+
+
+BULK_SKIP_KINDS = {"welfare_guidance_review"}   # 검증이 불확실한 안내문은 하나씩 보고 판단한다
 
 
 PUBLIC_HIDDEN = ("notes", "invalidated_by", "invalid_reason", "invalidated_at", "triage")
@@ -327,7 +398,14 @@ def create_dispatch(incident_id, kind, data, auto=False, output=None):
 
 
 # 긴급도가 이 값 이하인 신고는 접수되면 공공 인력 배치 추천을 자동으로 승인 대기열에 올린다(0이면 끔).
-AUTO_DISPATCH_MAX_URGENCY = int(os.getenv("AUTO_DISPATCH_MAX_URGENCY", DISPATCH_CFG.get("auto_public_max_urgency", 2)))
+AUTO_DISPATCH_MAX_URGENCY = int(os.getenv("AUTO_DISPATCH_MAX_URGENCY", DISPATCH_CFG.get("auto_public_max_urgency", 4)))
+# 문의·생활 지원(대민지원)은 출동 대상이 아니라 자동 배치에서 뺀다(일손 요청은 ⑥ 봉사로 간다).
+AUTO_DISPATCH_EXCLUDE = set(DISPATCH_CFG.get("auto_public_exclude", ["대민지원"]))
+# 접수 뒤 백그라운드로 이어서 처리(③ 안내문 → ⑦ 검증, 일손 요청 → ⑥ 봉사 추천). 0이면 끔.
+AUTO_FOLLOWUPS = os.getenv("AUTO_FOLLOWUPS", "1") != "0"
+GUIDANCE_TYPES = {"인명구조", "침수", "산사태·토사", "단전·단수", "도로·시설 장애"}
+GUIDANCE_FLAG_WORDS = {"반지하": ["반지하"], "거동불편": ["거동", "휠체어", "누워 계"], "영유아": ["아기", "영유아", "분유", "기저귀"]}
+LABOR_WORDS = ("일손", "치울", "치워", "정리", "도와줄", "도와주실", "옮길", "옮겨", "청소", "퍼낼", "세척")
 
 
 def _epoch(ts):
@@ -386,6 +464,43 @@ def recheck_dispatch(approval):
 DOC_PARSER = DocumentParser(max_calls=LLM_MAX_CALLS) if MODE == "solar" else None
 FEATURES = features.Features(database, SCENARIO, travel, DISPATCH_CFG, GUIDANCE_CFG, LLM, VERIFY_LLM, DOC_PARSER)
 SENSORS = sensors.SensorHub(database)
+
+
+def generate_guidance(incident_id, level, flags, control_zones):
+    """③ 안내문 → ⑦ 검증. grounded면 승인 대기열(welfare_guidance), notSure면 담당자 확인, notGrounded면 차단.
+    AI를 쓸 수 없으면(검증기 없음 포함) 표준 원문만 만든다(fail closed). 응답에는 승인 전 AI 문구를 넣지 않는다."""
+    verifier_fn = guidance_client = None
+    if LLM is not None and VERIFY_LLM is not None:
+        guidance_client = LLM
+        verifier_fn = lambda draft, evidence: verify.verify_text(draft, evidence, client=VERIFY_LLM)[0]
+    result = welfare.make_guidance(profile={"flags": flags}, level=level, control_zones=control_zones,
+                                   cfg=GUIDANCE_CFG, client=guidance_client, verifier=verifier_fn)
+    row = result_dict(result)
+    output = row.get("output", {})
+    if output.get("status") == "승인 대기" and output.get("verdict") == "grounded" and output.get("displayable") is True:
+        row["approval_id"] = database.create_approval(
+            "welfare_guidance", {"incident_id": incident_id, "guidance": output, "verifier": VERIFIER_INFO},
+            incident_id=incident_id)["id"]
+    elif row.get("ai_used") and output.get("verdict") == "notSure":
+        # 제안서 6.9: notSure는 담당자 확인 요청. 표준 원문을 보여 주되 초안을 검토 대기열에 올린다.
+        row["review_id"] = database.create_approval(
+            "welfare_guidance_review", {"incident_id": incident_id, "guidance": output, "verifier": VERIFIER_INFO},
+            incident_id=incident_id)["id"]
+    elif row.get("ai_used") and output.get("verdict") == "notGrounded":
+        # 제안서 6.9: notGrounded는 차단하고 기록만 남긴다(대기열에 넣지 않음).
+        database.log_audit("guidance_blocked", "incident", incident_id,
+                           {"verdict": "notGrounded", "doc_ids": output.get("doc_ids", [])})
+        row["blocked"] = True
+    # 사람 승인 전에는 AI 문구를 응답으로 내보내지 않는다(제안서 9.2-4: 승인 후 표시).
+    if row.get("ai_used"):
+        public = dict(output)
+        public.pop("draft", None)
+        public["text"] = public.get("standard", "")
+        public["displayable"] = True
+        public["ai_text_withheld"] = True
+        row["output"] = public
+    row["incident_id"] = incident_id
+    return row
 
 
 def public_guidance(incident_id):
@@ -770,60 +885,7 @@ class Handler(BaseHTTPRequestHandler):
                         "error": "control_zones는 최대 20개의 문자열 배열이어야 합니다"
                     })
 
-                # Fail closed: do not generate AI guidance unless a verifier is configured.
-                verifier_fn = None
-                guidance_client = None
-                if LLM is not None and VERIFY_LLM is not None:
-                    guidance_client = LLM
-                    verifier_fn = lambda draft, evidence: verify.verify_text(
-                        draft, evidence, client=VERIFY_LLM
-                    )[0]
-
-                result = welfare.make_guidance(
-                    profile={"flags": flags},
-                    level=level,
-                    control_zones=control_zones,
-                    cfg=GUIDANCE_CFG,
-                    client=guidance_client,
-                    verifier=verifier_fn,
-                )
-                row = result_dict(result)
-                output = row.get("output", {})
-                if (
-                    output.get("status") == "승인 대기"
-                    and output.get("verdict") == "grounded"
-                    and output.get("displayable") is True
-                ):
-                    approval = database.create_approval(
-                        "welfare_guidance",
-                        {"incident_id": incident_id, "guidance": output, "verifier": VERIFIER_INFO},
-                        incident_id=incident_id,
-                    )
-                    row["approval_id"] = approval["id"]
-                elif row.get("ai_used") and output.get("verdict") == "notSure":
-                    # 제안서 6.9: notSure는 담당자 확인 요청. 표준 원문을 보여 주되 초안을 검토 대기열에 올린다.
-                    review = database.create_approval(
-                        "welfare_guidance_review",
-                        {"incident_id": incident_id, "guidance": output, "verifier": VERIFIER_INFO},
-                        incident_id=incident_id,
-                    )
-                    row["review_id"] = review["id"]
-                elif row.get("ai_used") and output.get("verdict") == "notGrounded":
-                    # 제안서 6.9: notGrounded는 차단하고 기록만 남긴다(대기열에 넣지 않음).
-                    database.log_audit("guidance_blocked", "incident", incident_id,
-                                       {"verdict": "notGrounded", "doc_ids": output.get("doc_ids", [])})
-                    row["blocked"] = True
-
-                # 사람 승인 전에는 AI 문구를 응답으로 내보내지 않는다(제안서 9.2-4: 승인 후 표시).
-                # 초안 원문은 승인 대기열 항목(DB)에만 남고, 응답에는 표준 원문만 담는다.
-                if row.get("ai_used"):
-                    public = dict(output)
-                    public.pop("draft", None)
-                    public["text"] = public.get("standard", "")
-                    public["displayable"] = True
-                    public["ai_text_withheld"] = True
-                    row["output"] = public
-
+                row = generate_guidance(incident_id, level, flags, control_zones)
                 row["incident_id"] = incident_id
                 return self.send_json(200, row)
 
@@ -842,7 +904,9 @@ class Handler(BaseHTTPRequestHandler):
                 row = classify_incident(rid, text, time.time())
                 # Persist only the classifier result (the intake agent applies its configured masking).
                 row = database.save_incident(row)
-                return self.send_json(201, public_row(database.update_incident(link_incident(row))))
+                row = database.update_incident(link_incident(row))
+                start_followups(row["output"]["id"])
+                return self.send_json(201, public_row(row))
             if path.startswith("/api/incidents/") and path.endswith("/supplement"):   # 신고자가 빠진 정보 보완(접수번호로)
                 parts = path.strip("/").split("/")
                 if len(parts) != 4 or not parts[2] or len(parts[2]) > 40:
@@ -873,7 +937,39 @@ class Handler(BaseHTTPRequestHandler):
                     row = link_incident(row)
                     database.log_audit("incident_supplemented", "incident", o["id"],
                                        {"still_missing": row["output"]["missing"]})
-                    return self.send_json(200, public_row(database.update_incident(row)))
+                    row = database.update_incident(row)
+                    start_followups(o["id"])
+                    return self.send_json(200, public_row(row))
+            if path.startswith("/api/incidents/") and path.endswith("/approve-all"):   # 담당자: 이 신고의 대응안 한 번에 승인
+                s = self.require_staff(check_csrf=True)
+                if not s:
+                    return
+                parts = path.strip("/").split("/")
+                if len(parts) != 4 or not parts[2] or len(parts[2]) > 40:
+                    return self.send_json(404, {"error": "찾을 수 없는 경로입니다"})
+                reason = data.get("reason")
+                if not isinstance(reason, str) or not reason.strip() or len(reason) > 500:
+                    return self.send_json(400, {"error": "승인 사유를 500자 이하로 입력해 주세요"})
+                row = incident_output(parts[2])
+                if row is None:
+                    return self.send_json(404, {"error": "접수번호를 찾을 수 없습니다"})
+                if row["output"].get("state") == INVALID:
+                    return self.send_json(409, {"error": "오접수로 처리된 신고입니다"})
+                approved, skipped = [], []
+                with _dispatch_lock:   # 항목마다 승인 직전 재검사(중복 투입·재고 부족이면 그 항목만 건너뜀)
+                    for a in database.list_pending_approvals_for(parts[2]):
+                        if a["kind"] in BULK_SKIP_KINDS:
+                            skipped.append({"id": a["id"], "kind": a["kind"], "reason": "검증이 불확실한 안내문은 따로 확인하세요"})
+                            continue
+                        problem = approve_one(a, s, reason.strip())
+                        if problem:
+                            skipped.append({"id": a["id"], "kind": a["kind"], "reason": problem})
+                        else:
+                            approved.append({"id": a["id"], "kind": a["kind"]})
+                database.log_audit("incident_bulk_approved", "incident", parts[2],
+                                   {"approved": [x["id"] for x in approved], "skipped": [x["id"] for x in skipped],
+                                    "by": s["username"]})
+                return self.send_json(200, {"incident_id": parts[2], "approved": approved, "skipped": skipped})
             if path.startswith("/api/incidents/") and path.endswith("/invalidate"):   # 담당자: 허위·오접수 처리
                 s = self.require_staff(check_csrf=True)
                 if not s:

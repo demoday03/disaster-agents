@@ -143,6 +143,34 @@ class Rehearsal:
         check(len(busy) == 1, "승인 후 투입 현황에 없음")
         return f"자동 추천 1순위 {top.get('name', top['id'])} (점수 {top['score']:.2f}) → 승인 → 투입"
 
+    def s4b_chain(self):
+        """신고 하나가 AI끼리 이어서 처리되고(배치 추천·안내문·검증), 사람은 마지막에 한 번만 승인한다."""
+        o = self.report("Z1 반지하 집에 물이 차요 할머니 혼자 계세요")["output"]
+        check(o["type"] == "침수" and o["urgency"] == 2, f"분류 {o['type']}/긴급도 {o['urgency']}")
+        end, view = time.time() + 60, None
+        while time.time() < end:   # 안내문 작성·검증은 접수 뒤 백그라운드에서 이어진다
+            view = next(x["output"] for x in self.ok(self.staff, "/api/incidents")["items"] if x["output"]["id"] == o["id"])
+            if "guidance" in view.get("linked", {}):
+                break
+            time.sleep(.5)
+        linked = view.get("linked", {})
+        check(linked.get("dispatch") and "guidance" in linked, f"자동 연결 {linked}")
+        g = linked["guidance"]
+        kinds = sorted(a["kind"] for a in self.pending(incident_id=o["id"]))
+        r = self.ok(self.staff, f"/api/incidents/{o['id']}/approve-all", {"reason": "반지하 어르신, 배치와 안내 함께 승인"})
+        check(r["approved"] and not self.pending(incident_id=o["id"]) or
+              all(x["kind"] == "welfare_guidance_review" for x in self.pending(incident_id=o["id"])), f"일괄 승인 {r}")
+        busy = [a for a in self.ok(self.staff, "/api/dispatch")["assignments"] if a["incident_id"] == o["id"]]
+        check(len(busy) == 1, "일괄 승인 후 배치가 투입되지 않음")
+        note = "표준 원문"
+        if g.get("approval_id"):
+            pub = self.ok(Client(self.base), f"/api/incidents/{o['id']}")
+            check(pub["guidance"] and pub["guidance"].get("text"), "승인했는데 시민 화면에 안내문 없음")
+            note = "AI 안내문 검증 통과 → 시민 화면 표시"
+        elif g.get("review_id"):
+            note = "AI 안내문 검증 불확실 → 담당자 확인으로 따로 남김"
+        return f"자동: 배치 추천·안내문({g['level']}) · 승인 대기 {kinds} → 한 번 승인 {len(r['approved'])}건 · {note}"
+
     def s5_guidance(self):
         iid = self.ids["rescue"]
         g = self.ok(self.staff, f"/api/incidents/{iid}/guidance", {"level": "경계", "flags": [], "control_zones": []})
@@ -258,7 +286,8 @@ class Rehearsal:
     def run(self):
         for name, fn in [("0. 서버·로그인", self.s0_ready), ("1. 시민 신고(② 접수)", self.s1_report),
                          ("2. 상황판", self.s2_board), ("3. 센서 감지·단계 확정(①)", self.s3_sensor),
-                         ("4. 구조 인력 자동 추천·배치(②④)", self.s4_dispatch), ("5. 안내문·검증(③⑦)", self.s5_guidance),
+                         ("4. 구조 인력 자동 추천·배치(②④)", self.s4_dispatch),
+                         ("4-1. 신고 하나 → AI 연쇄 처리 → 한 번 승인(②④③⑦)", self.s4b_chain), ("5. 안내문·검증(③⑦)", self.s5_guidance),
                          ("6. 안부 확인(③)", self.s6_welfare), ("7. 신고 → 물품 출고(②⑧)", self.s7_supply),
                          ("8. 빠진 정보 보완", self.s8_supplement), ("9. 오접수 처리", self.s9_invalid),
                          ("10. 봉사자 투입(⑥)", self.s10_volunteer), ("11. 복구 서류(⑤)", self.s11_recovery),

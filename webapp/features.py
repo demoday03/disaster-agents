@@ -396,7 +396,7 @@ class Features:
         out = []
         for t in tasks:
             rec = {**t, "request_id": req_id, "household": hid, "request_text": text, "state": "대기",
-                   "temperature_c": temp, "created_at": time.time()}
+                   "temperature_c": temp, "created_at": time.time(), "incident_id": data.get("incident_id")}
             self.db.put_record("task", t["id"], rec)
             out.append(self._recommend_task(rec))
         return {"request_id": req_id, "tasks": out, "ai_used": ai, "fallback_reason": why,
@@ -413,8 +413,9 @@ class Features:
             task["state"] = "추천"
             task["pending_approval"] = self.db.create_approval(
                 "volunteer_task", {"task": {k: task[k] for k in ("id", "type", "zone", "skills", "equipment", "people", "hours")},
-                                   "recommendation": rec, "work_order": volunteer.work_order(task, rec["team"])},
-                incident_id=None)["id"]
+                                   "recommendation": rec, "work_order": volunteer.work_order(task, rec["team"]),
+                                   "incident_id": task.get("incident_id")},
+                incident_id=task.get("incident_id"))["id"]
         task["last_recommendation"] = rec
         self.db.put_record("task", task["id"], task)
         return task

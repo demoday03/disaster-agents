@@ -1,6 +1,6 @@
 """신고 → 다음 에이전트 연결과 예외 처리(잘못된 신고·필수 정보 누락·에이전트 오류) 시험. mock 모드, 실제 API 호출 없음.
 실행: python -m unittest webapp.test_pipeline -v"""
-import unittest
+import time, unittest
 from pathlib import Path
 from database import db
 from webapp.test_server import Client, ServerBase
@@ -152,8 +152,9 @@ class TestPipeline(ServerBase):
         self.assertEqual(self.dispatches(third["id"]), [])
 
     def test_low_urgency_and_missing_zone_wait(self):
-        road = self.report("Z4 공원 벤치가 부서졌어요")
-        self.assertEqual(self.dispatches(road["id"]), [])                    # 긴급도 3~4는 담당자가 요청
+        road = self.report("Z4 공원 벤치 사용법 문의드려요")
+        self.assertEqual(road["type"], "대민지원")
+        self.assertEqual(self.dispatches(road["id"]), [])                    # 문의(대민지원)는 출동 대상 아님
         o = self.report("어딘지 모르겠는데 사람이 갇혀 있어요")
         self.assertEqual(self.dispatches(o["id"]), [])                       # 위치가 없으면 추천하지 않음
         code, d = Client(self.base).post(f"/api/incidents/{o['id']}/supplement", {"text": "Z8 구역 마트 지하예요"})
@@ -187,6 +188,58 @@ class TestPipeline(ServerBase):
         code, d = Client(self.base).post(f"/api/incidents/{long['id']}/supplement", {"text": "생수 10병이요"})
         self.assertEqual((code, d["output"]["state"]), (200, "접수"))      # 긴 원문 뒤에 붙은 품목도 읽음
         self.assertEqual([r["item"] for r in self.supply_requests(long["id"])], ["생수"])
+
+    def wait_linked(self, iid, key, timeout=5):
+        """접수 뒤 백그라운드 후속 처리(안내문·봉사)가 끝날 때까지 기다린다."""
+        end = time.time() + timeout
+        while time.time() < end:
+            v = self.staff_view(iid)
+            if key in (v.get("linked") or {}):
+                return v
+            time.sleep(.1)
+        self.fail(f"{iid}에 {key} 연결이 생기지 않음")
+
+    def test_hazard_report_chains_to_dispatch_and_guidance(self):
+        o = self.report("Z5 뒷산 토사가 마당까지 흘러내려요 (전체 흐름 시험)")
+        self.assertEqual((o["type"], o["urgency"]), ("산사태·토사", 3))
+        self.assertEqual(len(self.dispatches(o["id"])), 1)                   # 긴급도 3도 위험 유형이면 배치 추천
+        g = self.wait_linked(o["id"], "guidance")["linked"]["guidance"]
+        self.assertEqual((g["level"], g["status"]), ("주의", "표준 원문"))   # mock: AI 없이 표준 원문(승인 대기 없음)
+
+    def test_labor_request_chains_to_volunteer(self):
+        o = self.report("Z3 집 안 진흙 퍼낼 일손이 필요해요")
+        self.assertEqual(o["type"], "대민지원")
+        tasks = self.wait_linked(o["id"], "volunteer")["linked"]["volunteer"]
+        self.assertTrue(tasks)
+        pend = [a for a in self.pending(o["id"]) if a["kind"] == "volunteer_task"]
+        self.assertEqual(len(pend), len([t for t in tasks]))                 # 봉사 투입 승인도 이 신고에 묶임
+
+    def test_approve_all_executes_every_item_once(self):
+        o = self.report("Z6 마을회관에 생수 3병이랑 담요 2장 필요해요 (일괄 승인 시험)")
+        items = self.pending(o["id"])
+        self.assertEqual(sorted(a["item"]["item"] for a in items), ["담요", "생수"])
+        anon = Client(self.base)
+        self.assertIn(anon.post(f"/api/incidents/{o['id']}/approve-all", {"reason": "x"})[0], (401, 403))
+        self.assertEqual(self.post(f"/api/incidents/{o['id']}/approve-all", {"reason": ""})[0], 400)
+        code, r = self.post(f"/api/incidents/{o['id']}/approve-all", {"reason": "재고 확인, 일괄 승인"})
+        self.assertEqual((code, len(r["approved"]), r["skipped"]), (200, 2, []))
+        self.assertEqual(self.pending(o["id"]), [])
+        self.assertTrue(all(q["state"] == "배치" for q in self.supply_requests(o["id"])))
+        code, r = self.post(f"/api/incidents/{o['id']}/approve-all", {"reason": "다시"})
+        self.assertEqual((code, r["approved"]), (200, []))                   # 두 번 눌러도 다시 실행되지 않음
+
+    def test_approve_all_skips_item_that_fails_recheck(self):
+        a = self.report("Z2 상가 지하에 사람이 갇혀 있어요 (재검사 시험 1)")
+        b = self.report("Z2 상가 옆 건물에도 사람이 갇혀 있어요 (재검사 시험 2)")
+        top_a = self.dispatches(a["id"])[0]["item"]["recommendation"]["top"]["id"]
+        top_b = self.dispatches(b["id"])[0]["item"]["recommendation"]["top"]["id"]
+        self.assertEqual(top_a, top_b)                                       # 둘 다 같은 팀을 1순위로 추천
+        self.post(f"/api/incidents/{a['id']}/approve-all", {"reason": "먼저 투입"})
+        code, r = self.post(f"/api/incidents/{b['id']}/approve-all", {"reason": "다음 투입"})
+        self.assertEqual((code, r["approved"]), (200, []))
+        self.assertIn("이미 다른 배치", r["skipped"][0]["reason"])          # 중복 투입은 막고 재추천을 안내
+        for x in self.get("/api/dispatch")[1]["assignments"]:
+            self.post(f"/api/dispatch/{x['id']}/release", {})
 
     def test_manual_mode_shown_and_cleared_on_success(self):
         old = db.DB_PATH
