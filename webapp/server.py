@@ -295,6 +295,25 @@ def followups(incident_id):
         database.update_incident(cur)
 
 
+def link_pending_incidents():
+    """서버를 거치지 않고 저장된 신고(예: scripts/demo_setup.py가 미리 넣은 시연 신고)는 다음 에이전트로
+    넘겨진 적이 없다. 서버가 켜질 때 그런 신고(state 없음)를 찾아 연결과 후속 처리를 한 번 돌린다."""
+    done = []
+    for item in reversed(database.list_incidents(200)):   # 먼저 들어온 신고부터(반복 신고 묶음이 자연스럽게)
+        if item.get("output", {}).get("state") is not None:
+            continue
+        try:
+            with _incident_lock:
+                row = database.update_incident(link_incident(item))
+            followups(row["output"]["id"])   # 이미 백그라운드 스레드 안이라 바로 실행
+            done.append(row["output"]["id"])
+        except Exception:
+            traceback.print_exc()
+    if done:
+        print(f"서버를 거치지 않고 저장된 신고 {len(done)}건을 에이전트에 연결했습니다: {', '.join(done)}")
+    return done
+
+
 def start_followups(incident_id):
     if AUTO_FOLLOWUPS:
         threading.Thread(target=followups, args=(incident_id,), daemon=True).start()
@@ -600,6 +619,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")   # 코드를 고친 뒤 브라우저가 예전 화면을 보여 주지 않게
         for k, v in SECURITY_HEADERS.items():
             self.send_header(k, v)
         self.end_headers(); self.wfile.write(body)
@@ -1108,6 +1128,8 @@ def main():
     if database.count_users() == 0:
         print("담당자 계정이 없습니다. 관리자 화면을 쓰려면 먼저 실행하세요: python scripts/create_user.py 이름 --role operator")
     print("Ctrl+C로 종료하세요. 실재난 경보/출동 용도로 사용하지 마세요.")
+    if AUTO_FOLLOWUPS:   # 미리 넣은 시연 신고 등 아직 연결되지 않은 신고를 백그라운드로 처리(서버는 바로 응답)
+        threading.Thread(target=link_pending_incidents, daemon=True).start()
     try: server.serve_forever()
     except KeyboardInterrupt: pass
     finally: server.server_close()
