@@ -521,6 +521,63 @@ class TestSensorGateway(ServerBase):
         self.assertTrue(next(s for s in st["sensors"] if s["key"] == "A.water_low")["over"])
         self.assertEqual(Client(self.base).get("/api/sensor/status")[0], 401)   # 현황은 담당자만
 
+    def send_events(self, *events):
+        body = {"readings": [], "events": [{"node": n, "code": c, "seq": s} for n, c, s in events]}
+        status, d, _ = Client(self.base).request("POST", "/api/sensor/readings", body, headers={"X-Gateway-Token": GATEWAY_TOKEN})
+        self.assertEqual(status, 200, d)
+        return d["events"]
+
+    def test_simulated_sos_goes_to_volunteer_tab(self):
+        out = self.gateway("--simulate", "sos", "--ticks", "2", "--interval", "0.05")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("현장 신호 E SOS 요청(봉사 탭 SOS 목록에 올림", out.stdout)
+        st = self.get("/api/sensor/status")[1]
+        sos = [e for e in st["events"] if e["code"] == "SOS" and e["node"] == "E"]
+        self.assertEqual((len(sos), sos[0]["applied"], sos[0]["open"]), (1, True, False))   # 두 번 와도 한 건, 확인은 봉사 탭에서
+        self.assertEqual([s["volunteer"] for s in self.get("/api/volunteer")[1]["sos"]], ["V01"])
+
+    def test_field_buttons_update_shelter_and_welfare(self):
+        occ = lambda: next(s["occupied"] for s in self.get("/api/dispatch")[1]["shelters"] if s["id"] == "S1")
+        before = occ()
+        ev = self.send_events(("C", "+1", 51), ("C", "+1", 52), ("C", "-1", 53), ("C", "GOT", 54))
+        self.assertEqual([e.get("applied") for e in ev], [True, True, True, None])   # 물품 도착은 표시만
+        self.assertEqual(occ(), before + 1)
+        self.assertIn("S1 대피소 인원", ev[0]["note"])
+        no_check = self.send_events(("D", "SAFE", 61))[0]                           # 안부 확인 전에는 반영 안 됨
+        self.assertEqual((no_check["applied"], no_check["open"]), (False, False))
+        self.assertIn("진행 중이 아닙니다", no_check["note"])
+        self.assertEqual(self.post("/api/welfare/checks/start", {"zone": "Z1"})[0], 200)
+        self.assertTrue(self.send_events(("D", "SAFE", 62))[0]["applied"])
+        h01 = next(c for c in self.get("/api/welfare/checks")[1]["checks"] if c["household"] == "H01")
+        self.assertNotIn(h01["state"], ("대기", "격상"))
+        again = self.send_events(("D", "SAFE", 63))[0]
+        self.assertEqual(again["applied"], False)                                   # 이미 응답한 가구
+        no_task = self.send_events(("E", "IN", 71))[0]
+        self.assertEqual(no_task["applied"], False)                                 # 투입 승인된 작업이 없으면 바꾸지 않음
+        # 급한 신호 중 웹 기능이 없는 것(D SOS)은 센서 탭에서 담당자가 확인
+        d_sos = self.send_events(("D", "SOS", 64))[0]
+        self.assertEqual((d_sos["open"], d_sos.get("applied")), (True, None))
+        self.assertEqual(Client(self.base).request("POST", f"/api/sensor/events/{d_sos['id']}/ack", {})[0], 401)
+        status, d = self.post(f"/api/sensor/events/{d_sos['id']}/ack", {})
+        self.assertEqual((status, d["open"]), (200, False))
+        self.assertEqual(self.post("/api/sensor/events/EV999/ack", {})[0], 404)
+        import sqlite3   # 처리자 '마이크로비트 C'로 남는지 감사 기록에서 확인
+        conn = sqlite3.connect(Path(self.tempdir.name) / "test.db")
+        try:
+            audit = conn.execute("SELECT action, details_json FROM audit_logs").fetchall()
+        finally:
+            conn.close()   # 열어 두면 Windows에서 임시 폴더를 지우지 못한다
+        actions = {a for a, _ in audit}
+        self.assertTrue({"field_event_applied", "field_event_not_applied"} <= actions)
+        self.assertTrue(any(a == "shelter_occupancy" and '"by": "마이크로비트 C"' in d for a, d in audit))
+
+    def test_downlink_needs_gateway_token(self):
+        anon = Client(self.base)
+        self.assertEqual(anon.get("/api/sensor/downlink")[0], 401)
+        self.assertEqual(self.get("/api/sensor/downlink")[0], 401)                # 담당자 쿠키로도 안 됨
+        status, d, _ = anon.request("GET", "/api/sensor/downlink", headers={"X-Gateway-Token": GATEWAY_TOKEN})
+        self.assertEqual((status, set(d)), (200, {"level", "level_name", "safety_check"}))
+
     def test_wrong_token_and_session_cannot_post(self):
         out = self.gateway("--simulate", "normal", "--ticks", "1", token="wrong-token-wrong-token")
         self.assertIn("HTTP 401", out.stdout)

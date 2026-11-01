@@ -2,7 +2,10 @@
 
 센서 노드(microbit/node_a.py, node_b.py)가 무선(radio)으로 보낸 값을 수신기(microbit/receiver.py)가 한 줄씩 출력한다.
 한 줄 형식:  S,<노드>,<센서>,<값>      예) S,A,water_low,523
+             E,<노드>,<신호>,<번호>    예) E,E,SOS,7   (현장 버튼 신호. 받으면 수신기로 K,E,7을 돌려보내 재전송을 멈춘다)
 그 밖의 줄(디버그 출력 등)은 무시한다.
+반대 방향: 서버에서 담당자가 확정한 단계를 몇 초마다 물어 바뀌면 수신기로 L0~L3(정상이면 X)을,
+안부 확인이 시작되면 Q,D를 보낸다. 수신기가 현장 노드에 무선으로 방송한다.
 
 실행 예(프로젝트 루트에서, 서버는 SENSOR_GATEWAY_TOKEN을 같은 값으로 설정해 실행 중이어야 함):
   python gateway/microbit_gateway.py --new-token                       # 토큰 하나 만들기(서버·게이트웨이에 같은 값 설정)
@@ -17,8 +20,13 @@
 import argparse, json, os, random, re, secrets, sys, time, urllib.error, urllib.request
 
 LINE = re.compile(r"^S,([A-Za-z0-9_]{1,20}),([A-Za-z0-9_]{1,20}),(-?\d{1,6}(?:\.\d{1,3})?)$")
-SCENARIOS = ("normal", "flood", "single", "spike", "slope", "dropout")
+EVENT_LINE = re.compile(r"^E,([A-Za-z0-9_]{1,20}),([A-Za-z0-9+\-]{1,8}),(\d{1,3})$")
+SCENARIOS = ("normal", "flood", "single", "spike", "slope", "dropout", "sos")
 MAX_PENDING = 400        # 서버에 못 보낸 값은 이만큼만 들고 있는다(오래된 값은 어차피 판정에 쓰이지 않음)
+RETRY_S = 3.0            # USB 시리얼이 끊겼을 때 다시 연결을 시도하는 간격(초)
+EVENT_DEDUP_S = 60       # 노드는 수신 확인(K)이 올 때까지 같은 신호를 다시 보낸다. 이 시간 안의 같은 신호는 한 번만 올린다
+DOWNLINK_S = 3.0         # 서버에 확정 단계를 묻는 간격(초)
+RESEND_LEVEL_S = 30.0    # 무선은 유실될 수 있어 같은 단계도 이 간격으로 다시 방송한다(노드는 같은 단계면 무시)
 
 
 def parse_line(line, ts):
@@ -30,10 +38,20 @@ def parse_line(line, ts):
     return {"node": node, "sensor": sensor, "value": float(value), "ts": ts}
 
 
+def parse_event(line, ts):
+    """시리얼 한 줄 → 현장 신호 dict. 형식이 다르면 None."""
+    m = EVENT_LINE.match(line.strip())
+    if not m:
+        return None
+    node, code, seq = m.groups()
+    return {"node": node, "code": code, "seq": int(seq), "ts": ts}
+
+
 class Simulator:
     """기기 없이 시험할 때 쓰는 가상 센서. tick()마다 노드 A·B의 한 번 측정값을 시리얼 줄 형식으로 돌려준다.
     normal: 모두 정상 / flood: 수위 두 개가 함께 높음(확정 후보) / single: 낮은 수위만 높음(보류)
-    spike: 한 번만 튐(무시) / slope: 기울기+진동(사면 확정 후보) / dropout: 노드 B가 끊김(센서 이상)"""
+    spike: 한 번만 튐(무시) / slope: 기울기+진동(사면 확정 후보) / dropout: 노드 B가 끊김(센서 이상)
+    sos: 센서는 정상, 첫 회에 봉사자 노드 E의 SOS 버튼 신호(같은 신호를 무선 재전송처럼 두 번)"""
     def __init__(self, scenario, seed=0):
         if scenario not in SCENARIOS:
             raise ValueError(f"scenario는 {SCENARIOS} 중 하나")
@@ -55,16 +73,29 @@ class Simulator:
         lines = [f"S,A,water_low,{low}", f"S,A,water_high,{high}"]
         if not (s == "dropout" and n >= 1):
             lines += [f"S,B,tilt,{tilt}", f"S,B,vibration,{vib}"]
+        if s == "sos" and n == 0:
+            lines += ["E,E,SOS,1", "E,E,SOS,1"]
         return lines
 
 
-def post(server, token, readings, rain_stage=None, timeout=5):
+def post(server, token, readings, rain_stage=None, events=(), timeout=5):
     body = {"readings": readings}
     if rain_stage is not None:
         body["rain_stage"] = rain_stage
+    if events:
+        body["events"] = list(events)
     req = urllib.request.Request(server.rstrip("/") + "/api/sensor/readings", method="POST",
                                  data=json.dumps(body).encode("utf-8"),
                                  headers={"Content-Type": "application/json", "X-Gateway-Token": token})
+    return _send(req, timeout)
+
+
+def get_downlink(server, token, timeout=5):
+    req = urllib.request.Request(server.rstrip("/") + "/api/sensor/downlink", headers={"X-Gateway-Token": token})
+    return _send(req, timeout)
+
+
+def _send(req, timeout):
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.status, json.loads(r.read())
@@ -86,59 +117,136 @@ def describe(res):
         msg += " (같은 단계가 이미 대기·확정 중)"
     if o.get("sensor_faults"):
         msg += f" · 응답 끊긴 노드 {','.join(o['sensor_faults'])}"
+    if res.get("events"):
+        msg += " · 현장 신호 " + ", ".join(f"{e['node']} {e['label']}" + (f"({e['note']})" if e.get("note") else "")
+                                         for e in res["events"])
     return msg
 
 
 class Gateway:
-    """줄을 모아 interval초마다 서버로 보낸다. 전송에 실패하면 다음 번에 다시 보낸다."""
-    def __init__(self, server, token, interval=1.0, rain_stage=None, sender=post, out=print, clock=time.time):
+    """줄을 모아 interval초마다 서버로 보낸다. 전송에 실패하면 다음 번에 다시 보낸다.
+    writer가 있으면(실제 기기) 현장 신호에 수신 확인 K를 돌려보내고, 서버의 확정 단계를 L/X·Q로 내려보낸다."""
+    def __init__(self, server, token, interval=1.0, rain_stage=None, sender=post, out=print, clock=time.time,
+                 writer=None, fetcher=get_downlink):
         self.server, self.token, self.interval, self.rain_stage = server, token, interval, rain_stage
-        self.sender, self.out, self.clock = sender, out, clock
+        self.sender, self.out, self.clock, self.writer, self.fetcher = sender, out, clock, writer, fetcher
         self.pending, self.last_flush, self.ignored, self.last_result = [], clock(), 0, None
+        self.pending_events, self.event_seen = [], {}
+        self.last_poll, self.sent_level, self.sent_level_at, self.sent_check, self.downlink_ok = None, None, 0, False, True
 
     def feed(self, line):
-        r = parse_line(line, self.clock())
-        if r is None:
+        now = self.clock()
+        r = parse_line(line, now)
+        if r is not None:
+            self.pending.append(r)
+            if len(self.pending) > MAX_PENDING:
+                del self.pending[:len(self.pending) - MAX_PENDING]
+            return
+        e = parse_event(line, now)
+        if e is None:
             if line.strip():
                 self.ignored += 1
             return
-        self.pending.append(r)
-        if len(self.pending) > MAX_PENDING:
-            del self.pending[:len(self.pending) - MAX_PENDING]
+        self.write(f"K,{e['node']},{e['seq']}")   # 중복이어도 확인은 다시 보낸다(앞선 K가 무선에서 유실됐을 수 있음)
+        self.event_seen = {k: t for k, t in self.event_seen.items() if now - t < EVENT_DEDUP_S}
+        key = (e["node"], e["code"], e["seq"])
+        if key in self.event_seen:
+            return
+        self.event_seen[key] = now
+        self.out(f"[현장 신호] 노드 {e['node']} · {e['code']}")
+        self.pending_events.append(e)
+        if len(self.pending_events) > MAX_PENDING:
+            del self.pending_events[:len(self.pending_events) - MAX_PENDING]
+
+    def write(self, msg):
+        """수신기 마이크로비트로 한 줄 보낸다(무선 방송용). 기기가 없거나 끊겼으면 False."""
+        return bool(self.writer and self.writer(msg))
 
     def due(self):
         return self.clock() - self.last_flush >= self.interval
 
     def flush(self):
         self.last_flush = self.clock()
-        if not self.pending:
+        if not self.pending and not self.pending_events:
             return None
-        batch = self.pending[:]
+        batch, events = self.pending[:], self.pending_events[:]
         try:
-            status, res = self.sender(self.server, self.token, batch, self.rain_stage)
+            status, res = self.sender(self.server, self.token, batch, self.rain_stage, events)
         except (urllib.error.URLError, OSError) as e:
-            self.out(f"[전송 실패] 서버에 연결할 수 없습니다: {getattr(e, 'reason', e)} · {len(batch)}개 보관 후 재시도")
+            self.out(f"[전송 실패] 서버에 연결할 수 없습니다: {getattr(e, 'reason', e)} · {len(batch) + len(events)}개 보관 후 재시도")
             return None
-        if status == 200:
+        if status in (200, 400, 401, 403, 421, 503):   # 다시 보내도 같은 결과인 오류는 버리고 원인을 알린다
             del self.pending[:len(batch)]
+            del self.pending_events[:len(events)]
+        if status == 200:
             self.last_result = res
             self.out(f"[{time.strftime('%H:%M:%S')}] {len(batch)}개 전송 · {describe(res)}")
             return res
-        if status in (400, 401, 403, 421, 503):   # 다시 보내도 같은 결과인 오류는 버리고 원인을 알린다
-            del self.pending[:len(batch)]
         self.out(f"[전송 거부] HTTP {status}: {res.get('error')}")
         return None
 
+    def poll_downlink(self):
+        """DOWNLINK_S초마다 서버에 확정 단계를 묻고, 바뀌었으면 L0~L3(정상은 X), 안부 확인이 새로 시작되면 Q,D를 보낸다."""
+        now = self.clock()
+        if self.writer is None or (self.last_poll is not None and now - self.last_poll < DOWNLINK_S):
+            return None
+        self.last_poll = now
+        try:
+            status, d = self.fetcher(self.server, self.token)
+            if status != 200:
+                raise OSError(f"HTTP {status}: {d.get('error')}")
+        except (urllib.error.URLError, OSError) as e:
+            if self.downlink_ok:
+                self.out(f"[내려보내기 실패] 확정 단계를 받지 못했습니다: {getattr(e, 'reason', e)} · 계속 다시 시도합니다")
+                self.downlink_ok = False
+            return None
+        self.downlink_ok = True
+        sent = []
+        level = d.get("level") if d.get("level") in (0, 1, 2, 3) else 0
+        if level != self.sent_level or now - self.sent_level_at >= RESEND_LEVEL_S:
+            msg = "X" if level == 0 else f"L{level}"
+            if self.write(msg):
+                if level != self.sent_level:
+                    self.out(f"[내려보냄] 확정 단계 {d.get('level_name', level)} → {msg}")
+                self.sent_level, self.sent_level_at = level, now
+                sent.append(msg)
+        check = bool(d.get("safety_check"))
+        if check and not self.sent_check and self.write("Q,D"):
+            self.out("[내려보냄] 안부 확인 요청 → Q,D")
+            sent.append("Q,D")
+        if check != self.sent_check and (not check or "Q,D" in sent):
+            self.sent_check = check
+        return sent
 
-def serial_lines(port, baud):
-    try:
-        import serial   # pyserial
-    except ImportError:
-        raise SystemExit("실제 마이크로비트를 읽으려면 pyserial이 필요합니다: pip install pyserial  (기기 없이 시험: --simulate flood)")
-    with serial.Serial(port, baud, timeout=0.2) as ser:
-        while True:
-            raw = ser.readline()
-            yield raw.decode("utf-8", "replace") if raw else ""
+
+def serial_lines(port, baud, retry_s=RETRY_S, opener=None, out=print, sleep=time.sleep, on_open=None):
+    """시리얼 줄을 계속 돌려준다. USB가 끊기면(노트북 절전·케이블 흔들림) 멈추지 않고 retry_s초마다 다시 연결한다.
+    on_open(ser)은 연결될 때 열린 포트로, 끊길 때 None으로 불린다(수신기로 보내는 쪽이 지금 포트를 알게)."""
+    on_open = on_open or (lambda ser: None)
+    if opener is None:
+        try:
+            import serial   # pyserial
+        except ImportError:
+            raise SystemExit("실제 마이크로비트를 읽으려면 pyserial이 필요합니다: pip install pyserial  (기기 없이 시험: --simulate flood)")
+        opener = lambda: serial.Serial(port, baud, timeout=0.2)
+    lost = False
+    while True:
+        try:
+            with opener() as ser:
+                on_open(ser)
+                if lost:
+                    out(f"[재연결] {port}에 다시 연결했습니다")
+                    lost = False
+                while True:
+                    raw = ser.readline()
+                    yield raw.decode("utf-8", "replace") if raw else ""
+        except OSError as e:   # pyserial의 SerialException도 OSError
+            on_open(None)
+            if not lost:
+                out(f"[연결 끊김] {port}: {e} · {retry_s:g}초마다 다시 연결합니다")
+                lost = True
+            yield ""   # 끊긴 동안에도 호출한 쪽이 보관해 둔 값을 서버로 보낼 수 있게
+            sleep(retry_s)
 
 
 def list_ports():
@@ -180,7 +288,19 @@ def main(argv=None):
     if not token:
         raise SystemExit("환경변수 SENSOR_GATEWAY_TOKEN이 없습니다. 서버와 같은 값을 설정하세요(--new-token으로 생성).")
 
-    gw = Gateway(args.server, token, args.interval, args.rain_stage)
+    link = {"ser": None}   # 지금 열려 있는 시리얼 포트(끊기면 None)
+
+    def write(msg):
+        ser = link["ser"]
+        if ser is None:
+            return False
+        try:
+            ser.write((msg + "\n").encode("ascii"))
+            return True
+        except OSError:   # 끊긴 순간이면 다음 재연결 뒤 다시 보낸다
+            return False
+
+    gw = Gateway(args.server, token, args.interval, args.rain_stage, writer=None if args.simulate else write)
     print(f"게이트웨이 시작: {'가상 센서(' + args.simulate + ')' if args.simulate else args.port} → {args.server}  (Ctrl+C로 종료)")
     try:
         if args.simulate:
@@ -193,10 +313,11 @@ def main(argv=None):
                 if not args.ticks or sent < args.ticks:
                     time.sleep(args.interval)
         else:
-            for line in serial_lines(args.port, args.baud):
+            for line in serial_lines(args.port, args.baud, on_open=lambda ser: link.update(ser=ser)):
                 gw.feed(line)
                 if gw.due():
                     gw.flush()
+                gw.poll_downlink()
     except KeyboardInterrupt:
         pass
     if gw.ignored:

@@ -332,7 +332,12 @@
              (ev.approval_id ? ` · 승인 대기열에 올림(${E(ev.approval_id)})` : ev.duplicate_of ? ' · 같은 단계가 이미 대기·확정 중' : '') + '</div>' +
              (o.false_alarm_log.length ? `<div class="muted">${E(o.false_alarm_log.join(' / '))}</div>` : '')
            : '<div class="muted">아직 받은 값이 없습니다. 게이트웨이를 실행하세요.</div>') +
-        (d.calibrated ? '' : '<div class="muted">임계값 보정 전(임시값)</div>');
+        (d.calibrated ? '' : '<div class="muted">임계값 보정 전(임시값)</div>') +
+        `<h3 style="margin:14px 0 4px">현장 버튼 신호${d.open_urgent ? ' ' + chip(`확인 안 한 급한 신호 ${d.open_urgent}건`, 'bad') : ''}</h3>` +
+        table(['받은 때', '노드', '신호', '웹 반영', ''], d.events.map(x =>
+          `<tr><td>${E(fmtTime(x.ts))}</td><td>${E(x.node)}</td><td>${x.urgent ? chip(x.label, x.open ? 'bad' : '') : E(x.label)}</td>` +
+          `<td>${x.applied == null ? '<span class="muted">-</span>' : x.applied ? chip('반영', 'ok') + ' ' + E(x.note) : chip('반영 안 됨', 'warn') + ' ' + E(x.note)}</td>` +
+          `<td>${x.open ? `<button type="button" data-ack-event="${E(x.id)}">확인</button>` : x.acked_by ? `<span class="muted">${E(x.acked_by)} 확인</span>` : ''}</td></tr>`));
     } catch (e) { showError('sensorLive', e); }
   }
 
@@ -348,6 +353,13 @@
   // ---------------------------------------------------------------- 폼 연결
   function bind() {
     document.querySelectorAll('#tabs button').forEach(b => b.addEventListener('click', () => go(b.dataset.go)));
+    $('sensorLive').addEventListener('click', async e => {   // 현장 SOS 등 급한 신호 '확인'
+      const b = e.target.closest('button[data-ack-event]');
+      if (!b) return;
+      b.disabled = true;
+      try { await post(`/api/sensor/events/${encodeURIComponent(b.dataset.ackEvent)}/ack`); loadSensorLive(); }
+      catch (err) { alert(err.message); b.disabled = false; }
+    });
     $('incidents').addEventListener('click', async e => {   // 신고 카드 안 '분류 저장'(O3)
       const b = e.target.closest('button[data-classify]');
       if (!b) return;

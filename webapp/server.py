@@ -107,7 +107,7 @@ def record_login(username, ok):
 
 
 SITE_TOKEN = hmac.new(SITE_CODE.encode(), b"site-access-v1", "sha256").hexdigest() if SITE_CODE else ""
-GATE_FREE = {"/access", "/api/access", "/api/health", "/api/sensor/readings"}   # 게이트웨이는 자기 토큰으로 인증
+GATE_FREE = {"/access", "/api/access", "/api/health", "/api/sensor/readings", "/api/sensor/downlink"}   # 게이트웨이는 자기 토큰으로 인증
 
 
 def site_cookie(max_age=30 * 24 * 3600):
@@ -644,6 +644,93 @@ WEATHER = weather.WeatherFeed()   # 기상청 초단기실황·특보(참고 정
 PUBLIC = public_api.PublicAPI(FEATURES, database, scenario_now)   # 시민·봉사자 화면(가상 코드 선택, 로그인 없음)
 
 
+def change_occupancy(sid, delta, by):
+    """대피소 입소(+)·퇴소(−) 반영(O6). 담당자 화면과 현장 노드 C가 같이 쓴다. 대피소가 없으면 KeyError, 범위를 넘으면 Conflict."""
+    shelter = next((x for x in SCENARIO["shelters"] if x["id"] == sid), None)
+    if shelter is None:
+        raise KeyError(sid)
+    with _dispatch_lock:
+        now_occ = next(x["occupied"] for x in scenario_now()["shelters"] if x["id"] == sid)
+        new_occ = now_occ + delta
+        if not 0 <= new_occ <= shelter["capacity"]:
+            raise features.Conflict(f"현재 {now_occ}명이라 {delta:+d}명은 반영할 수 없습니다(수용량 {shelter['capacity']}명)")
+        database.put_record("shelter_occ", sid, {"id": sid, "delta": new_occ - shelter["occupied"], "by": by})
+    database.log_audit("shelter_occupancy", "shelter", sid, {"delta": delta, "occupied": new_occ, "by": by})
+    return {"id": sid, "occupied": new_occ, "capacity": shelter["capacity"]}
+
+
+def load_field_nodes(path=ROOT / "config" / "field_nodes.json"):
+    """현장 노드 → 반영 대상(대피소·가구·봉사자). 없는 ID는 시작할 때 막는다."""
+    with open(path, encoding="utf-8") as f:
+        cfg = {k: v for k, v in json.load(f).items() if not k.startswith("_")}
+    checks = {("C", "shelter"): {s["id"] for s in SCENARIO["shelters"]},
+              ("D", "household"): set(FEATURES.households), ("E", "volunteer"): set(FEATURES.volunteers)}
+    for (node, key), ids in checks.items():
+        if cfg.get(node, {}).get(key) not in ids:
+            raise RuntimeError(f"config/field_nodes.json: {node}.{key}가 없는 ID입니다({cfg.get(node, {}).get(key)})")
+    return cfg
+
+
+FIELD_NODES = load_field_nodes()
+
+
+def apply_field_event(ev):
+    """현장 버튼 신호를 기존 웹 기능에 반영한다(담당자 화면 버튼과 같은 처리, 처리자는 '마이크로비트 노드').
+    반영할 기능이 없는 신호는 None, 반영하면 (True, 설명), 지금 상태로는 못 하면 (False, 사유)."""
+    node, code, by = ev["node"], ev["code"], f"마이크로비트 {ev['node']}"
+    target = FIELD_NODES.get(node, {})
+    try:
+        if node == "C" and code in ("+1", "-1"):
+            r = change_occupancy(target["shelter"], 1 if code == "+1" else -1, by)
+            return True, f"{r['id']} 대피소 인원 {r['occupied']}/{r['capacity']}명"
+        if node == "D" and code == "SAFE":
+            hid = target["household"]
+            with FEATURES.lock:
+                if FEATURES.db.get_record("check", hid) is None:
+                    return False, f"{hid} 가구 안부 확인이 진행 중이 아닙니다"
+                r = FEATURES.checks_respond(hid)
+            return True, f"{hid} 가구 안부 확인 응답({r['state']})"
+        if node == "E" and code in ("SOS", "IN", "DONE"):
+            vid = target["volunteer"]
+            with FEATURES.lock:
+                tasks = [t for t in FEATURES.db.list_records("task") if vid in t.get("team", [])]
+                if code == "SOS":
+                    current = next((t["id"] for t in tasks if t["state"] in ("진행", "투입승인")), None)
+                    r = FEATURES.sos_raise({"volunteer": vid, "task": current})
+                    return True, f"봉사 탭 SOS 목록에 올림({r['id']}, 봉사자 {vid})"
+                want = "투입승인" if code == "IN" else "진행"
+                task = next((t for t in tasks if t["state"] == want), None)
+                if task is None:
+                    return False, f"봉사자 {vid}에게 '{want}' 상태 작업이 없습니다"
+                (FEATURES.task_checkin if code == "IN" else FEATURES.task_complete)(task["id"])
+            return True, f"작업 {task['id']} → {'진행' if code == 'IN' else '완료'}"
+    except features.Conflict as e:
+        return False, str(e)
+    except KeyError as e:
+        return False, f"대상을 찾을 수 없습니다({e})"
+    return None
+
+
+def ingest_sensor_batch(data):
+    """게이트웨이 묶음: 측정값 판정 + 새 현장 신호를 웹 기능에 반영해 결과를 신호에 붙인다."""
+    res = SENSORS.ingest(data.get("readings"), data.get("rain_stage"), data.get("events"))
+    for ev in res["events"]:
+        try:
+            outcome = apply_field_event(ev)
+        except Exception as e:   # 반영 중 예상 못 한 오류가 나도 신호 기록과 센서 판정은 그대로 둔다
+            traceback.print_exc()
+            outcome = (False, f"반영 중 오류({type(e).__name__}) · 담당자가 직접 처리하세요")
+        if outcome is None:
+            continue
+        applied, note = outcome
+        SENSORS.annotate(ev["id"], applied=applied, note=note,
+                         # SOS를 봉사 탭으로 넘겼으면 확인은 거기서 한다(같은 SOS를 두 번 확인하지 않게)
+                         **({"open": False} if applied and ev["code"] == "SOS" and ev["node"] == "E" else {}))
+        database.log_audit("field_event_applied" if applied else "field_event_not_applied", "node", ev["node"],
+                           {"event_id": ev["id"], "code": ev["code"], "note": note})
+    return res
+
+
 def generate_guidance(incident_id, level, flags, control_zones, hazard=None):
     """③ 안내문 → ⑦ 검증. grounded면 승인 대기열(welfare_guidance), notSure면 담당자 확인, notGrounded면 차단.
     AI를 쓸 수 없으면(검증기 없음 포함) 표준 원문만 만든다(fail closed). 응답에는 승인 전 AI 문구를 넣지 않는다."""
@@ -772,6 +859,15 @@ class Handler(BaseHTTPRequestHandler):
         if check_csrf and not hmac.compare_digest(self.headers.get("X-CSRF-Token", ""), s["csrf"]):
             self.send_json(403, {"error": "보안 토큰(CSRF)이 올바르지 않습니다. 페이지를 새로 고쳐 주세요"}); return None
         return s
+
+    def require_gateway(self):
+        """마이크로비트 게이트웨이 토큰을 확인한다. 아니면 503/401을 보낸 뒤 False."""
+        if not SENSOR_TOKEN:
+            self.send_json(503, {"error": "센서 게이트웨이가 꺼져 있습니다. 서버에 SENSOR_GATEWAY_TOKEN을 설정하세요"}); return False
+        given = self.headers.get("X-Gateway-Token", "").encode("utf-8")
+        if not hmac.compare_digest(given, SENSOR_TOKEN.encode("utf-8")):
+            self.send_json(401, {"error": "게이트웨이 토큰이 올바르지 않습니다"}); return False
+        return True
 
     def host_allowed(self):
         """허용한 Host로 들어온 요청만 처리한다. 악성 사이트가 DNS를 바꿔 이 서버로 요청을 보내는 공격(DNS 리바인딩)을 막는다."""
@@ -943,6 +1039,10 @@ class Handler(BaseHTTPRequestHandler):
             if not self.require_staff():
                 return
             return self.send_json(200, {**SENSORS.status(), "gateway_enabled": bool(SENSOR_TOKEN)})
+        if path == "/api/sensor/downlink":   # 게이트웨이: 현장 마이크로비트로 방송할 확정 단계·안부 확인 요청
+            if not self.require_gateway():
+                return
+            return self.send_json(200, SENSORS.downlink())
         if path in ("/volunteer",):
             return self.send_html("volunteer.html")
         if path.startswith("/api/public/") and path != "/api/public/status":
@@ -1008,12 +1108,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(200, {"username": user["username"], "role": user["role"], "csrf_token": csrf},
                                       headers={"Set-Cookie": session_cookie(token, database.SESSION_TTL_S)})
             if path == "/api/sensor/readings":   # 마이크로비트 게이트웨이(로그인 대신 게이트웨이 토큰)
-                if not SENSOR_TOKEN:
-                    return self.send_json(503, {"error": "센서 게이트웨이가 꺼져 있습니다. 서버에 SENSOR_GATEWAY_TOKEN을 설정하세요"})
-                given = self.headers.get("X-Gateway-Token", "").encode("utf-8")
-                if not hmac.compare_digest(given, SENSOR_TOKEN.encode("utf-8")):
-                    return self.send_json(401, {"error": "게이트웨이 토큰이 올바르지 않습니다"})
-                return self.send_json(200, SENSORS.ingest(data.get("readings"), data.get("rain_stage")))
+                if not self.require_gateway():
+                    return
+                return self.send_json(200, ingest_sensor_batch(data))
+            if path.startswith("/api/sensor/events/") and path.endswith("/ack"):   # 담당자: 급한 현장 신호(SOS 등) 확인
+                s = self.require_staff(check_csrf=True)
+                if not s:
+                    return
+                try:
+                    return self.send_json(200, SENSORS.ack_event(path.split("/")[-2], s["username"]))
+                except KeyError:
+                    return self.send_json(404, {"error": "현장 신호를 찾을 수 없습니다(서버를 다시 켜면 지워집니다)"})
             if path == "/api/logout":
                 token, s = self.session()
                 if s is not None:
@@ -1117,19 +1222,14 @@ class Handler(BaseHTTPRequestHandler):
                 if not s:
                     return
                 sid, delta = path.strip("/").split("/")[2], data.get("delta")
-                shelter = next((x for x in SCENARIO["shelters"] if x["id"] == sid), None)
-                if shelter is None:
+                if not any(x["id"] == sid for x in SCENARIO["shelters"]):
                     return self.send_json(404, {"error": "대피소를 찾을 수 없습니다"})
                 if not isinstance(delta, int) or isinstance(delta, bool) or delta == 0 or abs(delta) > 50:
                     return self.send_json(400, {"error": "입소(+)·퇴소(−) 인원은 1~50명이어야 합니다"})
-                with _dispatch_lock:
-                    now_occ = next(x["occupied"] for x in scenario_now()["shelters"] if x["id"] == sid)
-                    new_occ = now_occ + delta
-                    if not 0 <= new_occ <= shelter["capacity"]:
-                        return self.send_json(409, {"error": f"현재 {now_occ}명이라 {delta:+d}명은 반영할 수 없습니다(수용량 {shelter['capacity']}명)"})
-                    database.put_record("shelter_occ", sid, {"id": sid, "delta": new_occ - shelter["occupied"], "by": s["username"]})
-                database.log_audit("shelter_occupancy", "shelter", sid, {"delta": delta, "occupied": new_occ, "by": s["username"]})
-                return self.send_json(200, {"id": sid, "occupied": new_occ, "capacity": shelter["capacity"]})
+                try:
+                    return self.send_json(200, change_occupancy(sid, delta, s["username"]))
+                except features.Conflict as e:
+                    return self.send_json(409, {"error": str(e)})
             if path == "/api/control-zones" or (path.startswith("/api/control-zones/") and path.endswith("/toggle")):
                 s = self.require_staff(check_csrf=True)
                 if not s:
