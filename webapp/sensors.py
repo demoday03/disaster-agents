@@ -151,6 +151,22 @@ class SensorHub:
             return "confirmed"
         return None
 
+    def window(self, seconds):
+        """최근 seconds초 동안 센서별 최댓값과 마지막 값의 나이. 신고 대조에 쓴다(순간 값 하나보다 덜 흔들린다)."""
+        with self.lock:
+            now, out = self.clock(), {}
+            for r in self.buffer:
+                if r["ts"] < now - seconds:
+                    continue
+                k = f"{r['node']}.{r['sensor']}"
+                w = out.setdefault(k, {"max": r["value"], "age_s": now - r["ts"]})
+                w["max"] = max(w["max"], r["value"])
+                w["age_s"] = round(min(w["age_s"], now - r["ts"]), 1)
+            return out
+
+    def thresholds(self):
+        return {k: v["threshold"] for k, v in self.cfg["sensors"].items()}
+
     def status(self):
         with self.lock:
             now = self.clock()

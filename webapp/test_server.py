@@ -585,6 +585,43 @@ class TestSensorGateway(ServerBase):
         self.assertEqual(self.post("/api/sensor/readings", {"readings": []})[0], 401)
 
 
+class TestReportCrosscheck(ServerBase):
+    """신고 대조: 같은 구역 센서가 마른 상태인데 '허리까지 잠겼다'면 과장 가능, 센서가 젖어 있으면 일치. 긴급도는 그대로."""
+    port = 18781
+    extra_env = {"WEBAPP_INCIDENT_PER_MIN": "1000", "SENSOR_GATEWAY_TOKEN": GATEWAY_TOKEN}
+
+    def water(self, low, high):
+        now = time.time()
+        body = {"readings": [{"node": "A", "sensor": "water_low", "value": low, "ts": now},
+                             {"node": "A", "sensor": "water_high", "value": high, "ts": now}]}
+        status, d, _ = Client(self.base).request("POST", "/api/sensor/readings", body, headers={"X-Gateway-Token": GATEWAY_TOKEN})
+        self.assertEqual(status, 200, d)
+
+    def report_crosscheck(self, text):
+        code, d = Client(self.base).post("/api/incidents", {"text": text})
+        self.assertEqual(code, 201, d)
+        end = time.time() + 15
+        while time.time() < end:   # 대조는 접수 뒤 백그라운드 후속 처리(안내문·배치 등과 함께)에서 붙는다
+            o = next(x["output"] for x in self.get("/api/incidents")[1]["items"] if x["output"]["id"] == d["output"]["id"])
+            if "crosscheck" in (o.get("linked") or {}):
+                self.assertEqual(o["urgency"], d["output"]["urgency"])            # 대조 결과로 긴급도를 바꾸지 않음
+                return o["linked"]["crosscheck"]
+            time.sleep(.1)
+        self.fail("신고 대조 결과가 붙지 않음")
+
+    def test_exaggerated_then_consistent(self):
+        self.water(30, 10)
+        c = self.report_crosscheck("Z1 물이 허리까지 차서 집이 잠겼어요 (대조 시험 1)")
+        self.assertEqual((c["verdict"], c["claimed"], c["sensor_level"]), ("과장 가능", 2, 0))
+        self.assertIn("다시 확인", c["advice"])
+        self.water(301, 307)
+        c = self.report_crosscheck("Z1 침수돼서 물이 허리까지 찼어요 (대조 시험 2)")
+        self.assertEqual((c["verdict"], c["similar_reports"]), ("일치", 1))
+        c = self.report_crosscheck("Z3 침수돼서 물이 허리까지 찼어요 (대조 시험 3)")   # Z3에는 센서가 없다
+        self.assertEqual(c["verdict"], "확인 불가")
+        self.assertIn("crosscheck", {a["id"] for a in self.get("/api/agents")[1]["items"]})
+
+
 class TestSensorGatewayDisabled(ServerBase):
     port = 18774
 

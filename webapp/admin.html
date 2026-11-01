@@ -90,6 +90,7 @@ function classifyForm(o){const opt=(xs,v)=>xs.map(x=>`<option${String(x)===Strin
 function incidentFlow(o){const st=o.state||'접수',L=o.linked||{},E=escapeHtml,rows=[];const row=(ag,t)=>rows.push(`<li><span class="ag">${ag}</span><span>${t}</span></li>`);
 row('상태',`<span class="chip ${st==='접수'?'ok':st==='오접수'?'bad':'warn'}">${E(st)}</span>${(o.missing||[]).length?` 빠진 정보: ${E(o.missing.join(', '))} → 신고자에게 보완 요청`:''}${st==='오접수'?` 사유: ${E(o.invalid_reason||'')} (${E(o.invalidated_by||'')})`:''}`);
 if(L.monitor){const m=L.monitor;row('① 감시',m.agrees?`센서도 ${E(m.hazard)} 감지(${E(m.sensor_status)})${m.approval_id?' → 단계 확정 요청을 함께 승인':''}`:`센서 근거 없음(${E(m.sensor_status)}) → 단계는 센서 확인 후 확정`)}
+if(L.crosscheck){const c=L.crosscheck,cls={'일치':'ok','일부 일치':'warn','센서 근거 없음':'warn','과장 가능':'bad','축소 가능':'bad'}[c.verdict]||'';row('신고 대조',`<span class="chip ${cls}">${E(c.verdict)}</span> ${E(c.advice)}<div class="muted">${E(c.reasons.join(' · '))} · 긴급도·배치는 바꾸지 않음(참고용)</div>`)}
 const disp=[...((L.dispatch||[]).length?[`인력 추천 ${E(L.dispatch.join(', '))}`]:[]),...((L.shelter||[]).length?[`대피소 배정 ${E(L.shelter.join(', '))}`]:[])];if(disp.length)row('④ 배치',disp.join(' · '));
 if(L.guidance){const g=L.guidance;row('③⑦ 안내문',g.approval_id?'검증 통과 → 승인 대기':g.review_id?'검증 불확실 → 담당자가 따로 확인':g.blocked?'검증 불통과 → 차단(기록만 남김)':'표준 원문(AI 문장 없음)')}
 if(L.welfare_check)row('③ 안부',`구역 가구 안부 확인 시작 ${E(L.welfare_check)}`);

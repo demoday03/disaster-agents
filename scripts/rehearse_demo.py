@@ -80,7 +80,7 @@ class Rehearsal:
         code, _ = self.staff.login(USER, self.password)
         check(code == 200, "담당자 로그인 실패")
         agents = self.ok(self.staff, "/api/agents")["items"]
-        check(len(agents) == 8 and all(a["status"] == "demo-ready" for a in agents), "에이전트 상태 이상")
+        check(len(agents) == 9 and all(a["status"] == "demo-ready" for a in agents), "에이전트 상태 이상")   # ①~⑧ + 신고 대조
         return f"모드 {h['mode']}"
 
     def s1_report(self):

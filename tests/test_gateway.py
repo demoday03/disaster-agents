@@ -213,6 +213,15 @@ class TestSensorHub(unittest.TestCase):
         self.hub.annotate(sos["id"], applied=True, note="봉사 탭으로 넘김")
         self.assertEqual(next(e for e in self.hub.status()["events"] if e["id"] == sos["id"])["note"], "봉사 탭으로 넘김")
 
+    def test_window_gives_recent_max(self):
+        for v in (50, 320, 90):
+            self.hub.ingest([{"node": "A", "sensor": "water_low", "value": v, "ts": self.now}])
+            self.now += 10
+        w = self.hub.window(25)                                                 # 마지막 25초: 320(20초 전)·90(10초 전)
+        self.assertEqual((w["A.water_low"]["max"], w["A.water_low"]["age_s"]), (320, 10))
+        self.assertEqual(self.hub.window(5), {})
+        self.assertEqual(self.hub.thresholds()["A.water_low"], 200)
+
     def test_downlink_only_confirmed_stage_and_safety_check(self):
         self.assertEqual(self.hub.downlink(), {"level": 0, "level_name": "정상", "safety_check": False})
         db.put_record("stage", "current", {"level": "위험", "hazards": ["침수"], "confirmed": False})

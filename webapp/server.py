@@ -17,7 +17,7 @@ from common.llm import SolarClient
 from common.docparse import DocumentParser
 from common.masking import mask
 from common import scenario
-from agents import dispatch, intake, monitor, recovery, welfare, verify
+from agents import crosscheck, dispatch, intake, monitor, recovery, welfare, verify
 from coordinator import Coordinator
 from database import db as database
 from webapp import features, public_api, sensors, weather
@@ -127,6 +127,7 @@ AGENTS = [
     {"id": "volunteer", "name": "봉사 코디", "mode": "규칙 + AI 보조", "status": "demo-ready"},
     {"id": "verify", "name": "내용 검증", "mode": "규칙 + AI 보조", "status": "demo-ready"},
     {"id": "supply", "name": "물품 수급", "mode": "규칙 + AI 보조", "status": "demo-ready"},
+    {"id": "crosscheck", "name": "신고 대조", "mode": "규칙 (AI 없음)", "status": "demo-ready"},
 ]
 
 FEATURE_AGENTS = {"/api/stage": "monitor", "/api/welfare/": "welfare", "/api/verify": "verify",
@@ -292,6 +293,13 @@ def followups(incident_id):
         except Exception as e:
             agent_failed("monitor", e)
             notes.append("센서 교차 확인 실패: 담당자가 ① 센서 화면에서 확인하세요")
+    if o.get("type") in CROSSCHECK_CFG["rules"] and "crosscheck" not in done:
+        try:
+            add["crosscheck"] = report_crosscheck(o)
+            agent_ok("crosscheck")
+        except Exception as e:
+            agent_failed("crosscheck", e)
+            notes.append("신고 대조 실패: 담당자가 ① 센서 화면의 값과 직접 비교하세요")
     if (o.get("type") in GUIDANCE_TYPES and (o.get("urgency") or 4) <= WELFARE_CHECK_MAX_URGENCY
             and not repeat and "welfare_check" not in done):
         try:
@@ -364,6 +372,19 @@ def sensor_crosscheck(o):
         res.update(agrees=True, approval_id=stage["id"], level=stage["item"].get("level"),
                    sensor_status=stage["item"].get("status", "확정후보"))
     return res
+
+
+def report_crosscheck(o):
+    """신고 대조: 신고 심각도와 같은 구역 센서의 최근 최댓값을 비교한다(참고용, 긴급도·배치는 그대로)."""
+    cfg = CROSSCHECK_CFG
+    span = cfg["similar_window_min"] * 60
+    similar = 0   # 같은 구역·유형의 최근 다른 신고(여러 사람이 같은 걸 말하면 센서 위치 밖일 가능성도 본다)
+    for item in database.list_incidents(200):
+        x = item.get("output", {})
+        if (x.get("id") != o["id"] and x.get("state") != INVALID and x.get("type") == o["type"]
+                and x.get("zone") == o["zone"] and abs((x.get("ts") or 0) - (o.get("ts") or 0)) <= span):
+            similar += 1
+    return crosscheck.assess(o, SENSORS.window(cfg["window_sec"]), SENSORS.thresholds(), cfg, similar=similar)
 
 
 def queue_welfare_check(o):
@@ -582,6 +603,7 @@ SHELTER_TYPES = {"인명구조", "침수", "산사태·토사"}
 RECOVERY_DAMAGE = {"침수": ["주택침수"], "산사태·토사": ["사면유실"]}
 WELFARE_CHECK_MAX_URGENCY = 2   # 이만큼 급한 위험 신고면 그 구역 가구 ③ 안부 확인 시작을 승인 묶음에 넣는다
 SENSOR_FRESH_SEC = 120          # 이보다 오래된 센서 판정은 교차 확인 근거로 쓰지 않는다
+CROSSCHECK_CFG = crosscheck.load_cfg(ROOT / "config" / "crosscheck.json")   # 신고 대조: 센서가 있는 구역·심각도 표현
 
 
 def _epoch(ts):
