@@ -4,7 +4,7 @@
 #   기울기 센서(매직 라이트 컵) S → P9(디지털, 세워 두면 1·기울면 0), L → P8(모듈 LED, 기울면 켬)
 # 진동은 순간값이라 1초 동안 여러 번 읽은 최댓값, 기울기는 그 1초 안에 한 번이라도 기울면 1을 보낸다.
 # 기울기 센서가 없으면 USE_ACCEL = True로 바꿔 마이크로비트 내장 가속도계로 기울기를 판단한다.
-# 실제 시연 보드에는 같은 동작의 MakeCode 판(하드웨어/서버연결본/B_사면.ts)을 올려 두었다.
+# 실제 시연 보드에는 같은 동작의 MakeCode 판(microbit/makecode/B_사면.ts)을 올려 두었다.
 from microbit import display, pin0, pin8, pin9, sleep, accelerometer, Image
 import radio
 
