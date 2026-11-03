@@ -27,7 +27,9 @@ CLOUD = os.getenv("WEBAPP_CLOUD") == "1" or os.getenv("RENDER") == "true"
 HOST = os.getenv("WEBAPP_HOST", "0.0.0.0" if CLOUD else "127.0.0.1")
 PORT = int(os.getenv("WEBAPP_PORT") or (os.getenv("PORT") if CLOUD else None) or "8765")
 # 링크와 이 코드를 함께 받은 사람만 사이트를 볼 수 있다(비어 있으면 끔. 로컬 실행에서는 보통 끔)
-SITE_CODE = os.getenv("SITE_ACCESS_CODE", "").strip()
+# SITE_PUBLIC=1이면 접속 코드 없이 누구나 연다(담당자 화면은 여전히 로그인 필요). 공개 시연용으로 명시할 때만
+SITE_PUBLIC = os.getenv("SITE_PUBLIC") == "1"
+SITE_CODE = "" if SITE_PUBLIC else os.getenv("SITE_ACCESS_CODE", "").strip()
 MAX_BODY = 64 * 1024
 MAX_UPLOAD_BODY = 7 * 1024 * 1024   # 서류 파일(5MB)을 base64로 담은 요청. 이 경로만 크게 받는다
 UPLOAD_PATHS = {"/api/recovery/parse"}
@@ -1585,8 +1587,9 @@ def check_bind_policy(host=HOST, env=os.environ, staff_count=None):
     if host in LOCAL_HOSTS:
         return None
     if env.get("WEBAPP_CLOUD") == "1" or env.get("RENDER") == "true":   # HTTPS는 플랫폼이 처리한다
-        if len(env.get("SITE_ACCESS_CODE", "").strip()) < 6:
-            return "클라우드에 올릴 때는 SITE_ACCESS_CODE(6자 이상)를 정해야 합니다. 링크를 받은 사람만 들어오게 하는 코드입니다."
+        if env.get("SITE_PUBLIC") != "1" and len(env.get("SITE_ACCESS_CODE", "").strip()) < 6:
+            return ("클라우드에 올릴 때는 SITE_ACCESS_CODE(6자 이상)를 정해야 합니다. 링크를 받은 사람만 들어오게 하는 코드입니다. "
+                    "(접속 코드 없이 누구나 열려면 SITE_PUBLIC=1을 명시)")
         if (database.count_users() if staff_count is None else staff_count) == 0:
             return "담당자 계정이 없습니다. DEMO_SEED_ON_START=1과 DEMO_ADMIN_PASSWORD(8자 이상)를 설정하세요."
         return None

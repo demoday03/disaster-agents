@@ -324,4 +324,5 @@ python scripts/rehearse_demo.py            # 실패한 장면이 있으면 종�
 
 `render.yaml`과 `docs/배포_Render.md`. 클라우드 모드(`RENDER=true` 또는 `WEBAPP_CLOUD=1`)에서는 `0.0.0.0:$PORT`로 열고,
 **사이트 접속 코드(`SITE_ACCESS_CODE`)를 아는 사람만** 화면·API를 쓸 수 있다. 접속 코드와 담당자 계정이 없으면 서버가 시작하지 않는다.
+`SITE_PUBLIC=1`을 명시하면 접속 코드 없이 누구나 연다(지금 render.yaml 설정). 담당자 화면은 그때도 로그인이 필요하다.
 무료 서버는 다시 시작하면 데이터가 비므로 `DEMO_SEED_ON_START=1`로 시작할 때 시연 데이터를 넣는다.

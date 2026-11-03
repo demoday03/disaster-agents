@@ -74,7 +74,7 @@ class ServerBase(unittest.TestCase):
             except Exception: time.sleep(.1)
         else: raise RuntimeError("dashboard server did not start")
         cls.staff = Client(cls.base)
-        if cls.extra_env.get("SITE_ACCESS_CODE"):   # 사이트 접속 코드가 켜진 서버는 코드부터 넣는다
+        if cls.extra_env.get("SITE_ACCESS_CODE") and cls.extra_env.get("SITE_PUBLIC") != "1":   # 접속 코드가 켜진 서버는 코드부터
             status, _, h = cls.staff.request("POST", "/api/access", {"code": cls.extra_env["SITE_ACCESS_CODE"]})
             assert status == 200
             cls.staff.cookie = h["Set-Cookie"].split(";")[0]
@@ -693,10 +693,28 @@ class TestSiteAccessCode(ServerBase):
     def test_cloud_bind_policy(self):
         # server 모듈을 불러오면 기본 DB를 건드리므로 별도 프로세스에서 검사한다(test_bind_policy와 같은 방식)
         code = ("import json;from webapp import server as s;c={'WEBAPP_CLOUD':'1'};k={**c,'SITE_ACCESS_CODE':'abcdef'};"
+                "p={**c,'SITE_PUBLIC':'1'};"
                 "print(json.dumps([s.check_bind_policy('0.0.0.0',c,1) is None,s.check_bind_policy('0.0.0.0',k,0) is None,"
-                "s.check_bind_policy('0.0.0.0',k,1) is None,s.check_bind_policy('0.0.0.0',{},1) is None]))")
+                "s.check_bind_policy('0.0.0.0',k,1) is None,s.check_bind_policy('0.0.0.0',{},1) is None,"
+                "s.check_bind_policy('0.0.0.0',p,1) is None,s.check_bind_policy('0.0.0.0',p,0) is None]))")
         env = os.environ.copy(); env["DISASTER_DB_PATH"] = str(Path(self.tempdir.name) / "policy.db")
         out = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True, timeout=30)
         self.assertEqual(out.returncode, 0, out.stderr)
         # 코드 없음 거부 · 담당자 없음 거부 · 둘 다 있으면 허용 · 클라우드가 아니면 0.0.0.0 금지 그대로
-        self.assertEqual(json.loads(out.stdout.strip().splitlines()[-1]), [False, False, True, False])
+        # · SITE_PUBLIC=1을 명시하면 코드 없이 허용 · 그래도 담당자 계정은 필요
+        self.assertEqual(json.loads(out.stdout.strip().splitlines()[-1]), [False, False, True, False, True, False])
+
+
+class TestSitePublic(ServerBase):
+    """SITE_PUBLIC=1: 접속 코드가 설정돼 있어도 무시하고 누구나 연다. 담당자 기능은 그대로 로그인 필요."""
+    port = 18782
+    extra_env = {"WEBAPP_INCIDENT_PER_MIN": "1000", "SITE_PUBLIC": "1", "SITE_ACCESS_CODE": "team-code-2026", "KMA_API_KEY": ""}
+
+    def test_open_without_code_but_staff_still_login(self):
+        anon = Client(self.base)
+        with urllib.request.urlopen(self.base + "/", timeout=2) as r:            # /access로 보내지 않는다
+            self.assertEqual((r.status, r.url.rstrip("/")), (200, self.base))
+        self.assertEqual(anon.get("/api/public/status")[0], 200)
+        self.assertEqual(anon.post("/api/incidents", {"text": "Z1 침수됐어요 (공개 시험)"})[0], 201)
+        self.assertEqual(anon.get("/api/incidents")[0], 401)                     # 담당자 기능은 로그인 필요
+        self.assertEqual(anon.get("/api/approvals")[0], 401)

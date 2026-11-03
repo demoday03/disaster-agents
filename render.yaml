@@ -30,7 +30,9 @@ services:
         sync: false
       - key: KMA_API_KEY
         sync: false
-      - key: SITE_ACCESS_CODE     # 링크와 함께 팀원에게 줄 접속 코드(6자 이상)
+      - key: SITE_PUBLIC          # 1이면 접속 코드 없이 누구나 연다(담당자 화면은 로그인 필요). 코드로 막으려면 0
+        value: "1"
+      - key: SITE_ACCESS_CODE     # SITE_PUBLIC이 1이 아닐 때 링크와 함께 팀원에게 줄 접속 코드(6자 이상)
         sync: false
       - key: DEMO_ADMIN_PASSWORD  # 담당자 화면 '시연담당' 계정 비밀번호(8자 이상)
         sync: false
