@@ -1062,7 +1062,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/sensor/status":   # 게이트웨이 수신 현황과 최근 판정
             if not self.require_staff():
                 return
-            return self.send_json(200, {**SENSORS.status(), "gateway_enabled": bool(SENSOR_TOKEN)})
+            return self.send_json(200, {**SENSORS.status(), "gateway_enabled": bool(SENSOR_TOKEN), "cloud": CLOUD})
         if path == "/api/sensor/downlink":   # 게이트웨이: 현장 마이크로비트로 방송할 확정 단계·안부 확인 요청
             if not self.require_gateway():
                 return

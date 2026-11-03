@@ -629,7 +629,8 @@ class TestSensorGatewayDisabled(ServerBase):
         status, d, _ = Client(self.base).request("POST", "/api/sensor/readings", {"readings": []},
                                                  headers={"X-Gateway-Token": "x" * 20})
         self.assertEqual(status, 503, d)
-        self.assertFalse(self.get("/api/sensor/status")[1]["gateway_enabled"])
+        st = self.get("/api/sensor/status")[1]
+        self.assertEqual((st["gateway_enabled"], st["cloud"]), (False, False))   # 로컬: 게이트웨이를 켜라는 안내
 
 
 class TestPublicStatus(ServerBase):

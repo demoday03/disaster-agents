@@ -317,7 +317,9 @@
     try {
       const d = await api('/api/sensor/status');
       if (!d.gateway_enabled) {
-        $('sensorLive').innerHTML = '게이트웨이가 꺼져 있습니다. 서버를 SENSOR_GATEWAY_TOKEN 환경변수와 함께 실행하고 <code>python gateway/microbit_gateway.py</code>를 켜세요(docs/마이크로비트_게이트웨이.md).';
+        $('sensorLive').innerHTML = d.cloud
+          ? '이 배포 사이트에는 마이크로비트 센서를 연결하지 않았습니다. 센서는 노트북 USB의 수신기(G)로 노트북 서버에만 들어오므로, 센서 시연은 노트북에서 실행한 서버(http://127.0.0.1:8765/admin)로 하세요. 이 사이트의 신고 대조는 \'확인 불가\'로 표시됩니다.'
+          : '게이트웨이가 꺼져 있습니다. 서버를 SENSOR_GATEWAY_TOKEN 환경변수와 함께 실행하고 <code>python gateway/microbit_gateway.py</code>를 켜세요(docs/마이크로비트_게이트웨이.md).';
         return;
       }
       const age = s => s == null ? '-' : `${s}초 전`;
