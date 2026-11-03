@@ -41,16 +41,21 @@ def setup(db_path, reset=False, password=None, now=None):
     try:
         db.init_db()
         password = password or secrets.token_urlsafe(9)
-        db.create_user(DEMO_USER, password, "operator")
-        now = time.time() if now is None else now
-        results = []
-        for i, (text, _) in enumerate(REPORTS):   # 몇 분 간격으로 들어온 것처럼 시각을 나눈다
-            rid = f"R-DEMO{i + 1:04d}"
-            results.append(db.save_incident(intake.classify(rid, text, now - (len(REPORTS) - i) * 180,
-                                                            intake.load_cfg()).to_dict()))
-        return password, results
+        return password, seed(password, now)
     finally:
         db.DB_PATH = old
+
+
+def seed(password, now=None):
+    """지금 연결된 DB(db.DB_PATH)에 시연 담당자 계정과 신고 6건을 넣는다. 클라우드 서버도 시작할 때 이것을 쓴다."""
+    db.create_user(DEMO_USER, password, "operator")
+    now = time.time() if now is None else now
+    results = []
+    for i, (text, _) in enumerate(REPORTS):   # 몇 분 간격으로 들어온 것처럼 시각을 나눈다
+        rid = f"R-DEMO{i + 1:04d}"
+        results.append(db.save_incident(intake.classify(rid, text, now - (len(REPORTS) - i) * 180,
+                                                        intake.load_cfg()).to_dict()))
+    return results
 
 
 def main(argv=None):

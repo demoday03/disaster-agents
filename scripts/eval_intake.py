@@ -4,6 +4,7 @@
   python scripts/eval_intake.py            # 키워드 규칙(LLM 실패 시 폴백)만 측정, API 호출 없음
   $env:UPSTAGE_API_KEY="..."; $env:SOLAR_MODEL="콘솔에서_확인한_모델명"
   python scripts/eval_intake.py --solar    # Solar 추출 + 규칙 긴급도(최대 80회 호출)
+  python scripts/eval_intake.py --solar --data data/eval/intake_holdout.json   # 조정에 쓰지 않은 별도 24건
 
 목표 미달 항목이 있으면 종료 코드 1. 결과는 가상 시험 세트에 대한 측정일 뿐이다.
 """
@@ -24,6 +25,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--solar", action="store_true", help="Solar API로 유형·구역·인원 추출(실제 호출)")
     ap.add_argument("-v", "--verbose", action="store_true", help="틀린 건을 모두 출력")
+    ap.add_argument("--data", default="data/eval/intake_reports.json",
+                    help="평가 세트(일반화 확인: data/eval/intake_holdout.json)")
     args = ap.parse_args()
 
     client = None
@@ -33,7 +36,7 @@ def main():
             return 2
         client = SolarClient(timeout=15, max_calls=100)
 
-    res = EI.evaluate(EI.load(), intake.load_cfg(), client)
+    res = EI.evaluate(EI.load(args.data), intake.load_cfg(), client)
     print(f"분류 정확도(유형):        {res['type_accuracy']:.1%}  (목표 {EI.TARGETS['type_accuracy']:.0%} 이상)")
     print(f"인명구조 긴급도 1 부여율: {res['rescue_urgency1_rate']:.1%}  (목표 100%)")
     print(f"병합 정확도(사건 단위):   {res['merge_accuracy']:.1%}  (목표 {EI.TARGETS['merge_accuracy']:.0%} 이상)")

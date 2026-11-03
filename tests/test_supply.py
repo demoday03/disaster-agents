@@ -140,3 +140,15 @@ class TestSupply(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSupplyEvalSet(unittest.TestCase):
+    def test_d18_rule_baseline(self):   # 물품 요청 평가 세트 40건(규칙 모드) — 제안서 11.2 목표 90%
+        import json
+        from scripts.eval_supply import evaluate
+        with open("data/eval/supply_requests.json", encoding="utf-8") as f:
+            data = json.load(f)
+        self.assertEqual(len(data["requests"]), 40)
+        res = evaluate(data, S.load_catalog())
+        self.assertGreaterEqual(res["item_accuracy"], 0.9)
+        self.assertGreaterEqual(res["qty_accuracy"], 0.9)

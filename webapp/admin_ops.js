@@ -17,8 +17,8 @@
   let current = 'overview', META = null, refreshTimer = null, lastSensorApproval = null;
 
   // ---------------------------------------------------------------- 탭
-  const LOADERS = {overview: loadSituation, supply: loadSupply, volunteer: loadVolunteer, recovery: loadRecovery,
-                   welfare: loadChecks, sensor: () => { loadVerifyDocs(); loadSensorLive(); }, approvals: () => loadApprovals(), dispatch: () => { loadDispatch(); loadControl(); },
+  const LOADERS = {overview: () => { loadSituation(); loadZoneMap(); }, supply: loadSupply, volunteer: loadVolunteer, recovery: loadRecovery,
+                   welfare: loadChecks, sensor: () => { loadVerifyDocs(); loadSensorLive(); }, approvals: () => loadApprovals(), dispatch: () => { loadDispatch(); loadControl(); loadShelterOps(); },
                    guidance: loadIncidents};
   function go(tab) {
     current = tab;
@@ -31,12 +31,54 @@
     try { localStorage.setItem('adminTab', tab); } catch (e) { /* 저장 불가 환경 */ }
   }
 
+  // 대피소 운영(O6): 입소·퇴소 기록과 남은 자리
+  async function loadShelterOps() {
+    try {
+      const d = await api('/api/dispatch');
+      $('shelterOps').classList.remove('muted');
+      $('shelterOps').innerHTML = d.shelters.map(s => {
+        const pct = Math.round(100 * (s.capacity - s.capacity_left) / s.capacity);
+        return `<div class="occ"><span class="nm"><b>${E(s.name)}</b> <span class="muted">${E(s.zone)} · ${E(s.type)}${s.amenities.length ? ' · ' + E(s.amenities.join(', ')) : ''}</span></span>` +
+          `<span class="meter${s.capacity_left <= 0 ? ' full' : ''}" title="${pct}%"><span style="width:${Math.min(100, pct)}%"></span></span>` +
+          `<span>${E(s.occupied)}명 입소 · 남은 자리 ${E(Math.max(0, s.capacity_left))}명</span>` +
+          [[1, '입소 +1'], [5, '+5'], [-1, '퇴소 −1']].map(([n, t]) => `<button type="button" class="${n < 0 ? 'quiet' : ''}" data-occ="${E(s.id)}" data-n="${n}">${t}</button>`).join('') + '</div>';
+      }).join('');
+      $('shelterOps').querySelectorAll('button[data-occ]').forEach(b => b.addEventListener('click', async () => {
+        b.disabled = true;
+        try { await post(`/api/shelters/${encodeURIComponent(b.dataset.occ)}/occupancy`, {delta: Number(b.dataset.n)}); loadShelterOps(); loadDispatch(); }
+        catch (err) { alert(err.message); b.disabled = false; }
+      }));
+    } catch (e) { showError('shelterOps', e); }
+  }
+
+  // 구역 현황(모의 구역도): 구역을 누르면 신고 목록을 그 구역만 보이게 거른다(다시 누르면 전체)
+  let zoneFilter = null;
+  function applyZoneFilter() {
+    document.querySelectorAll('#incidents .incident').forEach(d => { d.hidden = !!zoneFilter && d.dataset.zone !== zoneFilter; });
+    $('zoneHint').textContent = zoneFilter ? `${zoneFilter} 신고만 보는 중 · 같은 구역을 다시 누르면 전체` : '구역을 누르면 그 구역 신고만 봅니다';
+  }
+  async function loadZoneMap() {
+    try {
+      const [d, inc] = await Promise.all([api('/api/dispatch'), api('/api/incidents')]);
+      const live = inc.items.map(x => x.output).filter(o => o.state !== '오접수');
+      window.renderZoneMap($('zoneMap'), {zones: d.zones, shelters: d.shelters, controls: d.control_zones,
+        incidents: live, selected: zoneFilter,
+        onPick: z => { zoneFilter = zoneFilter === z ? null : z; applyZoneFilter(); loadZoneMap(); }});
+      $('zoneMap').classList.remove('muted');
+    } catch (e) { showError('zoneMap', e); }
+  }
+  const baseLoadIncidents = loadIncidents;
+  loadIncidents = async function () { await baseLoadIncidents(); applyZoneFilter(); };
+
   // 승인 대기열 개수 배지 + 처리 후 관련 탭 새로 고침
   const baseLoadApprovals = loadApprovals;
   loadApprovals = async function () {
     await baseLoadApprovals();
     await addDispatchControls();
-    try { $('approvalCount').textContent = (await api('/api/approvals')).items.length; } catch (e) { /* 배지만 */ }
+    try {   // 첫 응답 전에는 숨겨 둔다(0이 잠깐 보였다가 바뀌지 않게)
+      $('approvalCount').textContent = (await api('/api/approvals')).items.length;
+      $('approvalCount').hidden = false;
+    } catch (e) { /* 배지만 */ }
     if (current !== 'approvals' && LOADERS[current] && current !== 'dispatch') LOADERS[current]();
   };
 
@@ -61,6 +103,33 @@
   }
 
   // ---------------------------------------------------------------- 상황판
+  // 화면 맨 위 위기 단계 띠: 담당자가 확정한 단계만 색으로 보여 준다(센서·신고만으로는 바뀌지 않음)
+  function setBand(stage) {
+    const level = stage.confirmed && ['주의', '경계', '위험'].includes(stage.level) ? stage.level : '정상';
+    $('band').dataset.level = level;
+    $('bandLevel').textContent = level;
+    $('bandMeta').textContent = stage.confirmed
+      ? `${(stage.hazards || []).join(', ') || '위험 유형 미상'} · ${fmtTime(stage.at)} 담당자 확정`
+      : '확정된 위험 단계가 없습니다';
+  }
+  async function refreshBand() {
+    try { setBand(await api('/api/stage')); } catch (e) { /* 띠만 */ }
+    try { showWeather(await api('/api/weather')); } catch (e) { /* 날씨만 */ }
+  }
+  // 기상청 실제 날씨(참고 정보). 키가 없거나 인터넷이 끊기면 '확인 불가'로만 표시한다
+  function showWeather(w) {
+    const warn = (w.warnings || []).length;
+    $('bandWx').innerHTML = !w.available ? '실제 날씨 확인 불가' :
+      `거제 ${w.rain ? `1시간 강수 ${E(w.rain.mm_per_h)}mm(${E(w.rain.label)})` : '강수 확인 불가'}` +
+      (warn ? `<span class="wxwarn">특보 ${warn}건</span>` : ' · 특보 없음');
+    $('wxBox').classList.toggle('muted', !w.available);
+    $('wxBox').innerHTML = !w.available ? E(w.reason) :
+      `<div>${w.rain ? `<b>1시간 강수량 ${E(w.rain.mm_per_h)}mm</b> · ${E(w.rain.label)} → 강우 단계 ${E(w.rain.stage)} · 기온 ${E(w.rain.temp_c)}℃ <span class="muted">(${E(w.rain.at)} 관측)</span>` : E(w.rain_error)}</div>` +
+      `<div>감시 에이전트가 지금 쓰는 강우 단계: <b>${E(w.applied_rain_stage)}</b></div>` +
+      `<div style="margin-top:6px">${w.warnings === null ? E(w.warnings_error) : warn ? '발효 중인 특보(거제·경남 관련): ' + w.warnings.map(E).join(' / ') : '거제·경남에 발효 중인 특보 없음'}</div>` +
+      `<div class="muted">출처: ${E(w.source)}</div>`;
+  }
+
   async function loadSituation() {
     try {
       const [stage, checks, vol, sup] = await Promise.all([api('/api/stage'), api('/api/welfare/checks'), api('/api/volunteer'), api('/api/supply')]);
@@ -68,11 +137,12 @@
       const esc = checks.checks.filter(c => c.state === '격상');
       const short = sup.forecast.filter(f => f.shortage);
       const waiting = sup.requests.filter(r => r.state === '검토').length;
-      $('situation').innerHTML = sos +
-        `<div>확정된 위험 단계: <b>${E(stage.level)}</b> ${stage.confirmed ? chip('담당자 확정 · ' + (stage.approved_by || ''), 'ok') : chip('미확정')}${stage.hazards?.length ? ' · ' + E(stage.hazards.join('·')) : ''}</div>` +
-        `<div>안부 확인: 격상 ${esc.length}가구${esc.length ? ' (' + E(esc.map(c => c.household).join(', ')) + ')' : ''} · 대기 ${checks.counts['대기'] || 0}가구</div>` +
-        `<div>물품: 검토 대기 요청 ${waiting}건 · 부족 예상 ${short.length ? E(short.map(f => f.item).join(', ')) : '없음'}</div>` +
-        `<div>봉사: 진행 중 작업 ${vol.tasks.filter(t => t.state === '진행' || t.state === '투입승인').length}건 · 투입 중 봉사자 ${vol.volunteers.filter(v => v.busy).length}명</div>`;
+      setBand(stage);
+      $('situation').innerHTML = sos + '<dl class="sit">' +
+        `<div><dt>위기 단계</dt><dd>${E(stage.confirmed ? stage.level : '정상')}<small>${stage.confirmed ? '담당자 확정' + (stage.hazards?.length ? ' · ' + E(stage.hazards.join(', ')) : '') : '확정된 단계 없음'}</small></dd></div>` +
+        `<div><dt>안부 확인</dt><dd>격상 ${esc.length}가구<small>${esc.length ? E(esc.map(c => c.household).join(', ')) + ' · ' : ''}응답 대기 ${checks.counts['대기'] || 0}가구</small></dd></div>` +
+        `<div><dt>물품</dt><dd>검토 대기 ${waiting}건<small>부족 예상 ${short.length ? E(short.map(f => f.item).join(', ')) : '없음'}</small></dd></div>` +
+        `<div><dt>봉사</dt><dd>진행 중 ${vol.tasks.filter(t => t.state === '진행' || t.state === '투입승인').length}건<small>투입 중 봉사자 ${vol.volunteers.filter(v => v.busy).length}명</small></dd></div></dl>`;
       $('situation').querySelectorAll('button[data-ack]').forEach(b => b.addEventListener('click', async () => {
         try { await post(`/api/volunteer/sos/${encodeURIComponent(b.dataset.ack)}/ack`); loadSituation(); } catch (e) { alert(e.message); }
       }));
@@ -99,7 +169,7 @@
           r.route === 'manual_medicine' ? chip('의약품: 직접 처리', 'bad') : '', r.qty_unconfirmed ? chip('수량 확인 필요', 'warn') : '',
           r.merged_count > 1 ? chip(`요청 ${r.merged_count}건 병합`) : '',
           r.last_proposal?.procurement_needed ? chip(`부족 ${r.last_proposal.shortfall} · 외부 조달 필요`, 'bad') : ''].join('');
-        return `<tr><td>${E(r.id)}</td><td>${E(r.household)} · ${E(r.zone)}</td><td>${E(r.item)} ${E(r.qty)}</td><td>${E(r.urgency)}</td><td>${marks}</td><td>${chip(r.state, STATE_CLS[r.state] || '')}</td><td>${acts}</td></tr>`;
+        return `<tr><td>${E(r.id)}</td><td>${r.household ? E(r.household) : '신고 ' + E(r.incident_id)} · ${E(r.zone)}${r.review_reason ? ' ' + chip(r.review_reason, 'warn') : ''}</td><td>${E(r.item)} ${E(r.qty)}</td><td>${E(r.urgency)}</td><td>${marks}</td><td>${chip(r.state, STATE_CLS[r.state] || '')}</td><td>${acts}</td></tr>`;
       }));
       $('supplyRequests').querySelectorAll('button[data-req]').forEach(b => b.addEventListener('click', async () => {
         const body = JSON.parse(b.dataset.body);
@@ -247,7 +317,9 @@
     try {
       const d = await api('/api/sensor/status');
       if (!d.gateway_enabled) {
-        $('sensorLive').innerHTML = '게이트웨이가 꺼져 있습니다. 서버를 SENSOR_GATEWAY_TOKEN 환경변수와 함께 실행하고 <code>python gateway/microbit_gateway.py</code>를 켜세요(docs/마이크로비트_게이트웨이.md).';
+        $('sensorLive').innerHTML = d.cloud
+          ? '이 배포 사이트에는 마이크로비트 센서를 연결하지 않았습니다. 센서는 노트북 USB의 수신기(G)로 노트북 서버에만 들어오므로, 센서 시연은 노트북에서 실행한 서버(http://127.0.0.1:8765/admin)로 하세요. 이 사이트의 신고 대조는 \'확인 불가\'로 표시됩니다.'
+          : '게이트웨이가 꺼져 있습니다. 서버를 SENSOR_GATEWAY_TOKEN 환경변수와 함께 실행하고 <code>python gateway/microbit_gateway.py</code>를 켜세요(docs/마이크로비트_게이트웨이.md).';
         return;
       }
       const age = s => s == null ? '-' : `${s}초 전`;
@@ -262,7 +334,12 @@
              (ev.approval_id ? ` · 승인 대기열에 올림(${E(ev.approval_id)})` : ev.duplicate_of ? ' · 같은 단계가 이미 대기·확정 중' : '') + '</div>' +
              (o.false_alarm_log.length ? `<div class="muted">${E(o.false_alarm_log.join(' / '))}</div>` : '')
            : '<div class="muted">아직 받은 값이 없습니다. 게이트웨이를 실행하세요.</div>') +
-        (d.calibrated ? '' : '<div class="muted">임계값 보정 전(임시값)</div>');
+        (d.calibrated ? '' : '<div class="muted">임계값 보정 전(임시값)</div>') +
+        `<h3 style="margin:14px 0 4px">현장 버튼 신호${d.open_urgent ? ' ' + chip(`확인 안 한 급한 신호 ${d.open_urgent}건`, 'bad') : ''}</h3>` +
+        table(['받은 때', '노드', '신호', '웹 반영', ''], d.events.map(x =>
+          `<tr><td>${E(fmtTime(x.ts))}</td><td>${E(x.node)}</td><td>${x.urgent ? chip(x.label, x.open ? 'bad' : '') : E(x.label)}</td>` +
+          `<td>${x.applied == null ? '<span class="muted">-</span>' : x.applied ? chip('반영', 'ok') + ' ' + E(x.note) : chip('반영 안 됨', 'warn') + ' ' + E(x.note)}</td>` +
+          `<td>${x.open ? `<button type="button" data-ack-event="${E(x.id)}">확인</button>` : x.acked_by ? `<span class="muted">${E(x.acked_by)} 확인</span>` : ''}</td></tr>`));
     } catch (e) { showError('sensorLive', e); }
   }
 
@@ -278,6 +355,32 @@
   // ---------------------------------------------------------------- 폼 연결
   function bind() {
     document.querySelectorAll('#tabs button').forEach(b => b.addEventListener('click', () => go(b.dataset.go)));
+    $('sensorLive').addEventListener('click', async e => {   // 현장 SOS 등 급한 신호 '확인'
+      const b = e.target.closest('button[data-ack-event]');
+      if (!b) return;
+      b.disabled = true;
+      try { await post(`/api/sensor/events/${encodeURIComponent(b.dataset.ackEvent)}/ack`); loadSensorLive(); }
+      catch (err) { alert(err.message); b.disabled = false; }
+    });
+    $('incidents').addEventListener('click', async e => {   // 신고 카드 안 '분류 저장'(O3)
+      const b = e.target.closest('button[data-classify]');
+      if (!b) return;
+      const box = b.closest('.fix'), v = f => box.querySelector(`[data-f="${f}"]`).value;
+      b.disabled = true;
+      try {
+        await post(`/api/incidents/${encodeURIComponent(b.dataset.classify)}/classify`,
+          {type: v('type'), zone: v('zone'), urgency: Number(v('urgency'))});
+        await loadIncidents(); loadZoneMap();
+      } catch (err) { alert(err.message); b.disabled = false; }
+    });
+    $('applyRain').addEventListener('click', async () => {
+      try { const r = await post('/api/weather/apply-rain'); alert(`강우 단계를 ${r.applied_rain_stage}(으)로 적용했습니다 · 실제 1시간 강수 ${r.rain.mm_per_h}mm`); refreshBand(); }
+      catch (err) { alert(err.message); }
+    });
+    $('makeReport').addEventListener('click', async () => {
+      try { const r = await api('/api/report/daily'); $('dailyReport').hidden = false; $('dailyReport').textContent = r.text; }
+      catch (err) { showError('dailyReport', err); $('dailyReport').hidden = false; }
+    });
     $('refreshSupply').addEventListener('click', loadSupply);
     $('refreshVol').addEventListener('click', loadVolunteer);
     $('controlForm').addEventListener('submit', async e => {
@@ -422,6 +525,8 @@
     try { saved = localStorage.getItem('adminTab') || 'overview'; } catch (e) { /* 저장 불가 환경 */ }
     go(document.querySelector(`#tabs button[data-go="${saved}"]`) ? saved : 'overview');
     loadApprovals();
+    refreshBand();
+    setInterval(refreshBand, 15000);   // 다른 담당자가 단계를 확정해도 띠가 따라 바뀌게
   };
   if (window.ADMIN_READY) window.opsInit();
 })();

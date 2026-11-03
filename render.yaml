@@ -1,0 +1,38 @@
+# Render 블루프린트: 팀 공유용 시연 서버(무료 요금제). 사용법은 docs/배포_Render.md
+# 비밀 값(sync: false)은 저장소에 넣지 않고 Render 화면에서 입력한다.
+services:
+  - type: web
+    name: disaster-agents
+    runtime: python
+    plan: free
+    region: singapore          # 한국에서 가장 가까운 지역
+    branch: claude/solar-connection-verify-byjenq
+    buildCommand: python --version   # 표준 라이브러리만 써서 설치할 패키지가 없다
+    startCommand: python webapp/server.py
+    healthCheckPath: /api/health
+    autoDeploy: true           # 이 브랜치에 push하면 자동으로 다시 배포
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.2
+      - key: WEBAPP_CLOUD
+        value: "1"
+      - key: LLM_MODE
+        value: solar
+      - key: DISASTER_DB_PATH
+        value: data/demo.db
+      - key: DEMO_SEED_ON_START   # 무료 서버는 다시 시작하면 디스크가 비므로 시작할 때 시연 데이터를 넣는다
+        value: "1"
+      - key: SOLAR_MAX_CALLS      # 서버가 켜져 있는 동안 Solar 호출 상한(요금 보호)
+        value: "300"
+      - key: WEBAPP_PUBLIC_PER_MIN
+        value: "30"
+      - key: UPSTAGE_API_KEY
+        sync: false
+      - key: KMA_API_KEY
+        sync: false
+      - key: SITE_PUBLIC          # 1이면 접속 코드 없이 누구나 연다(담당자 화면은 로그인 필요). 코드로 막으려면 0
+        value: "1"
+      - key: SITE_ACCESS_CODE     # SITE_PUBLIC이 1이 아닐 때 링크와 함께 팀원에게 줄 접속 코드(6자 이상)
+        sync: false
+      - key: DEMO_ADMIN_PASSWORD  # 담당자 화면 '시연담당' 계정 비밀번호(8자 이상)
+        sync: false

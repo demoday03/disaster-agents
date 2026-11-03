@@ -7,8 +7,8 @@
   "danger_rain_stage": 3,
   "nodes": ["A", "B"],
   "sensors": {
-    "A.water_low":  {"threshold": 400},
-    "A.water_high": {"threshold": 400},
+    "A.water_low":  {"threshold": 200},
+    "A.water_high": {"threshold": 200},
     "B.tilt":       {"threshold": 0},
     "B.vibration":  {"threshold": 300}
   },

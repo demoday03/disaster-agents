@@ -33,7 +33,8 @@ class FakeUpstream(BaseHTTPRequestHandler):
         STATE["calls"].append(body["model"])
         if STATE["error"]:
             self.send_response(500); self.end_headers(); return
-        if body["model"] == "fake-ground":
+        judge = body["messages"][0]["content"].startswith("너는 재난 안내문 검증기다")   # solar 모델 판정(폴백)
+        if body["model"] == "fake-ground" or judge:
             if STATE["verify_error"]:
                 self.send_response(500); self.end_headers(); return
             content = STATE["verdict"]
@@ -57,11 +58,13 @@ def start_app(port, db_path, groundedness=True):
                 "SOLAR_BASE_URL": f"http://127.0.0.1:{FAKE_PORT}/v1",
                 "SOLAR_MODEL": "fake-solar", "DISASTER_DB_PATH": str(db_path),
                 "DOCUMENT_PARSE_URL": f"http://127.0.0.1:{FAKE_PORT}/v1/document-digitization",
-                "WEBAPP_INCIDENT_PER_MIN": "1000"})
+                "WEBAPP_INCIDENT_PER_MIN": "1000",
+                "AUTO_FOLLOWUPS": "0"})   # 여기서는 담당자가 요청하는 안내문 경로를 시험(자동 후속 처리는 test_pipeline)
     if groundedness:
         env["GROUNDEDNESS_MODEL"] = "fake-ground"
     else:
         env.pop("GROUNDEDNESS_MODEL", None)
+        env["VERIFY_MODEL"] = "fake-judge"   # 안내문 작성(fake-solar)과 다른 판정 모델
     proc = subprocess.Popen([sys.executable, "webapp/server.py"], cwd=ROOT, env=env,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     base = f"http://127.0.0.1:{port}"
@@ -203,6 +206,21 @@ class TestSolarPathWithVerifier(SolarPathBase):
         self.assertEqual(shown["doc_ids"], g["output"]["doc_ids"])
         self.assertNotIn("담당자", json.dumps(shown, ensure_ascii=False))   # 승인자 이름은 공개하지 않음
 
+    def test_approved_guidance_on_public_status_until_invalidated(self):
+        iid = self.incident("Z2 구역 침수 (공개 상황판 테스트)")
+        STATE.update(verdict="grounded", label="카")
+        _, g = self.guidance(iid, "f-pub")
+        anon = ts.Client(self.base)
+        notices = lambda: [n for n in anon.get("/api/public/status")[1]["notices"] if "AI가 다듬은 안내(카)" in n["text"]]
+        self.assertEqual(notices(), [])   # 승인 전에는 공개하지 않음
+        self.assertEqual(self.resolve(g["approval_id"], True)[0], 200)
+        shown = notices()
+        self.assertEqual(len(shown), 1)
+        self.assertEqual((shown[0]["zone"], shown[0]["evidence"]), ("Z2", g["output"]["standard"]))
+        self.assertNotIn("공개 상황판 테스트", json.dumps(shown, ensure_ascii=False))   # 신고 원문은 내보내지 않음
+        self.assertEqual(self.post(f"/api/incidents/{iid}/invalidate", {"reason": "현장 이상 없음"})[0], 200)
+        self.assertEqual(notices(), [])   # 오접수 처리하면 내려감
+
     def test_rejected_or_review_guidance_is_not_shown(self):
         iid = self.incident("Z2 구역 침수 (반려·확인 건 비표시 테스트)")
         STATE.update(verdict="grounded", label="자")
@@ -243,19 +261,26 @@ class TestSolarPathWithVerifier(SolarPathBase):
         self.assertIn("직접 붙여 넣어", d["error"])
 
 
-class TestSolarPathWithoutVerifier(SolarPathBase):
+class TestSolarPathJudgeFallback(SolarPathBase):
     groundedness = False
     port = APP_PORT_NOVERIFY
 
-    def test_no_groundedness_model_means_no_ai_guidance(self):
-        iid = self.incident("Z2 구역 침수 (검증기 없음 테스트)")
-        status, g = self.guidance(iid, "f-nov")
+    def test_without_groundedness_model_solar_judges(self):
+        iid = self.incident("Z2 구역 침수 (solar 판정 테스트)")
+        status, g = self.guidance(iid, "f-judge")
         self.assertEqual(status, 200)
-        self.assertEqual(STATE["calls"], [])                   # 안내문 LLM 호출 자체가 없음
-        self.assertFalse(g["ai_used"])
-        self.assertEqual(g["output"]["status"], "표준 원문")
+        self.assertNotIn("fake-ground", STATE["calls"])
+        self.assertEqual(STATE["calls"], ["fake-solar", "fake-judge"])   # 안내문 다듬기(작성 모델) + 판정(다른 모델)
+        self.assertEqual(g["output"]["verdict"], "grounded")
+        self.assertIn("approval_id", g)
+        _, q = self.get("/api/approvals")
+        item = next(a for a in q["items"] if a["id"] == g["approval_id"])["item"]
+        self.assertEqual(item["verifier"], {"model": "fake-judge", "mode": "judge", "same_as_writer": False})
+        STATE.update(verdict="notGrounded", label="사")
+        status, g = self.guidance(iid, "f-judge-ng")
+        self.assertEqual(status, 200)
+        self.assertTrue(g["blocked"])
         self.assertNotIn("approval_id", g)
-
 
 if __name__ == "__main__":
     unittest.main()

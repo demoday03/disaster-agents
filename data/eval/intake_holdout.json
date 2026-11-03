@@ -1,0 +1,262 @@
+{
+ "_note": "접수 분류 일반화 확인용 별도 세트(2026-10-28 작성). 유형 정의·보정 규칙을 조정한 뒤 새로 쓴 문장 24건으로, 조정에는 쓰지 않았다. 형식과 정답 기준은 intake_reports.json과 같다. 가상 문장이며 실제 인물·주소 없음.",
+ "source": "가상 시험 문장(작성: 개발팀)",
+ "as_of": "2026-10-28",
+ "reports": [
+  {
+   "id": "H01",
+   "min": 0,
+   "text": "Z5 개울 건너다 아이가 물살에 휩쓸렸어요",
+   "type": "인명구조",
+   "zone": "Z5",
+   "people": null,
+   "vulnerable": true
+  },
+  {
+   "id": "H02",
+   "min": 3,
+   "text": "Z8 엘리베이터에 사람이 갇혔는데 정전이라 안 움직여요",
+   "type": "인명구조",
+   "zone": "Z8",
+   "people": null,
+   "vulnerable": false,
+   "hard": [
+    "mixed"
+   ]
+  },
+  {
+   "id": "H03",
+   "min": 5,
+   "text": "Z2 상가 지하에 물이 무릎까지 찼어요",
+   "type": "침수",
+   "zone": "Z2",
+   "people": null,
+   "vulnerable": false,
+   "event": "EV-H1"
+  },
+  {
+   "id": "H04",
+   "min": 9,
+   "text": "Z2 상가 지하 물 계속 차오르고 있어요",
+   "type": "침수",
+   "zone": "Z2",
+   "people": null,
+   "vulnerable": false,
+   "event": "EV-H1"
+  },
+  {
+   "id": "H05",
+   "min": 12,
+   "text": "할머니 혼자 사시는 1층 집에 물이 들어오고 있어요 Z7이에요",
+   "type": "침수",
+   "zone": "Z7",
+   "people": null,
+   "vulnerable": true
+  },
+  {
+   "id": "H06",
+   "min": 15,
+   "text": "Z4 옹벽에 금이 가고 흙이 조금씩 흘러내려요",
+   "type": "산사태·토사",
+   "zone": "Z4",
+   "people": null,
+   "vulnerable": false
+  },
+  {
+   "id": "H07",
+   "min": 18,
+   "text": "Z1 아파트 단지 전체가 수돗물이 안 나와요",
+   "type": "단전·단수",
+   "zone": "Z1",
+   "people": null,
+   "vulnerable": false,
+   "event": "EV-H2"
+  },
+  {
+   "id": "H08",
+   "min": 20,
+   "text": "Z1 아파트 물 안 나오는 거 아직 그대로예요",
+   "type": "단전·단수",
+   "zone": "Z1",
+   "people": null,
+   "vulnerable": false,
+   "event": "EV-H2",
+   "hard": [
+    "typo"
+   ]
+  },
+  {
+   "id": "H09",
+   "min": 24,
+   "text": "Z6 가로등이 쓰러져서 차도를 막고 있어요",
+   "type": "도로·시설 장애",
+   "zone": "Z6",
+   "people": null,
+   "vulnerable": false
+  },
+  {
+   "id": "H10",
+   "min": 27,
+   "text": "Z6 마을 입구 신호등이 고장 났어요",
+   "type": "도로·시설 장애",
+   "zone": "Z6",
+   "people": null,
+   "vulnerable": false,
+   "hard": [
+    "merge_trap"
+   ]
+  },
+  {
+   "id": "H11",
+   "min": 30,
+   "text": "Z3 경로당에 생수랑 컵라면 좀 보내 주세요 어르신 15명 계세요",
+   "type": "물품 요청",
+   "zone": "Z3",
+   "people": 15,
+   "vulnerable": true
+  },
+  {
+   "id": "H12",
+   "min": 34,
+   "text": "Z9 대피소에 기저귀가 다 떨어졌어요",
+   "type": "물품 요청",
+   "zone": "Z9",
+   "people": null,
+   "vulnerable": false,
+   "event": "EV-H3"
+  },
+  {
+   "id": "H13",
+   "min": 38,
+   "text": "Z9 대피소 기저귀 아직 못 받았어요",
+   "type": "물품 요청",
+   "zone": "Z9",
+   "people": null,
+   "vulnerable": false,
+   "event": "EV-H3"
+  },
+  {
+   "id": "H14",
+   "min": 42,
+   "text": "지난주 침수 피해 지원금 신청은 어디서 하나요",
+   "type": "대민지원",
+   "zone": "미상",
+   "people": null,
+   "vulnerable": false,
+   "hard": [
+    "mixed"
+   ]
+  },
+  {
+   "id": "H15",
+   "min": 45,
+   "text": "Z5 아까 쓰러진 나무 다 치워졌어요 감사합니다",
+   "type": "대민지원",
+   "zone": "Z5",
+   "people": null,
+   "vulnerable": false,
+   "hard": [
+    "contradictory"
+   ]
+  },
+  {
+   "id": "H16",
+   "min": 48,
+   "text": "Z10 집 안 진흙 퍼낼 일손이 필요해요",
+   "type": "대민지원",
+   "zone": "Z10",
+   "people": null,
+   "vulnerable": false
+  },
+  {
+   "id": "H17",
+   "min": 52,
+   "text": "Z8 삽이랑 장갑 들고 와서 마당 정리 도와주실 분 있나요",
+   "type": "대민지원",
+   "zone": "Z8",
+   "people": null,
+   "vulnerable": false,
+   "hard": [
+    "mixed"
+   ]
+  },
+  {
+   "id": "H18",
+   "min": 55,
+   "text": "Z3 침수됐던 차량 보험 처리 문의요",
+   "type": "대민지원",
+   "zone": "Z3",
+   "people": null,
+   "vulnerable": false,
+   "hard": [
+    "mixed"
+   ]
+  },
+  {
+   "id": "H19",
+   "min": 58,
+   "text": "Z7 산비탈에서 돌이 굴러 떨어져 도로에 있어요",
+   "type": "산사태·토사",
+   "zone": "Z7",
+   "people": null,
+   "vulnerable": false,
+   "hard": [
+    "mixed"
+   ]
+  },
+  {
+   "id": "H20",
+   "min": 61,
+   "text": "4구역인가 5구역인가 하천 둑이 넘칠 것 같아요",
+   "type": "침수",
+   "zone": "미상",
+   "people": null,
+   "vulnerable": false,
+   "hard": [
+    "ambiguous_zone"
+   ]
+  },
+  {
+   "id": "H21",
+   "min": 64,
+   "text": "Z2 전기 끊긴 지 세 시간째예요 냉장고 약이 걱정돼요",
+   "type": "단전·단수",
+   "zone": "Z2",
+   "people": null,
+   "vulnerable": false
+  },
+  {
+   "id": "H22",
+   "min": 67,
+   "text": "Z6 반지하에 물 차서 휠체어 쓰시는 분이 못 나오고 있어요",
+   "type": "인명구조",
+   "zone": "Z6",
+   "people": null,
+   "vulnerable": true,
+   "hard": [
+    "mixed"
+   ]
+  },
+  {
+   "id": "H23",
+   "min": 70,
+   "text": "Z1 다리 난간이 부서져서 위험해요",
+   "type": "도로·시설 장애",
+   "zone": "Z1",
+   "people": null,
+   "vulnerable": false
+  },
+  {
+   "id": "H24",
+   "min": 73,
+   "text": "Z4 대피소 담요 부족함 ㅠㅠ 빨리요",
+   "type": "물품 요청",
+   "zone": "Z4",
+   "people": null,
+   "vulnerable": false,
+   "hard": [
+    "typo"
+   ]
+  }
+ ]
+}

@@ -3,7 +3,8 @@
 실행 예(프로젝트 루트에서):
   python scripts/eval_verify.py --rules-only      # API 없이 숫자 선검사만(나머지는 notSure)
   $env:UPSTAGE_API_KEY="..."; $env:GROUNDEDNESS_MODEL="콘솔에서_확인한_모델명"
-  python scripts/eval_verify.py                   # 실제 Groundedness 모델 호출(문항 25개, 25회)
+  python scripts/eval_verify.py                   # 실제 모델 호출(문항 40개, 숫자 선검사로 막히는 7개를 빼고 33회)
+  GROUNDEDNESS_MODEL이 없으면 판정 모델(VERIFY_MODEL, 기본 solar-pro3)이 판정한다.
 
 결과는 시험 세트에 대한 측정일 뿐이며, 실제 안내의 정확성·안전성을 보증하지 않는다.
 """
@@ -16,7 +17,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.chdir(ROOT)
 from common import eval_guidance as EG  # noqa: E402
-from common.llm import SolarClient  # noqa: E402
+from agents import verify  # noqa: E402
 
 
 def main():
@@ -26,12 +27,11 @@ def main():
 
     client = None
     if not args.rules_only:
-        model = os.getenv("GROUNDEDNESS_MODEL", "").strip()
-        if not model or not (os.getenv("UPSTAGE_API_KEY") or os.getenv("SOLAR_BASE_URL")):
-            print("오류: GROUNDEDNESS_MODEL과 UPSTAGE_API_KEY(또는 SOLAR_BASE_URL)를 설정하거나 "
-                  "--rules-only로 실행하세요.", file=sys.stderr)
+        if not (os.getenv("UPSTAGE_API_KEY") or os.getenv("SOLAR_BASE_URL")):
+            print("오류: UPSTAGE_API_KEY(또는 SOLAR_BASE_URL)를 설정하거나 --rules-only로 실행하세요.",
+                  file=sys.stderr)
             return 2
-        client = SolarClient(model=model, timeout=15, max_calls=30)
+        client = verify.make_client(timeout=15, max_calls=100)   # 세트(오류 20 + 대조군 20)보다 넉넉하게. 한도에 걸리면 notSure로 왜곡된다
 
     data, docs = EG.load()
     res = EG.evaluate(client, data, docs)
@@ -43,7 +43,9 @@ def main():
     if client is None:
         print("주의: --rules-only는 모델 판정 없이 notSure로 보류한 결과라 실제 차단 성능이 아닙니다.")
     else:
-        print(f"모델={client.model}, 호출 {client.calls}회")
+        mode = ("Groundedness" if client.verify_mode == "groundedness" else
+                "채팅 모델 판정" + (", 안내문 작성 모델과 같음" if client.same_as_writer else ""))
+        print(f"모델={client.model} ({mode}), 호출 {client.calls}회")
     return 0 if res["block_rate"] >= EG.TARGET else 1
 
 
