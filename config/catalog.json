@@ -1,22 +1,403 @@
 {
-  "_note": "물품 분류·취급 규칙은 설계안(제안서 5.3). 실제 구호물품 접수 기준을 확인한 뒤 확정하고 D16(7분류·30품목)으로 확장한다.",
-  "urgency": {"base": 3},
+  "_note": "물품 분류·취급 규칙은 설계안(제안서 5.3). 실제 구호물품 접수 기준을 확인한 뒤 확정하고 D16(7분류·30품목)으로 확장한다. 품목 30개(D16): 기존 13개 + 가상 시연용 17개(가상 상한·소비율, 실제 구호물품 기준 확인 전).",
+  "urgency": {
+    "base": 3
+  },
   "merge_window_h": 6,
   "shortage_threshold_h": 12,
   "consumption_window_h": 6,
   "items": {
-    "생수":     {"category": "식수·식량", "units": ["병", "박스"], "needs_expiry": true,  "hh_cap": 24, "rate_per_h": 10, "water_item": true,  "aliases": ["물", "식수"]},
-    "즉석밥":   {"category": "식수·식량", "units": ["개", "박스"], "needs_expiry": true,  "hh_cap": 12, "rate_per_h": 6,  "aliases": ["밥", "햇반", "컵밥"]},
-    "기저귀":   {"category": "영유아·돌봄", "units": ["개", "팩"], "needs_expiry": false, "hh_cap": 30, "rate_per_h": 4,  "infant_item": true, "aliases": ["기저귀"]},
-    "분유":     {"category": "영유아·돌봄", "units": ["통", "개"], "needs_expiry": true,  "hh_cap": 3,  "rate_per_h": 1,  "infant_item": true, "aliases": ["분유"]},
-    "마스크":   {"category": "위생용품", "units": ["개", "박스"], "needs_expiry": false, "hh_cap": 20, "rate_per_h": 5,  "aliases": ["마스크"]},
-    "세정제":   {"category": "위생용품", "units": ["개"], "needs_expiry": false, "hh_cap": 5,  "rate_per_h": 1,  "aliases": ["손세정제", "세정제"]},
-    "담요":     {"category": "침구·의류", "units": ["장"], "needs_expiry": false, "hh_cap": 6,  "rate_per_h": 2,  "aliases": ["담요", "이불"]},
-    "양말":     {"category": "침구·의류", "units": ["켤레"], "needs_expiry": false, "hh_cap": 10, "rate_per_h": 2,  "aliases": ["양말"]},
-    "손전등":   {"category": "전기·조명", "units": ["개"], "needs_expiry": false, "hh_cap": 3,  "rate_per_h": 1,  "aliases": ["손전등", "랜턴"]},
-    "보조배터리": {"category": "전기·조명", "units": ["개"], "needs_expiry": false, "hh_cap": 3,  "rate_per_h": 1,  "aliases": ["보조배터리", "배터리"]},
-    "삽":       {"category": "청소·복구 장비", "units": ["개"], "needs_expiry": false, "hh_cap": 3,  "rate_per_h": 1,  "aliases": ["삽"]},
-    "고무장갑": {"category": "청소·복구 장비", "units": ["켤레"], "needs_expiry": false, "hh_cap": 6,  "rate_per_h": 1,  "aliases": ["고무장갑", "장갑"]},
-    "처방약":   {"category": "의약품", "units": ["개"], "needs_expiry": true, "hh_cap": 0, "rate_per_h": 0, "aliases": ["처방약", "약", "의료기기"]}
+    "생수": {
+      "category": "식수·식량",
+      "units": [
+        "병",
+        "박스"
+      ],
+      "needs_expiry": true,
+      "hh_cap": 24,
+      "rate_per_h": 10,
+      "water_item": true,
+      "aliases": [
+        "물",
+        "식수"
+      ]
+    },
+    "즉석밥": {
+      "category": "식수·식량",
+      "units": [
+        "개",
+        "박스"
+      ],
+      "needs_expiry": true,
+      "hh_cap": 12,
+      "rate_per_h": 6,
+      "aliases": [
+        "밥",
+        "햇반",
+        "컵밥"
+      ]
+    },
+    "기저귀": {
+      "category": "영유아·돌봄",
+      "units": [
+        "개",
+        "팩"
+      ],
+      "needs_expiry": false,
+      "hh_cap": 30,
+      "rate_per_h": 4,
+      "infant_item": true,
+      "aliases": [
+        "기저귀"
+      ]
+    },
+    "분유": {
+      "category": "영유아·돌봄",
+      "units": [
+        "통",
+        "개"
+      ],
+      "needs_expiry": true,
+      "hh_cap": 3,
+      "rate_per_h": 1,
+      "infant_item": true,
+      "aliases": [
+        "분유"
+      ]
+    },
+    "마스크": {
+      "category": "위생용품",
+      "units": [
+        "개",
+        "박스"
+      ],
+      "needs_expiry": false,
+      "hh_cap": 20,
+      "rate_per_h": 5,
+      "aliases": [
+        "마스크"
+      ]
+    },
+    "세정제": {
+      "category": "위생용품",
+      "units": [
+        "개"
+      ],
+      "needs_expiry": false,
+      "hh_cap": 5,
+      "rate_per_h": 1,
+      "aliases": [
+        "손세정제",
+        "세정제"
+      ]
+    },
+    "담요": {
+      "category": "침구·의류",
+      "units": [
+        "장"
+      ],
+      "needs_expiry": false,
+      "hh_cap": 6,
+      "rate_per_h": 2,
+      "aliases": [
+        "담요",
+        "이불"
+      ]
+    },
+    "양말": {
+      "category": "침구·의류",
+      "units": [
+        "켤레"
+      ],
+      "needs_expiry": false,
+      "hh_cap": 10,
+      "rate_per_h": 2,
+      "aliases": [
+        "양말"
+      ]
+    },
+    "손전등": {
+      "category": "전기·조명",
+      "units": [
+        "개"
+      ],
+      "needs_expiry": false,
+      "hh_cap": 3,
+      "rate_per_h": 1,
+      "aliases": [
+        "손전등",
+        "랜턴"
+      ]
+    },
+    "보조배터리": {
+      "category": "전기·조명",
+      "units": [
+        "개"
+      ],
+      "needs_expiry": false,
+      "hh_cap": 3,
+      "rate_per_h": 1,
+      "aliases": [
+        "보조배터리",
+        "배터리"
+      ]
+    },
+    "삽": {
+      "category": "청소·복구 장비",
+      "units": [
+        "개"
+      ],
+      "needs_expiry": false,
+      "hh_cap": 3,
+      "rate_per_h": 1,
+      "aliases": [
+        "삽"
+      ]
+    },
+    "고무장갑": {
+      "category": "청소·복구 장비",
+      "units": [
+        "켤레"
+      ],
+      "needs_expiry": false,
+      "hh_cap": 6,
+      "rate_per_h": 1,
+      "aliases": [
+        "고무장갑",
+        "장갑"
+      ]
+    },
+    "처방약": {
+      "category": "의약품",
+      "units": [
+        "개"
+      ],
+      "needs_expiry": true,
+      "hh_cap": 0,
+      "rate_per_h": 0,
+      "aliases": [
+        "처방약",
+        "약",
+        "의료기기"
+      ]
+    },
+    "라면": {
+      "category": "식수·식량",
+      "units": [
+        "개",
+        "박스"
+      ],
+      "needs_expiry": true,
+      "hh_cap": 10,
+      "rate_per_h": 4,
+      "aliases": [
+        "라면",
+        "컵라면"
+      ]
+    },
+    "통조림": {
+      "category": "식수·식량",
+      "units": [
+        "개"
+      ],
+      "needs_expiry": true,
+      "hh_cap": 10,
+      "rate_per_h": 3,
+      "aliases": [
+        "통조림",
+        "참치캔"
+      ]
+    },
+    "비스킷": {
+      "category": "식수·식량",
+      "units": [
+        "개",
+        "박스"
+      ],
+      "needs_expiry": true,
+      "hh_cap": 10,
+      "rate_per_h": 3,
+      "aliases": [
+        "비스킷",
+        "과자"
+      ]
+    },
+    "이유식": {
+      "category": "영유아·돌봄",
+      "units": [
+        "개"
+      ],
+      "needs_expiry": true,
+      "hh_cap": 6,
+      "rate_per_h": 1,
+      "aliases": [
+        "이유식"
+      ],
+      "infant_item": true
+    },
+    "생리대": {
+      "category": "위생용품",
+      "units": [
+        "팩"
+      ],
+      "needs_expiry": false,
+      "hh_cap": 3,
+      "rate_per_h": 1,
+      "aliases": [
+        "생리대"
+      ]
+    },
+    "화장지": {
+      "category": "위생용품",
+      "units": [
+        "롤",
+        "팩"
+      ],
+      "needs_expiry": false,
+      "hh_cap": 12,
+      "rate_per_h": 2,
+      "aliases": [
+        "화장지",
+        "휴지"
+      ]
+    },
+    "칫솔": {
+      "category": "위생용품",
+      "units": [
+        "개"
+      ],
+      "needs_expiry": false,
+      "hh_cap": 6,
+      "rate_per_h": 1,
+      "aliases": [
+        "칫솔"
+      ]
+    },
+    "수건": {
+      "category": "침구·의류",
+      "units": [
+        "장"
+      ],
+      "needs_expiry": false,
+      "hh_cap": 6,
+      "rate_per_h": 2,
+      "aliases": [
+        "수건",
+        "타월"
+      ]
+    },
+    "우비": {
+      "category": "침구·의류",
+      "units": [
+        "벌"
+      ],
+      "needs_expiry": false,
+      "hh_cap": 4,
+      "rate_per_h": 1,
+      "aliases": [
+        "우비",
+        "비옷"
+      ]
+    },
+    "속옷": {
+      "category": "침구·의류",
+      "units": [
+        "벌"
+      ],
+      "needs_expiry": false,
+      "hh_cap": 6,
+      "rate_per_h": 1,
+      "aliases": [
+        "속옷"
+      ]
+    },
+    "핫팩": {
+      "category": "침구·의류",
+      "units": [
+        "개"
+      ],
+      "needs_expiry": false,
+      "hh_cap": 10,
+      "rate_per_h": 2,
+      "aliases": [
+        "핫팩"
+      ]
+    },
+    "건전지": {
+      "category": "전기·조명",
+      "units": [
+        "개",
+        "팩"
+      ],
+      "needs_expiry": false,
+      "hh_cap": 8,
+      "rate_per_h": 1,
+      "aliases": [
+        "건전지"
+      ]
+    },
+    "라디오": {
+      "category": "전기·조명",
+      "units": [
+        "개"
+      ],
+      "needs_expiry": false,
+      "hh_cap": 1,
+      "rate_per_h": 0.2,
+      "aliases": [
+        "라디오"
+      ]
+    },
+    "마대": {
+      "category": "청소·복구 장비",
+      "units": [
+        "장",
+        "묶음"
+      ],
+      "needs_expiry": false,
+      "hh_cap": 20,
+      "rate_per_h": 2,
+      "aliases": [
+        "마대",
+        "포대"
+      ]
+    },
+    "장화": {
+      "category": "청소·복구 장비",
+      "units": [
+        "켤레"
+      ],
+      "needs_expiry": false,
+      "hh_cap": 4,
+      "rate_per_h": 1,
+      "aliases": [
+        "장화"
+      ]
+    },
+    "빗자루": {
+      "category": "청소·복구 장비",
+      "units": [
+        "개"
+      ],
+      "needs_expiry": false,
+      "hh_cap": 3,
+      "rate_per_h": 1,
+      "aliases": [
+        "빗자루"
+      ]
+    },
+    "양수기": {
+      "category": "청소·복구 장비",
+      "units": [
+        "대"
+      ],
+      "needs_expiry": false,
+      "hh_cap": 1,
+      "rate_per_h": 0.1,
+      "aliases": [
+        "양수기",
+        "펌프"
+      ]
+    }
   }
 }

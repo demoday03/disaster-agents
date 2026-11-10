@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>재난 안전 AI 에이전트</title>
+<style>
+:root{--ink:#16233B;--ink-2:#3B4A63;--muted:#5A6880;--paper:#EEF2F7;--surface:#FFFFFF;--line:#D5DCE7;--action:#1F5FD1;--s-normal:#1E7A4F;--s-caution:#E8B400;--s-alert:#E06A00;--s-danger:#C8202F;--bad-ink:#A3182A;font-family:Pretendard,"Pretendard Variable","Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",system-ui,sans-serif;font-size:16px;line-height:1.6;color:var(--ink);background:var(--paper)}
+*{box-sizing:border-box}body{margin:0}a{color:inherit}
+:focus-visible{outline:3px solid var(--action);outline-offset:2px;border-radius:8px}
+.top{background:var(--ink);color:#fff;padding:18px max(18px,calc((100vw - 880px)/2))}.top h1{margin:0;font-size:1.3rem;font-weight:800}.top p{margin:4px 0 0;color:#C9D5E8;font-size:.9rem}
+.band{padding:12px max(18px,calc((100vw - 880px)/2));background:var(--s-normal);color:#fff;font-weight:700}
+.band[data-level="주의"]{background:var(--s-caution);color:#2B2100}.band[data-level="경계"]{background:var(--s-alert)}.band[data-level="위험"]{background:var(--s-danger)}
+.wrap{max-width:880px;margin:0 auto;padding:22px 18px}
+.call{margin:0 0 20px;padding:12px 16px;border-radius:10px;background:#FBE3E5;color:var(--bad-ink);font-weight:700}
+h2{font-size:1.1rem;margin:0 0 12px}
+.roles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.role{display:flex;flex-direction:column;gap:6px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:22px 20px;text-decoration:none;transition:border-color .15s,box-shadow .15s}
+.role:hover{border-color:var(--action);box-shadow:0 2px 10px rgba(31,95,209,.12)}
+.role .ic{font-size:2rem;line-height:1}.role b{font-size:1.2rem}.role span{color:var(--muted);font-size:.93rem}
+.role ul{margin:6px 0 0;padding-left:1.1em;color:var(--ink-2);font-size:.92rem}.role .go{margin-top:auto;padding-top:12px;color:var(--action);font-weight:700}
+.foot{color:var(--muted);font-size:.85rem;margin-top:22px;text-align:center}
+.ann{margin:0 0 20px;padding:12px 16px;border-radius:10px;border-left:6px solid var(--s-danger);background:#FDF0F1;font-weight:600;overflow-wrap:anywhere}.ann p{margin:4px 0}
+@media(max-width:720px){.roles{grid-template-columns:1fr}}
+</style></head><body>
+<header class="top"><h1>재난 안전 AI 에이전트</h1><p>교육용 시연 사이트입니다. 실제 신고·출동으로 이어지지 않으니 실제 개인정보는 넣지 마세요.</p></header>
+<div class="band" id="stage" data-level="정상" role="status">지금 우리 지역 위기 단계: 확인 중</div>
+<main class="wrap">
+<p class="call">사람이 다치거나 갇혔다면 이 화면 대신 119·112에 바로 전화하세요.</p>
+<div id="ann" class="ann" hidden role="alert"></div>
+<h2>누구로 들어갈까요?</h2>
+<div class="roles">
+<a class="role" href="/citizen"><span class="ic" aria-hidden="true">🏠</span><b>주민</b><span>피해를 입었거나 도움이 필요한 분</span>
+<ul><li>재난 신고하기</li><li>우리 집 맞춤 대비 안내</li><li>물품 요청 · 대피소 찾기</li></ul><span class="go">들어가기 →</span></a>
+<a class="role" href="/volunteer"><span class="ic" aria-hidden="true">🙋</span><b>봉사자</b><span>현장에서 돕는 자원봉사자</span>
+<ul><li>내 작업 확인</li><li>도착 · 완료 보고, SOS</li><li>물품 기부</li></ul><span class="go">들어가기 →</span></a>
+<a class="role" href="/admin"><span class="ic" aria-hidden="true">🛡️</span><b>담당자</b><span>상황실 담당 공무원 (로그인 필요)</span>
+<ul><li>상황판 · 신고 목록</li><li>승인 대기열</li><li>배치 · 안내 · 센서</li></ul><span class="go">들어가기 →</span></a>
+</div>
+<p class="foot">위기 단계와 안내는 담당자가 확인한 것만 표시됩니다.</p>
+</main>
+<script>
+fetch('/api/public/status').then(r=>r.ok?r.json():Promise.reject()).then(d=>{const s=d.stage,el=document.getElementById('stage');
+const lv=s.confirmed&&['주의','경계','위험'].includes(s.level)?s.level:'정상';el.dataset.level=lv;
+el.textContent='지금 우리 지역 위기 단계: '+lv+(s.confirmed&&s.hazards.length?' · '+s.hazards.join(', '):'')+(s.confirmed?'':' (담당자가 확정한 위험 없음)');
+const urgent=(d.announcements||[]).filter(a=>a.urgent&&a.audience==='all'),box=document.getElementById('ann');   // 모두에게 보내는 긴급 공지만
+box.hidden=!urgent.length;box.innerHTML='📢 긴급 공지'+urgent.slice(0,3).map(a=>'<p>'+a.text.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c])+'</p>').join('')}).catch(()=>{document.getElementById('stage').textContent='위기 단계를 불러오지 못했습니다'});
+</script></body></html>

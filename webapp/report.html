@@ -1,23 +1,227 @@
 <!doctype html>
-<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>재난 안전 AI 에이전트 · 신고 접수</title>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>재난 안전 AI 에이전트 · 주민 · 신고 접수</title>
 <style>
-:root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#172033;background:#f4f6fa}*{box-sizing:border-box}body{margin:0}.top{background:#14213d;color:#fff;padding:24px max(20px,calc((100vw - 850px)/2))}.top h1{margin:0 0 8px;font-size:1.6rem}.top p{margin:0;color:#d5deee}.nav{margin-top:14px}.nav a{color:#fff;margin-right:16px}.wrap{max-width:850px;margin:24px auto;padding:0 18px}.warning{background:#fff4d8;border:1px solid #e7c66c;border-radius:12px;padding:13px 15px;margin-bottom:18px}.card{background:#fff;border:1px solid #e0e5ee;border-radius:14px;padding:20px;margin-bottom:16px;box-shadow:0 2px 7px #1d355710}.card h2{font-size:1.1rem;margin:0 0 14px}label{display:block;font-weight:600;margin:12px 0 6px}textarea,input{width:100%;font:inherit;padding:11px;border:1px solid #cbd3df;border-radius:9px}textarea{min-height:140px;resize:vertical}button{font:inherit;font-weight:650;background:#2157c5;color:white;border:0;border-radius:9px;padding:11px 16px;cursor:pointer;margin-top:12px}button:disabled{opacity:.6;cursor:wait}.muted{color:#667085;font-size:.92rem}.result{white-space:pre-wrap;background:#f6f8fc;border-radius:9px;padding:12px;margin-top:12px;overflow-wrap:anywhere}.status{display:inline-block;padding:4px 9px;border-radius:999px;background:#e8eef9;font-size:.85rem}.ok{background:#d9f5e5;color:#155b37}.err{color:#a42121}.footer{text-align:center;color:#667085;padding:22px;font-size:.85rem}@media(max-width:600px){.top{padding:20px}.card{padding:15px}}
+:root{--ink:#16233B;--ink-2:#3B4A63;--muted:#5A6880;--paper:#EEF2F7;--surface:#FFFFFF;--line:#D5DCE7;--line-soft:#E7ECF3;--action:#1F5FD1;--action-bg:#E8F0FD;--s-normal:#1E7A4F;--s-caution:#E8B400;--s-alert:#E06A00;--s-danger:#C8202F;--bad-ink:#A3182A;--ok-bg:#E1F3EA;--ok-ink:#145C3A;font-family:Pretendard,"Pretendard Variable","Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",system-ui,sans-serif;font-size:16px;line-height:1.65;color:var(--ink);background:var(--paper);-webkit-text-size-adjust:100%}
+*{box-sizing:border-box}body{margin:0}a{color:var(--action)}
+:focus-visible{outline:3px solid var(--action);outline-offset:2px;border-radius:6px}
+.top{background:var(--ink);color:#fff;padding:10px max(16px,calc((100vw - 1000px)/2));display:flex;align-items:center;gap:14px}
+.top a{color:#C9D5E8;text-decoration:none;font-size:.92rem;white-space:nowrap}.top a:hover{color:#fff}.top h1{margin:0;font-size:1.05rem;font-weight:800}
+.band{padding:10px max(16px,calc((100vw - 1000px)/2));background:var(--s-normal);color:#fff;font-weight:700;display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline}
+.band[data-level="주의"]{background:var(--s-caution);color:#2B2100}.band[data-level="경계"]{background:var(--s-alert)}.band[data-level="위험"]{background:var(--s-danger)}
+.band .meta{font-weight:500;font-size:.9rem;opacity:.95}
+.checkbar{background:#FFF1D6;border-bottom:2px solid var(--s-caution);padding:10px max(16px,calc((100vw - 1000px)/2));display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-weight:700}
+.checkbar button{margin:0;background:var(--s-normal)}
+.annbar{background:#FBE3E5;border-bottom:2px solid var(--s-danger);color:var(--bad-ink);padding:10px max(16px,calc((100vw - 1000px)/2));font-weight:700;overflow-wrap:anywhere}.annbar a{color:var(--bad-ink);font-weight:600;margin-left:6px}
+.ann{border-left:5px solid var(--action);background:#F5F8FC;border-radius:8px;padding:12px 14px;margin:8px 0;overflow-wrap:anywhere}.ann.urgent{border-left-color:var(--s-danger);background:#FDF0F1}.ann .muted{font-size:.85rem}
+.badge{display:inline-block;min-width:20px;padding:0 6px;margin-left:6px;border-radius:99px;background:var(--s-danger);color:#fff;font-size:.75rem;text-align:center}
+.layout{max-width:1000px;margin:16px auto;padding:0 16px;display:grid;grid-template-columns:220px minmax(0,1fr);gap:18px;align-items:start}
+.menu{position:sticky;top:12px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px}
+.menu .grp{font-size:.78rem;font-weight:700;color:var(--muted);padding:10px 10px 4px}
+.menu button{display:block;width:100%;text-align:left;margin:2px 0;background:none;color:var(--ink);font-weight:600;padding:10px 12px;min-height:0;border-radius:8px}
+.menu button:hover{background:var(--line-soft);filter:none}.menu button[aria-current="page"]{background:var(--action-bg);color:var(--action)}
+.call{margin:8px 4px 4px;padding:8px 10px;border-radius:8px;background:#FBE3E5;color:var(--bad-ink);font-size:.82rem;font-weight:700}
+.view{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:22px}
+.view h2{font-size:1.3rem;font-weight:800;margin:0 0 4px;letter-spacing:-.01em}.view .lead{color:var(--muted);margin:0 0 18px}
+.view h3{font-size:1.02rem;font-weight:700;margin:20px 0 8px}
+label{display:block;font-weight:700;margin:14px 0 6px}
+textarea,input,select{width:100%;font:inherit;padding:12px;border:1px solid #BFC9D8;border-radius:10px;background:#fff;color:var(--ink)}textarea{min-height:140px;resize:vertical}
+button{font:inherit;font-weight:700;background:var(--action);color:#fff;border:0;border-radius:10px;padding:12px 20px;min-height:46px;cursor:pointer;margin-top:14px}button:hover{filter:brightness(1.08)}button:disabled{opacity:.6;cursor:wait}
+button.sub{background:#E3E8F0;color:var(--ink)}
+.muted{color:var(--muted);font-size:.92rem}.err{color:var(--bad-ink)}
+.box{background:#F5F8FC;border:1px solid var(--line-soft);border-radius:10px;padding:14px;margin-top:14px;overflow-wrap:anywhere}.box.ok{background:var(--ok-bg);border-color:#9FD3B6}.box.bad{background:#FBE3E5;border-color:#F0B7BE}
+.choices{display:flex;flex-wrap:wrap;gap:8px}.choices label{margin:0;font-weight:600;display:flex;align-items:center;gap:8px;border:1px solid #BFC9D8;border-radius:10px;padding:10px 14px;cursor:pointer;background:#fff}
+.choices input{width:auto;margin:0}.choices label:has(input:checked){border-color:var(--action);background:var(--action-bg);color:var(--action)}
+.agree{display:flex;align-items:flex-start;gap:10px;font-weight:500}.agree input{width:auto;margin-top:5px}
+.dl{display:grid;grid-template-columns:110px 1fr;gap:6px 12px;margin:0}.dl dt{color:var(--muted)}.dl dd{margin:0;font-weight:600}
+.tips{margin:0;padding:0;list-style:none}.tips li{padding:12px 14px;border-left:5px solid var(--s-alert);background:#FFF6EC;border-radius:8px;margin:8px 0}
+.notice{border-left:5px solid var(--action);background:#F5F8FC;border-radius:8px;padding:12px 14px;margin:8px 0;overflow-wrap:anywhere}.notice .muted{font-size:.86rem}.notice summary{cursor:pointer}
+.list{list-style:none;padding:0;margin:0}.list li{padding:12px 0;border-top:1px solid var(--line-soft)}.list li:first-child{border-top:0}
+.shel{display:grid;grid-template-columns:1fr auto;gap:4px 12px;align-items:center}.meter{grid-column:1/-1;height:8px;border-radius:99px;background:var(--line-soft);overflow:hidden}.meter span{display:block;height:100%;background:var(--s-normal)}.meter.full span{background:var(--s-danger)}.meter.tight span{background:var(--s-alert)}
+.full{color:var(--bad-ink);font-weight:700}.here{font-size:.78rem;background:var(--action-bg);color:var(--action);border-radius:99px;padding:1px 8px;margin-left:6px}
+.row2{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0 12px}
+.req{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin:8px 0}.steps{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0;padding:0;list-style:none}.steps li{font-size:.8rem;padding:2px 9px;border-radius:999px;background:var(--line-soft);color:var(--muted)}.steps li.on{background:var(--ink);color:#fff}.steps li.past{background:#DCE5F3;color:var(--ink)}
+.req button{margin:6px 6px 0 0;padding:8px 14px;min-height:40px}
+[hidden]{display:none!important}
+@media(max-width:760px){.layout{grid-template-columns:1fr}.menu{position:static;display:flex;overflow-x:auto;gap:4px;padding:6px}.menu .grp,.menu .call{display:none}.menu button{white-space:nowrap;width:auto;margin:0}.row2{grid-template-columns:1fr}.view{padding:16px}}
 </style></head><body>
-<header class="top"><h1>재난 안전 AI 에이전트 · 신고 접수</h1><p>재난 상황을 접수하고 접수번호로 처리 상태를 확인하세요.</p><div class="nav"><a href="/report" aria-current="page">신고 접수</a><a href="/admin">관리자 화면(시연용)</a></div></header>
-<main class="wrap"><div class="warning"><b>교육용 시연 시스템</b><br>실제 긴급 신고·출동·재난 경보용이 아닙니다. 생명이나 신체에 즉각적인 위험이 있으면 현지 긴급 신고 체계를 이용하세요. 이 화면에는 실제 개인정보를 입력하지 마세요.</div>
-<section class="card"><h2>재난 상황 신고</h2><p class="muted">신고 내용을 입력하면 AI/규칙 기반 분류 결과가 저장되고 접수번호가 발급됩니다.</p><form id="incidentForm"><label for="report">신고 내용</label><textarea id="report" maxlength="2000" required placeholder="예: Z2 구역 침수, 주민 2명 구조 요청"></textarea><button id="submitIncident" type="submit">신고 접수하기</button></form><div id="incidentResult" class="result" hidden aria-live="polite"></div></section>
-<section class="card"><h2>접수 상태 조회</h2><p class="muted">발급받은 접수번호를 입력하세요. 데모 버전에서는 접수번호를 아는 사람이 조회할 수 있으므로 실제 민감 정보를 사용하지 마세요.</p><form id="statusForm"><label for="receiptId">접수번호</label><input id="receiptId" maxlength="40" required placeholder="예: R-1234ABCD"><button type="submit">상태 조회</button></form><div id="statusResult" class="result" hidden aria-live="polite"></div></section></main>
-<div class="footer">로컬 교육용 데모 · 접수 및 분석 결과는 공통 SQLite 데이터베이스에 저장됩니다.</div>
+<header class="top"><a href="/">← 처음으로</a><h1>주민 화면</h1></header>
+<div class="band" id="stageBox" data-level="정상" role="status" aria-live="polite"><span>지금 우리 지역 위기 단계: 확인 중</span></div>
+<div class="annbar" id="annBar" hidden role="alert"></div>
+<div class="checkbar" id="checkBar" hidden role="alert"><span id="checkText">담당자가 우리 집이 안전한지 묻고 있습니다.</span><button type="button" id="safeBtn">안전합니다</button></div>
+<div class="layout">
+<nav class="menu" aria-label="주민 메뉴">
+<div class="grp">신고</div>
+<button type="button" data-view="report">재난 신고하기</button>
+<button type="button" data-view="status">접수 상태 보기</button>
+<div class="grp">우리 집</div>
+<button type="button" data-view="home">우리 집 정보</button>
+<button type="button" data-view="prepare">우리 집 대비 안내</button>
+<button type="button" data-view="supply">물품 요청하기</button>
+<div class="grp">정보</div>
+<button type="button" data-view="notices">공지사항<span class="badge" id="annCount" hidden></span></button>
+<button type="button" data-view="shelters">대피소 찾기</button>
+<button type="button" data-view="situation">우리 지역 상황</button>
+<p class="call">다치거나 갇혔다면 119·112에 바로 전화하세요</p>
+</nav>
+<main>
+<section class="view" data-view="report">
+<h2>재난 신고하기</h2><p class="lead">지금 일어난 일을 알려 주세요. 담당자가 확인하고 필요한 도움을 보냅니다.</p>
+<form id="incidentForm"><label for="report">무슨 일인가요?</label>
+<textarea id="report" maxlength="2000" required placeholder="예: 2구역 우리 집 반지하에 물이 차고 있어요. 할머니 1명이 계세요."></textarea>
+<p class="muted">무슨 일인지 · 어디인지(몇 구역) · 몇 명인지를 적어 주시면 더 빨리 도와 드릴 수 있어요.</p>
+<button id="submitIncident" type="submit">신고 접수하기</button></form>
+<div id="incidentResult" class="box" hidden aria-live="polite"></div>
+</section>
+
+<section class="view" data-view="status" hidden>
+<h2>접수 상태 보기</h2><p class="lead">신고한 뒤 받은 접수번호로 처리 상황과 담당자 안내를 확인합니다.</p>
+<form id="statusForm"><label for="receiptId">접수번호</label><input id="receiptId" maxlength="40" required placeholder="예: R-1234ABCD"><button type="submit">조회하기</button></form>
+<div id="statusResult" class="box" hidden aria-live="polite"></div>
+<div id="supplementCard" class="box bad" hidden><b>처리에 필요한 정보가 빠졌어요</b><p id="supplementNeed" class="muted"></p>
+<form id="supplementForm"><label for="supplementText">빠진 내용을 적어 주세요</label><input id="supplementText" maxlength="500" required placeholder="예: 5구역이에요 / 생수 10병이 필요해요"><button type="submit">보내기</button></form>
+<div id="supplementResult" class="muted" aria-live="polite"></div></div>
+</section>
+
+<section class="view" data-view="home" hidden>
+<h2>우리 집 정보</h2><p class="lead">한 번만 알려 주시면 맞춤 대비 안내, 안전 확인, 물품 요청에 함께 쓰입니다. 이 기기에만 기억됩니다.</p>
+<div id="homeSummary" class="box ok" hidden></div>
+<form id="homeForm">
+<label for="hZone">사는 곳</label><select id="hZone" required><option value="">구역을 골라 주세요</option></select>
+<label>집 형태</label><div class="choices" id="hFloor"><label><input type="radio" name="floor" value="반지하" required> 반지하</label><label><input type="radio" name="floor" value="1층"> 1층</label><label><input type="radio" name="floor" value="2층 이상"> 2층 이상</label></div>
+<label>함께 사는 분 <span class="muted">(해당하는 것을 모두 골라 주세요)</span></label>
+<div class="choices" id="hPeople"><label><input type="checkbox" value="영유아"> 영유아</label><label><input type="checkbox" value="고령"> 65세 이상 어르신</label><label><input type="checkbox" value="거동 불편"> 거동이 불편한 분</label><label><input type="checkbox" value="임신"> 임산부</label><label><input type="checkbox" value="" id="hNone"> 해당 없음</label></div>
+<label for="hMembers">함께 사는 사람 수</label><input id="hMembers" type="number" min="1" max="20" value="1" required style="max-width:160px">
+<label class="agree"><input type="checkbox" id="hConsent" checked> 재난 때 담당자가 우리 집이 안전한지 물어보는 것에 동의합니다.</label>
+<button type="submit" id="homeSave">저장하기</button></form>
+<div id="homeResult" class="muted" aria-live="polite"></div>
+</section>
+
+<section class="view" data-view="prepare" hidden>
+<h2>우리 집 대비 안내</h2><p class="lead">우리 집은 이런 위험이 있어요. 미리 대비하세요.</p>
+<div class="needhome box" hidden>먼저 <a href="#home">우리 집 정보</a>를 알려 주세요. 집 형태와 함께 사는 분에 맞춰 안내해 드려요.</div>
+<div class="hasHome" hidden><ul class="tips" id="tips"></ul><h3>가장 가까운 대피소</h3><p id="nearShelter" class="muted"></p><h3>안전 확인</h3><p id="checkState" class="muted"></p></div>
+</section>
+
+<section class="view" data-view="supply" hidden>
+<h2>물품 요청하기</h2><p class="lead">물, 식료품 같은 급한 물품을 요청합니다. 담당자가 확인한 뒤 보내 드려요. 의약품은 담당자에게 직접 문의하세요.</p>
+<div class="needhome box" hidden>먼저 <a href="#home">우리 집 정보</a>를 알려 주세요. 어디로 보낼지와 가족 수를 알아야 해요.</div>
+<div class="hasHome" hidden>
+<form id="needForm"><div class="row2"><div><label for="needItem">필요한 물품</label><select id="needItem" required></select></div><div><label for="needQty">수량</label><input id="needQty" type="number" min="1" max="1000" value="1" required></div><div><label for="needWhen">언제까지</label><select id="needWhen"></select></div></div>
+<label>지금 집 상황 <span class="muted">(해당하면 골라 주세요)</span></label><div class="choices"><label><input type="checkbox" value="blackout"> 정전</label><label><input type="checkbox" value="no_water"> 식수 없음</label></div>
+<button type="submit">요청하기</button></form>
+<div id="needResult" class="box" hidden aria-live="polite"></div>
+<h3>요청한 물품</h3><div id="hhReqs" class="muted">아직 요청한 물품이 없습니다.</div><div id="hhCase"></div>
+</div>
+</section>
+
+<section class="view" data-view="notices" hidden>
+<h2>공지사항</h2><p class="lead">담당자가 주민에게 알리는 소식입니다. 새 공지는 15초 안에 나타납니다. 우리 집 정보를 알려 주시면 우리 구역 공지만 보여 드려요.</p>
+<div id="annList" class="muted">아직 공지가 없습니다.</div>
+</section>
+
+<section class="view" data-view="shelters" hidden>
+<h2>대피소 찾기</h2><p class="lead">대피소와 지금 남은 자리입니다. 우리 집 정보를 알려 주시면 가까운 곳부터 보여 드려요.</p>
+<ul id="shelters" class="list muted"><li>불러오는 중…</li></ul>
+</section>
+
+<section class="view" data-view="situation" hidden>
+<h2>우리 지역 상황</h2><p class="lead">담당자가 확인한 안내와 통제 중인 길입니다. <span id="nowUpdated"></span></p>
+<h3>담당자 안내</h3><div id="notices" class="muted">불러오는 중…</div>
+<h3>구역 지도</h3><p class="muted">파란 테두리는 담당자 안내가 나온 구역입니다. 통제 구간은 피해서 이동하세요.</p><div id="zoneMap" class="muted">불러오는 중…</div>
+<h3>통제 중인 길</h3><div id="controls" class="muted">불러오는 중…</div>
+</section>
+</main></div>
+<script src="/static/zonemap.js"></script>
 <script>
 const $=id=>document.getElementById(id);
-function details(x){const o=x?.output||{};return ['신고 유형: '+(o.type||'미분류'),'구역: '+(o.zone||'미상'),'인원: '+(o.people!=null?o.people+'명':'미상'),'취약계층: '+(o.vulnerable?'포함':'미확인'),'긴급도: '+(o.urgency??'미정'),'분류: '+(o.label || (x?.ai_used ? 'Solar AI 분류' : '규칙 기반 분류')),'AI 사용: '+(x?.ai_used?'사용':'미사용'),'추가 확인: '+(x?.needs_approval?'담당자 승인 필요':'현재 승인 대기 없음')].join('\n')}
-
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
 async function api(path,options={}){const r=await fetch(path,{...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});const data=await r.json().catch(()=>({error:'서버 응답을 읽을 수 없습니다'}));if(!r.ok)throw new Error(data.error||`HTTP ${r.status}`);return data}
-function show(id,text,isError=false){const el=$(id);el.hidden=false;el.textContent=text;el.classList.toggle('err',isError)}
-$('incidentForm').addEventListener('submit',async e=>{e.preventDefault();const b=$('submitIncident');b.disabled=true;try{const r=await api('/api/incidents',{method:'POST',body:JSON.stringify({text:$('report').value})});show('incidentResult',(r.duplicate?'동일한 내용의 신고가 이미 접수되어 새 신고를 만들지 않았습니다.':'접수가 완료되었습니다.')+'\n접수번호: '+r.output.id+'\n상태: '+(r.status||'submitted')+'\n\n분류 결과\n'+details(r.result||r));$('receiptId').value=r.output.id;if(!r.duplicate)$('report').value=''}catch(e){show('incidentResult','오류: '+e.message,true)}finally{b.disabled=false}});
-$('statusForm').addEventListener('submit',async e=>{e.preventDefault();try{const id=$('receiptId').value.trim();const r=await api('/api/incidents/'+encodeURIComponent(id));show('statusResult','접수번호: '+id+'\n상태: '+statusLabel(r.status)+'\n접수 시각: '+formatDate(r.created_at)+'\n\n분류 결과\n'+details(r.result)+'\n\n신고 내용\n'+(r.result?.output?.text||'내용 없음')+'\n\n'+guidanceText(r.guidance))}catch(e){show('statusResult','조회 실패: '+e.message,true)}});
-function guidanceText(g){if(!g)return '안내: 담당자가 승인한 안내문이 아직 없습니다.';return ['안내 (모의 · 근거 확인됨 · 담당자 승인 '+formatDate(g.approved_at)+')',g.text,'','출처: '+(g.source||'정보 없음'),'근거 문서 ID: '+((g.doc_ids||[]).join(', ')||'없음'),'근거 원문: '+(g.evidence||'없음'),'AI가 다듬은 문장입니다. 틀릴 수 있으니 근거 원문과 공식 안내를 함께 확인하세요.'].join('\n')}
-function statusLabel(s){return ({submitted:'접수 완료',reviewing:'검토 중',approved:'승인 완료',rejected:'반려'})[s]||s||'상태 확인 필요'}
-function formatDate(s){if(!s)return '정보 없음';const d=new Date(s);return Number.isNaN(d.getTime())?s:d.toLocaleString('ko-KR')}
-const params=new URLSearchParams(location.search);if(params.get('id'))$('receiptId').value=params.get('id');
+const fmt=s=>{if(!s)return '';const d=new Date(s);return Number.isNaN(d.getTime())?s:d.toLocaleString('ko-KR')};
+const store={get(k){try{return localStorage.getItem(k)||''}catch(e){return ''}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
+
+// ---- 메뉴: 누른 기능 하나만 보인다(주소 #report 등으로 바로 들어올 수도 있다)
+const VIEWS=[...document.querySelectorAll('.menu button')].map(b=>b.dataset.view);
+function go(v){if(!VIEWS.includes(v))v='report';document.querySelectorAll('section.view').forEach(s=>s.hidden=s.dataset.view!==v);
+document.querySelectorAll('.menu button').forEach(b=>b.dataset.view===v?b.setAttribute('aria-current','page'):b.removeAttribute('aria-current'));
+document.querySelector('.menu [aria-current=page]').scrollIntoView({block:'nearest',inline:'center'});   // 휴대폰 가로 메뉴에서도 보이게
+if(location.hash!=='#'+v)history.replaceState(null,'','#'+v);ON_SHOW[v]&&ON_SHOW[v]();window.scrollTo({top:0})}
+document.querySelectorAll('.menu button').forEach(b=>b.addEventListener('click',()=>go(b.dataset.view)));
+window.addEventListener('hashchange',()=>go(location.hash.slice(1)));
+
+// ---- 공개 상황(위기 단계·대피소·안내): 위기 단계 띠는 늘, 나머지는 그 메뉴를 열 때만 그린다
+let PUB=null,HOME=null,HH=new URLSearchParams(location.search).get('hh')||store.get('hh');
+async function loadPub(){try{PUB=await api('/api/public/status');const s=PUB.stage,lv=s.confirmed&&['주의','경계','위험'].includes(s.level)?s.level:'정상';
+$('stageBox').dataset.level=lv;$('stageBox').innerHTML=`<span>지금 우리 지역 위기 단계: ${esc(lv)}${s.confirmed&&s.hazards.length?' · '+esc(s.hazards.join(', ')):''}</span><span class="meta">${s.confirmed?'담당자가 '+esc(fmt(s.at*1000))+'에 확정':'담당자가 확정한 위험 없음'}${PUB.weather&&PUB.weather.available&&PUB.weather.rain?' · 1시간 강수 '+esc(PUB.weather.rain.mm_per_h)+'mm':''}</span>`;
+if(!$('hZone').options[1])$('hZone').insertAdjacentHTML('beforeend',Object.entries(PUB.zones).map(([id,n])=>`<option value="${esc(id)}">${esc(n)}</option>`).join(''));
+drawAnn();const v=location.hash.slice(1);if(v==='shelters')drawShelters();if(v==='situation')drawSituation()}catch(e){$('stageBox').textContent='상황을 불러오지 못했습니다: '+e.message}}
+const zname=z=>(PUB&&PUB.zones[z])||z||'구역 미상';
+// 공지: 주민 대상(모두·주민) 중 전체 구역이거나 우리 구역인 것. 긴급 공지는 모든 화면 위 빨간 띠로
+function drawAnn(){if(!PUB)return;const mine=HOME&&HOME.household.zone;const list=(PUB.announcements||[]).filter(a=>a.audience!=='volunteer'&&(a.zone==='all'||!mine||a.zone===mine)).sort((a,b)=>b.urgent-a.urgent);
+const urgent=list.filter(a=>a.urgent);$('annBar').hidden=!urgent.length;
+if(urgent.length)$('annBar').innerHTML=`📢 긴급 공지 · ${esc(urgent[0].text)}${urgent.length>1?` (외 ${urgent.length-1}건)`:''}<a href="#notices">공지 모두 보기</a>`;
+$('annCount').hidden=!list.length;$('annCount').textContent=list.length;
+$('annList').className=list.length?'':'muted';$('annList').innerHTML=list.length?list.map(a=>`<div class="ann${a.urgent?' urgent':''}"><div class="muted">${a.urgent?'<b class="err">긴급</b> · ':''}${esc(a.zone==='all'?'모든 구역':zname(a.zone))} · ${esc(fmt(a.at*1000))}</div>${esc(a.text)}</div>`).join(''):'지금 게시 중인 공지가 없습니다.'}
+function drawShelters(){if(!PUB)return;const mine=HOME&&HOME.household.zone;const list=[...PUB.shelters].sort((a,b)=>(b.zone===mine)-(a.zone===mine)||(b.capacity_left>0)-(a.capacity_left>0));
+$('shelters').classList.remove('muted');$('shelters').innerHTML=list.map(x=>{const used=Math.round(100*(x.capacity-Math.max(0,x.capacity_left))/x.capacity);return `<li class="shel"><span><b>${esc(x.name)}</b>${x.zone===mine?'<span class="here">우리 구역</span>':''}<br><span class="muted">${esc(zname(x.zone))}${x.amenities.length?' · '+esc(x.amenities.join(', ')):''}</span></span>${x.capacity_left>0?`<span>남은 자리 <b>${esc(x.capacity_left)}</b>명</span>`:'<span class="full">가득 참</span>'}<span class="meter${x.capacity_left<=0?' full':x.capacity_left<x.capacity*0.2?' tight':''}"><span style="width:${Math.min(100,used)}%"></span></span></li>`}).join('')}
+function drawSituation(){if(!PUB)return;const d=PUB;$('nowUpdated').textContent='('+new Date().toLocaleTimeString('ko-KR')+' 기준)';
+$('notices').className=d.notices.length?'':'muted';$('notices').innerHTML=d.notices.length?d.notices.map(n=>`<div class="notice"><div class="muted">${esc(zname(n.zone))} · ${esc(n.type||'')} · 승인 ${esc(fmt(n.approved_at))}</div>${esc(n.text)}<details><summary class="muted">근거 보기</summary><div class="muted">출처: ${esc(n.source||'정보 없음')}<br>${esc(n.evidence||'')}</div></details></div>`).join(''):'아직 담당자가 승인한 안내가 없습니다.';
+if(window.renderZoneMap){window.renderZoneMap($('zoneMap'),{zones:d.zone_grid,shelters:d.shelters,controls:d.control_zones,highlight:new Set(d.notices.map(n=>n.zone))});$('zoneMap').classList.remove('muted')}
+$('controls').innerHTML=d.control_zones.length?d.control_zones.map(c=>`${esc(c.name)}${c.between.length?' ('+esc(c.between.map(zname).join(' ↔ '))+')':''}`).join('<br>'):'지금 통제 중인 길은 없습니다.'}
+
+// ---- 신고
+$('incidentForm').addEventListener('submit',async e=>{e.preventDefault();const b=$('submitIncident');b.disabled=true;const box=$('incidentResult');
+try{const r=await api('/api/incidents',{method:'POST',body:JSON.stringify({text:$('report').value})});const o=r.output;store.set('lastReceipt',o.id);
+box.className='box ok';box.hidden=false;box.innerHTML=`<b>${r.duplicate?'같은 내용이 이미 접수되어 있어요.':'신고가 접수되었습니다.'}</b><br>접수번호 <b>${esc(o.id)}</b> <span class="muted">(처리 상황을 볼 때 필요해요)</span>${o.state==='보완 필요'?'<br><span class="err">처리에 필요한 정보가 빠졌어요. 아래 버튼을 눌러 알려 주세요.</span>':''}<br><button type="button" id="toStatus">처리 상황 보기</button>`;
+$('toStatus').addEventListener('click',()=>{$('receiptId').value=o.id;go('status');lookup()});if(!r.duplicate)$('report').value=''}
+catch(err){box.className='box bad';box.hidden=false;box.textContent='접수하지 못했습니다: '+err.message}finally{b.disabled=false}});
+
+// ---- 접수 상태(주민에게 필요한 것만: 상태·유형·위치·빠진 정보·담당자 안내)
+const STATE_TXT={'접수':'접수되어 담당자가 확인하고 있어요','보완 필요':'정보가 더 필요해요','오접수':'담당자 확인 결과 처리하지 않기로 했어요'};
+async function lookup(){const id=$('receiptId').value.trim();if(!id)return;const box=$('statusResult');
+try{const r=await api('/api/incidents/'+encodeURIComponent(id));const o=r.result?.output||{};box.className='box';box.hidden=false;
+box.innerHTML=`<dl class="dl"><dt>접수번호</dt><dd>${esc(id)}</dd><dt>처리 상황</dt><dd>${esc(STATE_TXT[o.state]||o.state||'접수')}</dd><dt>신고 종류</dt><dd>${esc(o.type||'확인 중')}</dd><dt>위치</dt><dd>${esc(o.zone&&o.zone!=='미상'?zname(o.zone):'아직 모름')}</dd><dt>접수 시각</dt><dd>${esc(fmt(r.created_at))}</dd></dl>`+
+(r.guidance?`<h3>담당자 안내</h3><div class="notice">${esc(r.guidance.text)}<details><summary class="muted">근거 보기</summary><div class="muted">출처: ${esc(r.guidance.source||'')}<br>${esc(r.guidance.evidence||'')}</div></details></div>`:'<p class="muted">아직 담당자 안내가 없습니다. 급하면 119·112에 바로 전화하세요.</p>');
+const need=o.state==='보완 필요';$('supplementCard').hidden=!need;if(need){$('supplementCard').dataset.id=id;$('supplementNeed').textContent='빠진 정보: '+(o.missing||[]).join(', ')}}
+catch(e){box.className='box bad';box.hidden=false;box.textContent='조회하지 못했습니다: '+e.message;$('supplementCard').hidden=true}}
+$('statusForm').addEventListener('submit',e=>{e.preventDefault();lookup()});
+$('supplementForm').addEventListener('submit',async e=>{e.preventDefault();const id=$('supplementCard').dataset.id;try{await api('/api/incidents/'+encodeURIComponent(id)+'/supplement',{method:'POST',body:JSON.stringify({text:$('supplementText').value})});$('supplementText').value='';$('supplementResult').textContent='보내 주셔서 고맙습니다. 반영했어요.';lookup()}catch(err){$('supplementResult').textContent='보내지 못했습니다: '+err.message}});
+
+// ---- 우리 집(코드·우선순위는 보여 주지 않는다)
+const PEOPLE_TXT={'영유아':'영유아','고령':'65세 이상 어르신','거동 불편':'거동이 불편한 분','임신':'임산부'};
+$('hNone').addEventListener('change',()=>{if($('hNone').checked)$('hPeople').querySelectorAll('input:not(#hNone)').forEach(c=>c.checked=false)});
+$('hPeople').querySelectorAll('input:not(#hNone)').forEach(c=>c.addEventListener('change',()=>{if(c.checked)$('hNone').checked=false}));
+$('homeForm').addEventListener('submit',async e=>{e.preventDefault();const floor=$('homeForm').querySelector('input[name=floor]:checked');
+const body={zone:$('hZone').value,floor:floor&&floor.value,members:Number($('hMembers').value),consent:$('hConsent').checked,people_factors:[...$('hPeople').querySelectorAll('input:checked')].map(c=>c.value).filter(Boolean)};
+$('homeSave').disabled=true;try{const editing=HOME&&HOME.household.registered;const r=await api(editing?`/api/public/households/${encodeURIComponent(HH)}/update`:'/api/public/households',{method:'POST',body:JSON.stringify(body)});
+HH=r.id;store.set('hh',HH);$('homeResult').textContent='저장했습니다. 이제 맞춤 대비 안내와 물품 요청을 쓸 수 있어요.';await loadHome();go('prepare')}catch(err){$('homeResult').textContent='저장하지 못했습니다: '+err.message}finally{$('homeSave').disabled=false}});
+function fillHomeForm(h){$('hZone').value=h.zone;const f=$('homeForm').querySelector(`input[name=floor][value="${h.floor}"]`);if(f)f.checked=true;
+$('hPeople').querySelectorAll('input:not(#hNone)').forEach(c=>c.checked=h.factors.includes(c.value));$('hNone').checked=!h.factors.some(x=>PEOPLE_TXT[x]);$('hMembers').value=h.members;$('hConsent').checked=!!h.consent}
+function homeText(h){const ppl=h.factors.filter(x=>PEOPLE_TXT[x]).map(x=>PEOPLE_TXT[x]);return `<b>우리 집</b> · ${esc(zname(h.zone))} · ${esc(h.floor)} · ${esc(h.members)}명${ppl.length?' · '+esc(ppl.join(', ')):''}`}
+async function loadHome(){if(!HH){HOME=null;showHomeParts();return}
+try{HOME=await api('/api/public/households/'+encodeURIComponent(HH))}catch(e){HOME=null;if(/찾을 수 없/.test(e.message)){HH='';store.set('hh','')}}
+showHomeParts()}
+const STEPS=['검토','승인','배치','이동','완료'];
+function showHomeParts(){const has=!!HOME;drawAnn();document.querySelectorAll('.needhome').forEach(x=>x.hidden=has);document.querySelectorAll('.hasHome').forEach(x=>x.hidden=!has);
+$('homeSummary').hidden=!has;$('homeSave').textContent=has&&HOME.household.registered?'고친 내용 저장하기':'저장하기';
+const c=has&&HOME.check,asking=c&&(c.state==='대기'||c.state==='격상');$('checkBar').hidden=!asking;
+if(asking)$('checkText').textContent=c.state==='격상'?'응답이 늦어 담당자가 우선 확인 대상으로 보고 있어요. 안전하면 지금 눌러 주세요.':`담당자가 우리 집이 안전한지 묻고 있습니다 (${Math.max(0,c.seconds_left)}초 안에 응답).`;
+if(!has)return;const h=HOME.household;$('homeSummary').innerHTML=homeText(h)+(h.registered?'<br><span class="muted">고칠 내용이 있으면 아래에서 바꾸고 저장하세요.</span>':'<br><span class="muted">시연용 가구입니다.</span>');if(document.activeElement?.closest?.('#homeForm')==null)fillHomeForm(h);
+$('tips').innerHTML=HOME.risks.map(r=>`<li>${esc(r)}</li>`).join('');$('nearShelter').textContent=HOME.nearest_shelter?`${HOME.nearest_shelter.name} (${zname(HOME.nearest_shelter.zone)}) · 남은 자리는 '대피소 찾기'에서 확인하세요`:'정보 없음';
+$('checkState').textContent=!c?'지금 담당자가 안전을 묻고 있지 않습니다. 물어보면 화면 위에 버튼이 나타나요.':asking?'담당자가 묻고 있어요. 화면 위의 \'안전합니다\'를 눌러 주세요.':'안전하다고 알렸습니다.';
+if(!$('needItem').options.length){$('needItem').innerHTML=HOME.catalog.map(i=>`<option>${esc(i)}</option>`).join('');$('needWhen').innerHTML=HOME.when.map(w=>`<option${w==='오늘 중'?' selected':''}>${esc(w)}</option>`).join('')}
+$('hhReqs').className=HOME.requests.length?'':'muted';$('hhReqs').innerHTML=HOME.requests.length?HOME.requests.map(r=>{const at=STEPS.indexOf(r.state);return `<div class="req"><b>${esc(r.item)} ${esc(r.qty)}</b><ol class="steps">${STEPS.map((s,i)=>`<li class="${i===at?'on':at>i?'past':''}">${esc(s)}</li>`).join('')}${at<0?`<li class="on">${esc(r.state)}</li>`:''}</ol>${r.route==='manual_medicine'?'<div class="muted">의약품은 담당자가 직접 연락합니다.</div>':''}${r.state==='이동'?`<div>물품을 받으셨나요?</div><button type="button" data-rcv="${esc(r.id)}" data-ok="1">받았어요</button><button type="button" class="sub" data-rcv="${esc(r.id)}" data-ok="0">못 받았어요</button>`:''}</div>`}).join(''):'아직 요청한 물품이 없습니다.';
+$('hhReqs').querySelectorAll('button[data-rcv]').forEach(b=>b.addEventListener('click',async()=>{b.disabled=true;try{await api('/api/public/supply/'+encodeURIComponent(b.dataset.rcv)+'/receipt',{method:'POST',body:JSON.stringify({household:HH,received:b.dataset.ok==='1'})});loadHome()}catch(e){alert(e.message);b.disabled=false}}));
+$('hhCase').innerHTML=HOME.case?`<h3>복구 진행</h3><ol class="steps">${['거처','청소','수리','지원금'].map(s=>`<li class="${s===HOME.case.stage?'on':''}">${esc(s)}</li>`).join('')}</ol>`:'';
+if(location.hash==='#shelters')drawShelters()}
+$('safeBtn').addEventListener('click',async()=>{$('safeBtn').disabled=true;try{await api('/api/public/households/'+encodeURIComponent(HH)+'/safe',{method:'POST',body:'{}'});await loadHome()}catch(e){alert(e.message)}finally{$('safeBtn').disabled=false}});
+$('needForm').addEventListener('submit',async e=>{e.preventDefault();const f=HOME.household.factors;
+const body={household:HH,item:$('needItem').value,qty:Number($('needQty').value),people:HOME.household.members,when:$('needWhen').value,
+has_infant:f.includes('영유아'),has_elderly:f.includes('고령'),has_mobility:f.includes('거동 불편')};   // 우리 집 정보에서 자동으로
+$('needForm').querySelectorAll('.choices input').forEach(c=>{body[c.value]=c.checked});
+try{const r=await api('/api/public/supply',{method:'POST',body:JSON.stringify(body)});$('needResult').className='box ok';$('needResult').hidden=false;$('needResult').textContent=r.requests.map(x=>`${x.item} ${x.qty} 요청을 받았어요. 담당자가 확인하고 있어요.`).join('\n');loadHome()}
+catch(err){$('needResult').className='box bad';$('needResult').hidden=false;$('needResult').textContent='요청하지 못했습니다: '+err.message}});
+
+const ON_SHOW={shelters:drawShelters,situation:drawSituation,status:()=>{if(!$('receiptId').value)$('receiptId').value=new URLSearchParams(location.search).get('id')||store.get('lastReceipt')}};
+loadPub().then(()=>loadHome()).then(()=>go(location.hash.slice(1)||(new URLSearchParams(location.search).get('id')?'status':'report')));
+setInterval(loadPub,15000);setInterval(()=>{if(HH)loadHome()},10000);
 </script></body></html>

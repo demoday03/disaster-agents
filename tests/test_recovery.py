@@ -52,6 +52,18 @@ class TestRecovery(unittest.TestCase):
         with self.assertRaises(ValueError): c.advance("수리", "staff", 1)       # 단계 건너뛰기 불가
         self.assertEqual(c.advance("청소", "staff", 1), "청소")
 
+    def test_five_sample_documents_answer_key(self):   # D11 가상 서류 5종, 제안서 11.2 목표: 핵심 필드 90% 이상
+        key = {"피해신고서_예시.txt": ("Z3", "가구 H05", "주택침수"), "임대차계약서_예시.txt": ("Z8", "가구 H16", "사면유실"),
+               "피해확인서_예시.txt": ("Z5", "가구 H10", "주택파손"), "피해사진_설명_예시.txt": ("Z1", "가구 H02", "주택침수"),
+               "체류확인서_예시.txt": ("Z7", "가구 H14", "주택침수")}
+        hit = total = 0
+        for name, want in key.items():
+            with open(f"data/demo/{name}", encoding="utf-8") as fp:
+                got = R.extract_fields(fp.read()).output["fields"]
+            for k, w in zip(("zone", "householder", "damage_type"), want):
+                total += 1; hit += got.get(k) == w
+        self.assertGreaterEqual(hit / total, 0.9, f"{hit}/{total}")
+
     def test_aggregate(self):
         t = R.aggregate([{"zone": "Z1", "damage_type": "주택침수"}, {"zone": "Z1", "damage_type": "주택침수"},
                          {"zone": "Z2", "damage_type": "사면유실"}])

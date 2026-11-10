@@ -23,8 +23,8 @@ def make_users(db_path, users):
 
 class Client:
     """쿠키(sid)와 CSRF 토큰을 들고 다니는 작은 HTTP 클라이언트."""
-    def __init__(self, base):
-        self.base, self.cookie, self.csrf = base, None, ""
+    def __init__(self, base, timeout=3):
+        self.base, self.cookie, self.csrf, self.timeout = base, None, "", timeout
 
     def request(self, method, path, obj=None, headers=None, csrf=True):
         h = {"Content-Type": "application/json"}
@@ -34,7 +34,7 @@ class Client:
         data = json.dumps(obj).encode() if obj is not None else (b"{}" if method == "POST" else None)
         req = urllib.request.Request(self.base + path, data=data, headers=h, method=method)
         try:
-            with urllib.request.urlopen(req, timeout=3) as r:
+            with urllib.request.urlopen(req, timeout=self.timeout) as r:
                 return r.status, json.loads(r.read()), r.headers
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read()), e.headers
@@ -45,7 +45,9 @@ class Client:
     def login(self, username, password):
         status, d, headers = self.request("POST", "/api/login", {"username": username, "password": password})
         if status == 200:
-            self.cookie = headers["Set-Cookie"].split(";")[0]
+            sid = headers["Set-Cookie"].split(";")[0]
+            keep = [c for c in (self.cookie or "").split("; ") if c and not c.startswith("sid=")]   # 사이트 접속 코드 쿠키는 유지
+            self.cookie = "; ".join(keep + [sid])
             self.csrf = d["csrf_token"]
         return status, d
 
@@ -72,6 +74,10 @@ class ServerBase(unittest.TestCase):
             except Exception: time.sleep(.1)
         else: raise RuntimeError("dashboard server did not start")
         cls.staff = Client(cls.base)
+        if cls.extra_env.get("SITE_ACCESS_CODE") and cls.extra_env.get("SITE_PUBLIC") != "1":   # 접속 코드가 켜진 서버는 코드부터
+            status, _, h = cls.staff.request("POST", "/api/access", {"code": cls.extra_env["SITE_ACCESS_CODE"]})
+            assert status == 200
+            cls.staff.cookie = h["Set-Cookie"].split(";")[0]
         assert cls.staff.login("담당자", cls.pw["담당자"])[0] == 200
     @classmethod
     def tearDownClass(cls):
@@ -310,6 +316,7 @@ class TestAuth(ServerBase):
 class TestDispatch(ServerBase):
     """배치 추천(④) API: 추천 → 승인 대기열 → 승인(재검사) → 투입 현황 → 해제."""
     port = 18770
+    extra_env = {**ServerBase.extra_env, "AUTO_DISPATCH_MAX_URGENCY": "0"}   # 담당자가 직접 요청하는 경로를 시험(자동 연결은 test_pipeline)
 
     def setUp(self):   # 테스트끼리 같은 서버를 쓰므로 앞 테스트의 투입을 모두 해제하고 시작
         for a in self.get('/api/dispatch')[1]['assignments']:
@@ -514,11 +521,105 @@ class TestSensorGateway(ServerBase):
         self.assertTrue(next(s for s in st["sensors"] if s["key"] == "A.water_low")["over"])
         self.assertEqual(Client(self.base).get("/api/sensor/status")[0], 401)   # 현황은 담당자만
 
+    def send_events(self, *events):
+        body = {"readings": [], "events": [{"node": n, "code": c, "seq": s} for n, c, s in events]}
+        status, d, _ = Client(self.base).request("POST", "/api/sensor/readings", body, headers={"X-Gateway-Token": GATEWAY_TOKEN})
+        self.assertEqual(status, 200, d)
+        return d["events"]
+
+    def test_simulated_sos_goes_to_volunteer_tab(self):
+        out = self.gateway("--simulate", "sos", "--ticks", "2", "--interval", "0.05")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("현장 신호 E SOS 요청(봉사 탭 SOS 목록에 올림", out.stdout)
+        st = self.get("/api/sensor/status")[1]
+        sos = [e for e in st["events"] if e["code"] == "SOS" and e["node"] == "E"]
+        self.assertEqual((len(sos), sos[0]["applied"], sos[0]["open"]), (1, True, False))   # 두 번 와도 한 건, 확인은 봉사 탭에서
+        self.assertEqual([s["volunteer"] for s in self.get("/api/volunteer")[1]["sos"]], ["V01"])
+
+    def test_field_buttons_update_shelter_and_welfare(self):
+        occ = lambda: next(s["occupied"] for s in self.get("/api/dispatch")[1]["shelters"] if s["id"] == "S1")
+        before = occ()
+        ev = self.send_events(("C", "+1", 51), ("C", "+1", 52), ("C", "-1", 53), ("C", "GOT", 54))
+        self.assertEqual([e.get("applied") for e in ev], [True, True, True, None])   # 물품 도착은 표시만
+        self.assertEqual(occ(), before + 1)
+        self.assertIn("S1 대피소 인원", ev[0]["note"])
+        no_check = self.send_events(("D", "SAFE", 61))[0]                           # 안부 확인 전에는 반영 안 됨
+        self.assertEqual((no_check["applied"], no_check["open"]), (False, False))
+        self.assertIn("진행 중이 아닙니다", no_check["note"])
+        self.assertEqual(self.post("/api/welfare/checks/start", {"zone": "Z1"})[0], 200)
+        self.assertTrue(self.send_events(("D", "SAFE", 62))[0]["applied"])
+        h01 = next(c for c in self.get("/api/welfare/checks")[1]["checks"] if c["household"] == "H01")
+        self.assertNotIn(h01["state"], ("대기", "격상"))
+        again = self.send_events(("D", "SAFE", 63))[0]
+        self.assertEqual(again["applied"], False)                                   # 이미 응답한 가구
+        no_task = self.send_events(("E", "IN", 71))[0]
+        self.assertEqual(no_task["applied"], False)                                 # 투입 승인된 작업이 없으면 바꾸지 않음
+        # 급한 신호 중 웹 기능이 없는 것(D SOS)은 센서 탭에서 담당자가 확인
+        d_sos = self.send_events(("D", "SOS", 64))[0]
+        self.assertEqual((d_sos["open"], d_sos.get("applied")), (True, None))
+        self.assertEqual(Client(self.base).request("POST", f"/api/sensor/events/{d_sos['id']}/ack", {})[0], 401)
+        status, d = self.post(f"/api/sensor/events/{d_sos['id']}/ack", {})
+        self.assertEqual((status, d["open"]), (200, False))
+        self.assertEqual(self.post("/api/sensor/events/EV999/ack", {})[0], 404)
+        import sqlite3   # 처리자 '마이크로비트 C'로 남는지 감사 기록에서 확인
+        conn = sqlite3.connect(Path(self.tempdir.name) / "test.db")
+        try:
+            audit = conn.execute("SELECT action, details_json FROM audit_logs").fetchall()
+        finally:
+            conn.close()   # 열어 두면 Windows에서 임시 폴더를 지우지 못한다
+        actions = {a for a, _ in audit}
+        self.assertTrue({"field_event_applied", "field_event_not_applied"} <= actions)
+        self.assertTrue(any(a == "shelter_occupancy" and '"by": "마이크로비트 C"' in d for a, d in audit))
+
+    def test_downlink_needs_gateway_token(self):
+        anon = Client(self.base)
+        self.assertEqual(anon.get("/api/sensor/downlink")[0], 401)
+        self.assertEqual(self.get("/api/sensor/downlink")[0], 401)                # 담당자 쿠키로도 안 됨
+        status, d, _ = anon.request("GET", "/api/sensor/downlink", headers={"X-Gateway-Token": GATEWAY_TOKEN})
+        self.assertEqual((status, set(d)), (200, {"level", "level_name", "safety_check"}))
+
     def test_wrong_token_and_session_cannot_post(self):
         out = self.gateway("--simulate", "normal", "--ticks", "1", token="wrong-token-wrong-token")
         self.assertIn("HTTP 401", out.stdout)
         # 담당자 로그인 쿠키로도 게이트웨이 경로는 쓸 수 없다(토큰 필수)
         self.assertEqual(self.post("/api/sensor/readings", {"readings": []})[0], 401)
+
+
+class TestReportCrosscheck(ServerBase):
+    """신고 대조: 같은 구역 센서가 마른 상태인데 '허리까지 잠겼다'면 과장 가능, 센서가 젖어 있으면 일치. 긴급도는 그대로."""
+    port = 18781
+    extra_env = {"WEBAPP_INCIDENT_PER_MIN": "1000", "SENSOR_GATEWAY_TOKEN": GATEWAY_TOKEN}
+
+    def water(self, low, high):
+        now = time.time()
+        body = {"readings": [{"node": "A", "sensor": "water_low", "value": low, "ts": now},
+                             {"node": "A", "sensor": "water_high", "value": high, "ts": now}]}
+        status, d, _ = Client(self.base).request("POST", "/api/sensor/readings", body, headers={"X-Gateway-Token": GATEWAY_TOKEN})
+        self.assertEqual(status, 200, d)
+
+    def report_crosscheck(self, text):
+        code, d = Client(self.base).post("/api/incidents", {"text": text})
+        self.assertEqual(code, 201, d)
+        end = time.time() + 15
+        while time.time() < end:   # 대조는 접수 뒤 백그라운드 후속 처리(안내문·배치 등과 함께)에서 붙는다
+            o = next(x["output"] for x in self.get("/api/incidents")[1]["items"] if x["output"]["id"] == d["output"]["id"])
+            if "crosscheck" in (o.get("linked") or {}):
+                self.assertEqual(o["urgency"], d["output"]["urgency"])            # 대조 결과로 긴급도를 바꾸지 않음
+                return o["linked"]["crosscheck"]
+            time.sleep(.1)
+        self.fail("신고 대조 결과가 붙지 않음")
+
+    def test_exaggerated_then_consistent(self):
+        self.water(30, 10)
+        c = self.report_crosscheck("Z1 물이 허리까지 차서 집이 잠겼어요 (대조 시험 1)")
+        self.assertEqual((c["verdict"], c["claimed"], c["sensor_level"]), ("과장 가능", 2, 0))
+        self.assertIn("다시 확인", c["advice"])
+        self.water(301, 307)
+        c = self.report_crosscheck("Z1 침수돼서 물이 허리까지 찼어요 (대조 시험 2)")
+        self.assertEqual((c["verdict"], c["similar_reports"]), ("일치", 1))
+        c = self.report_crosscheck("Z3 침수돼서 물이 허리까지 찼어요 (대조 시험 3)")   # Z3에는 센서가 없다
+        self.assertEqual(c["verdict"], "확인 불가")
+        self.assertIn("crosscheck", {a["id"] for a in self.get("/api/agents")[1]["items"]})
 
 
 class TestSensorGatewayDisabled(ServerBase):
@@ -528,4 +629,112 @@ class TestSensorGatewayDisabled(ServerBase):
         status, d, _ = Client(self.base).request("POST", "/api/sensor/readings", {"readings": []},
                                                  headers={"X-Gateway-Token": "x" * 20})
         self.assertEqual(status, 503, d)
-        self.assertFalse(self.get("/api/sensor/status")[1]["gateway_enabled"])
+        st = self.get("/api/sensor/status")[1]
+        self.assertEqual((st["gateway_enabled"], st["cloud"]), (False, False))   # 로컬: 게이트웨이를 켜라는 안내
+
+
+class TestPublicStatus(ServerBase):
+    """접수 사이트 첫 화면의 공개 상황: 로그인 없이 보이고, 확정된 단계만, 담당자 이름은 숨긴다."""
+    port = 18777
+    extra_env = {"WEBAPP_INCIDENT_PER_MIN": "1000", "KMA_API_KEY": ""}   # 시험에서는 기상청을 부르지 않는다
+
+    def test_weather_without_key_degrades(self):
+        self.assertFalse(Client(self.base).get("/api/public/status")[1]["weather"]["available"])
+        status, w = self.get("/api/weather")
+        self.assertEqual((status, w["available"]), (200, False))
+        self.assertEqual(Client(self.base).get("/api/weather")[0], 401)
+        self.assertEqual(self.post("/api/weather/apply-rain", {})[0], 409)   # 실제 강수 없이는 적용 안 됨
+
+    def test_staff_announcement_shows_on_public_and_can_be_taken_down(self):
+        anon = Client(self.base)
+        self.assertEqual(anon.post("/api/announcements", {"text": "공지"})[0], 401)                 # 담당자만
+        self.assertEqual(anon.get("/api/announcements")[0], 401)
+        for bad in ({"text": ""}, {"text": "x" * 301}, {"text": "공지", "audience": "기자"}, {"text": "공지", "zone": "Z99"},
+                    {"text": "공지", "urgent": "yes"}):
+            self.assertEqual(self.post("/api/announcements", bad)[0], 400, bad)
+        code, a = self.post("/api/announcements", {"text": "<b>1구역 하천변</b> 통제합니다", "audience": "citizen", "zone": "Z1", "urgent": True})
+        self.assertEqual((code, a["by"], a["active"]), (201, "담당자", True))
+        pub = anon.get("/api/public/status")[1]["announcements"]
+        shown = next(x for x in pub if x["id"] == a["id"])
+        self.assertEqual((shown["text"], shown["urgent"], shown["zone"]), ("<b>1구역 하천변</b> 통제합니다", True, "Z1"))   # 원문 그대로(화면에서 이스케이프)
+        self.assertNotIn("by", shown)                                                           # 공개 화면에는 담당자 이름 없음
+        self.assertEqual(self.post(f"/api/announcements/{a['id']}/end", {})[1]["active"], False)
+        self.assertNotIn(a["id"], [x["id"] for x in anon.get("/api/public/status")[1]["announcements"]])
+        listing = self.get("/api/announcements")[1]["items"]
+        self.assertEqual(next(x for x in listing if x["id"] == a["id"])["ended_by"], "담당자")
+        self.assertEqual(self.post("/api/announcements/AN-NONE/end", {})[0], 404)
+
+    def test_anonymous_sees_stage_shelters_without_staff_names(self):
+        anon = Client(self.base)
+        status, d = anon.get("/api/public/status")
+        self.assertEqual(status, 200)
+        self.assertEqual((d["stage"]["level"], d["stage"]["confirmed"]), ("정상", False))
+        self.assertTrue(d["shelters"])
+        self.assertTrue(all("capacity_left" in s for s in d["shelters"]))
+        self.assertTrue(all({"id", "row", "col", "risk"} <= set(z) for z in d["zone_grid"]))   # 구역도용
+        with urllib.request.urlopen(self.base + "/static/zonemap.js", timeout=2) as r:
+            self.assertIn(b"renderZoneMap", r.read())
+        aid = self._new_approval()
+        self.assertFalse(anon.get("/api/public/status")[1]["stage"]["confirmed"])   # 승인 전에는 그대로
+        self.assertEqual(self.post(f"/api/approvals/{aid}/resolve", {"approved": True, "reason": "센서 두 개 동시 확인"})[0], 200)
+        d = anon.get("/api/public/status")[1]
+        self.assertTrue(d["stage"]["confirmed"])
+        self.assertIn("침수", d["stage"]["hazards"])
+        text = json.dumps(d, ensure_ascii=False)
+        self.assertNotIn("담당자", text)
+        self.assertNotIn(aid, text)
+        self.assertEqual(d["notices"], [])   # mock 모드는 안내문 승인 대기열을 만들지 않는다
+
+
+class TestSiteAccessCode(ServerBase):
+    """팀 공유용 배포: 링크와 접속 코드를 받은 사람만 화면·API를 쓴다."""
+    port = 18778
+    extra_env = {"WEBAPP_INCIDENT_PER_MIN": "1000", "SITE_ACCESS_CODE": "team-code-2026", "KMA_API_KEY": ""}
+
+    def test_gate_blocks_until_code(self):
+        anon = Client(self.base)
+        status, d = anon.get("/api/public/status")
+        self.assertEqual((status, d.get("need_access_code")), (401, True))
+        self.assertEqual(anon.post("/api/incidents", {"text": "Z2 침수"})[0], 401)
+        self.assertEqual(anon.get("/api/health")[0], 200)                       # 플랫폼 상태 확인은 열어 둔다
+        req = urllib.request.Request(self.base + "/admin")
+        with urllib.request.urlopen(req, timeout=3) as r:                       # 화면은 코드 입력 페이지로 보낸다
+            self.assertIn("/access?next=/admin", r.geturl())
+            self.assertIn("접속 코드".encode(), r.read())
+        self.assertEqual(anon.post("/api/access", {"code": "wrong"})[0], 403)
+        status, _, h = anon.request("POST", "/api/access", {"code": "team-code-2026"})
+        self.assertEqual(status, 200)
+        self.assertIn("HttpOnly", h["Set-Cookie"])
+        anon.cookie = h["Set-Cookie"].split(";")[0]
+        self.assertEqual(anon.get("/api/public/status")[0], 200)
+        self.assertEqual(anon.get("/api/incidents")[0], 401)                     # 코드가 있어도 담당자 기능은 로그인 필요
+        self.assertEqual(self.get("/api/incidents")[0], 200)
+
+    def test_cloud_bind_policy(self):
+        # server 모듈을 불러오면 기본 DB를 건드리므로 별도 프로세스에서 검사한다(test_bind_policy와 같은 방식)
+        code = ("import json;from webapp import server as s;c={'WEBAPP_CLOUD':'1'};k={**c,'SITE_ACCESS_CODE':'abcdef'};"
+                "p={**c,'SITE_PUBLIC':'1'};"
+                "print(json.dumps([s.check_bind_policy('0.0.0.0',c,1) is None,s.check_bind_policy('0.0.0.0',k,0) is None,"
+                "s.check_bind_policy('0.0.0.0',k,1) is None,s.check_bind_policy('0.0.0.0',{},1) is None,"
+                "s.check_bind_policy('0.0.0.0',p,1) is None,s.check_bind_policy('0.0.0.0',p,0) is None]))")
+        env = os.environ.copy(); env["DISASTER_DB_PATH"] = str(Path(self.tempdir.name) / "policy.db")
+        out = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        # 코드 없음 거부 · 담당자 없음 거부 · 둘 다 있으면 허용 · 클라우드가 아니면 0.0.0.0 금지 그대로
+        # · SITE_PUBLIC=1을 명시하면 코드 없이 허용 · 그래도 담당자 계정은 필요
+        self.assertEqual(json.loads(out.stdout.strip().splitlines()[-1]), [False, False, True, False, True, False])
+
+
+class TestSitePublic(ServerBase):
+    """SITE_PUBLIC=1: 접속 코드가 설정돼 있어도 무시하고 누구나 연다. 담당자 기능은 그대로 로그인 필요."""
+    port = 18782
+    extra_env = {"WEBAPP_INCIDENT_PER_MIN": "1000", "SITE_PUBLIC": "1", "SITE_ACCESS_CODE": "team-code-2026", "KMA_API_KEY": ""}
+
+    def test_open_without_code_but_staff_still_login(self):
+        anon = Client(self.base)
+        with urllib.request.urlopen(self.base + "/", timeout=2) as r:            # /access로 보내지 않는다
+            self.assertEqual((r.status, r.url.rstrip("/")), (200, self.base))
+        self.assertEqual(anon.get("/api/public/status")[0], 200)
+        self.assertEqual(anon.post("/api/incidents", {"text": "Z1 침수됐어요 (공개 시험)"})[0], 201)
+        self.assertEqual(anon.get("/api/incidents")[0], 401)                     # 담당자 기능은 로그인 필요
+        self.assertEqual(anon.get("/api/approvals")[0], 401)

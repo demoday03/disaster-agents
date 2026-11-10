@@ -14,6 +14,9 @@ class TestParse(unittest.TestCase):
         for bad in ("", "hello", "S,A,water_low", "S,A,water_low,abc", "S,A;rm,x,1", "X,A,water_low,5",
                     "S,A,water_low,1,2", "S,AAAAAAAAAAAAAAAAAAAAA,x,1"):
             self.assertIsNone(G.parse_line(bad, 0), bad)
+        self.assertEqual(G.parse_event("E,C,+1,42\r\n", 5.0), {"node": "C", "code": "+1", "seq": 42, "ts": 5.0})
+        for bad in ("E,E,SOS", "E,E,SOS,x", "E,E,SOS,1000", "E,E,S;OS,1", "S,E,temp,3", "E,E,TOOLONGCODE,1"):
+            self.assertIsNone(G.parse_event(bad, 0), bad)
 
     def test_simulator_scenarios(self):
         flood = [G.parse_line(l, 0) for l in G.Simulator("flood").tick()]
@@ -29,7 +32,7 @@ class TestGatewayBatching(unittest.TestCase):
         calls, logs = [], []
         responses = [OSError("connection refused"), (200, {"output": {"status": "정상", "level": "정상"}}),
                      (401, {"error": "토큰"})]
-        def sender(server, token, batch, rain):
+        def sender(server, token, batch, rain, events):
             calls.append(len(batch))
             r = responses.pop(0)
             if isinstance(r, Exception):
@@ -43,6 +46,84 @@ class TestGatewayBatching(unittest.TestCase):
         gw.feed("S,A,water_low,10"); gw.flush()
         self.assertEqual(gw.pending, [])                             # 인증 오류는 재시도해도 같으므로 버림
         self.assertIn("HTTP 401", logs[-1])
+
+    def test_serial_reconnects_after_usb_drop(self):
+        class FakeSerial:
+            def __init__(self, lines): self.lines = list(lines)
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def readline(self):
+                r = self.lines.pop(0)
+                if isinstance(r, Exception):
+                    raise r
+                return r
+        opens = [OSError("포트 없음"),                                        # 처음부터 연결 실패
+                 FakeSerial([b"S,A,water_low,5\r\n", OSError("장치가 명령을 인식하지 않습니다")]),
+                 OSError("포트 없음"),
+                 FakeSerial([b"S,B,tilt,1\r\n"])]
+        def opener():
+            r = opens.pop(0)
+            if isinstance(r, Exception):
+                raise r
+            return r
+        logs, sleeps = [], []
+        got = []
+        for line in G.serial_lines("COM9", 115200, retry_s=2, opener=opener, out=logs.append, sleep=sleeps.append):
+            if line:
+                got.append(line.strip())
+            if len(got) == 2:
+                break
+        self.assertEqual(got, ["S,A,water_low,5", "S,B,tilt,1"])
+        self.assertEqual(sleeps, [2, 2, 2])
+        self.assertEqual(sum("[연결 끊김]" in m for m in logs), 2)                # 끊길 때마다 한 번만 알림
+        self.assertEqual(sum("[재연결]" in m for m in logs), 2)
+
+    def test_event_is_acked_deduped_and_sent_with_readings(self):
+        written, sent = [], []
+        def sender(server, token, batch, rain, events):
+            sent.append((len(batch), [e["code"] for e in events]))
+            return 200, {"output": {"status": "정상", "level": "정상"}, "events": [{"node": "E", "label": "SOS 요청"}]}
+        gw = G.Gateway("http://x", "t" * 20, sender=sender, out=lambda m: None, clock=lambda: 0,
+                       writer=lambda m: written.append(m) or True)
+        for line in ("E,E,SOS,7", "E,E,SOS,7", "S,E,temp,300", "E,C,+1,7"):   # 두 번째는 무선 재전송
+            gw.feed(line)
+        self.assertEqual(written, ["K,E,7", "K,E,7", "K,C,7"])                 # 재전송에도 확인은 다시 보낸다
+        gw.flush()
+        self.assertEqual(sent, [(1, ["SOS", "+1"])])
+        self.assertEqual(gw.pending_events, [])
+        gw.flush()
+        self.assertEqual(len(sent), 1)                                        # 보낼 것이 없으면 요청하지 않음
+
+    def test_downlink_broadcasts_confirmed_level_and_safety_check(self):
+        now = [0.0]
+        written, logs = [], []
+        replies = [(200, {"level": 0, "level_name": "정상", "safety_check": False}),
+                   (200, {"level": 2, "level_name": "경계", "safety_check": True}),
+                   (200, {"level": 2, "level_name": "경계", "safety_check": True}),
+                   OSError("connection refused"), OSError("connection refused"),
+                   (200, {"level": 2, "level_name": "경계", "safety_check": False})]
+        def fetcher(server, token):
+            r = replies.pop(0)
+            if isinstance(r, Exception):
+                raise r
+            return r
+        gw = G.Gateway("http://x", "t" * 20, out=logs.append, clock=lambda: now[0],
+                       writer=lambda m: written.append(m) or True, fetcher=fetcher)
+        self.assertEqual(gw.poll_downlink(), ["X"])                            # 시작할 때 현장도 정상으로 맞춤
+        self.assertIsNone(gw.poll_downlink())                                  # DOWNLINK_S 안에는 묻지 않음
+        now[0] += G.DOWNLINK_S
+        self.assertEqual(gw.poll_downlink(), ["L2", "Q,D"])
+        now[0] += G.DOWNLINK_S
+        self.assertEqual(gw.poll_downlink(), [])                               # 바뀐 것 없음 → 보내지 않음
+        for _ in range(2):
+            now[0] += G.DOWNLINK_S
+            self.assertIsNone(gw.poll_downlink())
+        self.assertEqual(sum("[내려보내기 실패]" in m for m in logs), 1)
+        now[0] += G.RESEND_LEVEL_S
+        self.assertEqual(gw.poll_downlink(), ["L2"])                           # 유실 대비 주기적 재방송
+        self.assertFalse(gw.sent_check)                                        # 안부 확인이 끝나면 다음 시작 때 다시 Q
+        sim = G.Gateway("http://x", "t", out=lambda m: None, fetcher=fetcher)  # 기기 없는(가상 센서) 모드는 묻지 않음
+        self.assertIsNone(sim.poll_downlink())
 
     def test_pending_is_bounded(self):
         gw = G.Gateway("http://x", "t", out=lambda m: None, clock=lambda: 0)
@@ -109,6 +190,47 @@ class TestSensorHub(unittest.TestCase):
             self.hub.ingest("not a list")
         with self.assertRaises(ValueError):
             self.hub.ingest([], rain_stage=9)
+
+    def test_field_events_dedup_ack_and_never_change_stage(self):
+        ev = lambda code, seq, node="E": {"node": node, "code": code, "seq": seq, "ts": self.now}
+        res = self.hub.ingest([], events=[ev("SOS", 1), ev("SOS", 1), ev("IN", 2), ev("BOOM", 3), ev("SOS", True),
+                                          "E,E,SOS,1", ev("SOS", 1000)])
+        self.assertEqual([e["code"] for e in res["events"]], ["SOS", "IN"])     # 중복·모르는 코드·틀린 형식은 버림
+        self.assertNotEqual(res["output"]["status"], "확정후보")                 # 현장 신호는 단계 판정에 쓰지 않음
+        self.assertEqual(db.list_pending_approvals(), [])
+        st = self.hub.status()
+        self.assertEqual((st["open_urgent"], [e["code"] for e in st["events"]]), (1, ["IN", "SOS"]))   # 최신 순
+        self.assertTrue(next(n for n in st["nodes"] if n["node"] == "E")["online"])
+        sos = next(e for e in st["events"] if e["code"] == "SOS")
+        self.assertEqual(self.hub.ack_event(sos["id"], "담당자")["acked_by"], "담당자")
+        self.assertEqual(self.hub.status()["open_urgent"], 0)
+        with self.assertRaises(KeyError):
+            self.hub.ack_event("EV999", "담당자")
+        self.now += 61                                                          # 재전송 판단 시간이 지나면 같은 번호도 새 신호
+        self.assertEqual(len(self.hub.ingest([], events=[ev("SOS", 1)])["events"]), 1)
+        with self.assertRaises(ValueError):
+            self.hub.ingest([], events="E,E,SOS,1")
+        self.hub.annotate(sos["id"], applied=True, note="봉사 탭으로 넘김")
+        self.assertEqual(next(e for e in self.hub.status()["events"] if e["id"] == sos["id"])["note"], "봉사 탭으로 넘김")
+
+    def test_window_gives_recent_max(self):
+        for v in (50, 320, 90):
+            self.hub.ingest([{"node": "A", "sensor": "water_low", "value": v, "ts": self.now}])
+            self.now += 10
+        w = self.hub.window(25)                                                 # 마지막 25초: 320(20초 전)·90(10초 전)
+        self.assertEqual((w["A.water_low"]["max"], w["A.water_low"]["age_s"]), (320, 10))
+        self.assertEqual(self.hub.window(5), {})
+        self.assertEqual(self.hub.thresholds()["A.water_low"], 200)
+
+    def test_downlink_only_confirmed_stage_and_safety_check(self):
+        self.assertEqual(self.hub.downlink(), {"level": 0, "level_name": "정상", "safety_check": False})
+        db.put_record("stage", "current", {"level": "위험", "hazards": ["침수"], "confirmed": False})
+        self.assertEqual(self.hub.downlink()["level"], 0)                       # 확정 전 후보는 내려보내지 않음
+        db.put_record("stage", "current", {"level": "경계", "hazards": ["침수"], "confirmed": True})
+        db.put_record("check", "H1", {"household": "H1", "state": "대기"})
+        self.assertEqual(self.hub.downlink(), {"level": 2, "level_name": "경계", "safety_check": True})
+        db.put_record("check", "H1", {"household": "H1", "state": "안전"})
+        self.assertFalse(self.hub.downlink()["safety_check"])
 
     def test_status_shows_latest_and_offline_nodes(self):
         self.send("dropout", 3)

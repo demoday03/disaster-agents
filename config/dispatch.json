@@ -7,6 +7,9 @@
     "goods":     {"quantity": 0.35, "distance": 0.25, "expiry_fit": 0.20, "remaining": 0.20}
   },
   "max_travel_min": 60,
+  "auto_public_max_urgency": 4,
+  "auto_public_exclude": ["대민지원"],
+  "_auto_note": "긴급도가 이 값 이하인 신고는 접수 즉시 공공 인력 배치 추천을 승인 대기열에 올린다(4면 위험 유형 전체). auto_public_exclude 유형(문의·생활 지원)은 제외. 0이면 끔(환경변수 AUTO_DISPATCH_MAX_URGENCY로 덮어씀).",
   "max_hours_per_volunteer": null,
   "_max_hours_note": "활동 시간 상한은 공식 운영지침 확인 전이라 비워 둔다(제안서 6.8). 값이 null이면 시간 상한 제약은 적용하지 않는다."
 }

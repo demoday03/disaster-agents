@@ -74,6 +74,27 @@ def save_incident(result: dict) -> dict:
     return result
 
 
+def update_incident(result: dict, status: str | None = None) -> dict:
+    """저장된 신고의 결과(JSON)를 고친다. status는 incidents.status 허용값 중 하나(없으면 그대로)."""
+    output = result["output"]
+    with connect() as conn:
+        cur = conn.execute("""UPDATE incidents SET result_json=?, incident_type=?, zone=?, severity=?,
+              status=COALESCE(?, status), updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?""",
+            (json.dumps(result, ensure_ascii=False), str(output.get("type", "미분류")), str(output.get("zone", "미상")),
+             output.get("urgency") if isinstance(output.get("urgency"), int) else None, status, output["id"]))
+        if cur.rowcount != 1:
+            raise KeyError(output["id"])
+    return result
+
+
+def list_pending_approvals_for(incident_id: str) -> list[dict]:
+    """한 신고에 걸린 대기 중 승인 항목(오접수 처리 때 함께 반려)."""
+    with connect() as conn:
+        rows = conn.execute("SELECT id FROM approvals WHERE state='pending' AND incident_id=? ORDER BY created_at",
+                            (incident_id,)).fetchall()
+    return [get_approval(r["id"]) for r in rows]
+
+
 def list_incidents(limit: int = 100) -> list[dict]:
     with connect() as conn:
         rows = conn.execute("SELECT result_json FROM incidents ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
@@ -122,8 +143,9 @@ def log_audit(action: str, target_type: str, target_id: str | None, details: dic
 
 def list_pending_approvals() -> list[dict]:
     with connect() as conn:
-        rows = conn.execute("SELECT id, kind, item_json, state FROM approvals WHERE state='pending' ORDER BY created_at").fetchall()
-    return [{"id": r["id"], "kind": r["kind"], "item": json.loads(r["item_json"]), "state": r["state"]} for r in rows]
+        rows = conn.execute("SELECT id, kind, item_json, state, created_at FROM approvals WHERE state='pending' ORDER BY created_at").fetchall()
+    return [{"id": r["id"], "kind": r["kind"], "item": json.loads(r["item_json"]), "state": r["state"],
+             "created_at": r["created_at"]} for r in rows]
 
 
 def get_approval(aid: str) -> dict | None:
@@ -146,12 +168,12 @@ def list_dispatch_approvals(states=("approved",), include_released=False) -> lis
     """배치(dispatch_*) 승인 항목. 기본은 승인되고 아직 해제되지 않은 것(현재 투입 중)."""
     with connect() as conn:
         rows = conn.execute(f"""SELECT a.id, a.incident_id, a.kind, a.item_json, a.state, a.approver_name,
-                a.resolved_at, r.released_at
+                a.created_at, a.resolved_at, r.released_at
             FROM approvals a LEFT JOIN dispatch_releases r ON r.approval_id = a.id
             WHERE a.kind LIKE 'dispatch\\_%' ESCAPE '\\' AND a.state IN ({','.join('?' * len(states))})
             ORDER BY a.resolved_at""", states).fetchall()
     return [{"id": r["id"], "incident_id": r["incident_id"], "kind": r["kind"], "item": json.loads(r["item_json"]),
-             "state": r["state"], "approver": r["approver_name"], "resolved_at": r["resolved_at"],
+             "state": r["state"], "approver": r["approver_name"], "created_at": r["created_at"], "resolved_at": r["resolved_at"],
              "released_at": r["released_at"]}
             for r in rows if include_released or r["released_at"] is None]
 
@@ -325,6 +347,24 @@ def get_approved_guidance(incident_id: str) -> dict | None:
     if row is None:
         return None
     return {"item": json.loads(row["item_json"]), "approved_at": row["resolved_at"]}
+
+
+def list_approval_stats() -> list[dict]:
+    """모든 승인 항목의 종류·상태·시각(일일 보고서·사후 평가용, 내용 JSON은 읽지 않는다)."""
+    with connect() as conn:
+        rows = conn.execute("SELECT id, incident_id, kind, state, created_at, resolved_at FROM approvals").fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_guidance_incident_ids(limit: int = 20) -> list[str]:
+    """안내문이 승인된 신고의 접수번호(최근 승인 순, 중복 없이). 공개 상황판용."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT incident_id, MAX(resolved_at) AS last FROM approvals WHERE kind='welfare_guidance' "
+            "AND state='approved' AND incident_id IS NOT NULL GROUP BY incident_id ORDER BY last DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [r["incident_id"] for r in rows]
 
 
 def get_incident(incident_id: str) -> dict | None:
