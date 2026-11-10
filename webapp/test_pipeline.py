@@ -296,6 +296,34 @@ class TestPipeline(ServerBase):
         _, h = anon.get("/api/public/households/H05")
         self.assertIn(rid, [x["id"] for x in h["requests"]])
 
+    def test_citizen_registers_home_without_codes(self):
+        """주민은 코드 대신 구역·집 형태·함께 사는 분만 고른다. 우선순위는 서버 안에서만(목록에도 안 보임)."""
+        anon = Client(self.base)
+        for bad in ({"zone": "Z99", "floor": "1층"}, {"zone": "Z3", "floor": "옥탑"},
+                    {"zone": "Z3", "floor": "1층", "people_factors": ["외계인"]}, {"zone": "Z3", "floor": "1층", "members": 0}):
+            self.assertEqual(anon.post("/api/public/households", bad)[0], 400, bad)
+        code, r = anon.post("/api/public/households", {"zone": "Z3", "floor": "반지하", "people_factors": ["고령"], "members": 2})
+        self.assertEqual(code, 201, r)
+        hid = r["id"]
+        self.assertTrue(hid.startswith("H-") and len(hid) > 8)                 # 짐작하기 어려운 ID(기기에만 저장)
+        self.assertNotIn(hid, [h["id"] for h in anon.get("/api/public/households")[1]["items"]])   # 남의 집 목록에 안 나옴
+        _, h = anon.get(f"/api/public/households/{hid}")
+        self.assertEqual((h["household"]["factors"], h["household"]["registered"]), (["반지하", "고령"], True))
+        self.assertTrue(any("반지하" in x for x in h["risks"]) and any("대피" in x for x in h["risks"]))
+        self.assertEqual(anon.post(f"/api/public/households/{hid}/update", {"zone": "Z3", "floor": "2층 이상", "members": 2})[0], 201)
+        self.assertEqual(anon.get(f"/api/public/households/{hid}")[1]["household"]["factors"], [])
+        self.assertEqual(anon.post("/api/public/households/H05/update", {"zone": "Z3", "floor": "1층"})[0], 403)   # 시연 가구는 못 바꿈
+        code, r = anon.post("/api/public/supply", {"household": hid, "item": "생수", "qty": 6, "no_water": True})
+        self.assertEqual((code, r["requests"][0]["state"]), (201, "검토"))
+        self.post("/api/welfare/checks/start", {"zone": "Z3", "timeout_s": 600})   # 등록한 가구도 안부 확인 대상
+        self.assertEqual(anon.get(f"/api/public/households/{hid}")[1]["check"]["state"], "대기")
+        self.assertEqual(anon.post(f"/api/public/households/{hid}/safe", {})[1]["state"], "안전")
+
+    def test_home_menu_and_role_pages(self):
+        for path, text in (("/", "누구로 들어갈까요"), ("/citizen", "재난 신고하기"), ("/report", "신고 접수"), ("/volunteer", "도움이 필요한 작업")):
+            with urllib.request.urlopen(self.base + path, timeout=2) as r:
+                self.assertIn(text.encode(), r.read(), path)
+
     def test_volunteer_screen_only_acts_on_own_tasks(self):
         anon = Client(self.base)
         self.assertEqual(len(anon.get("/api/public/volunteers")[1]["items"]), 12)

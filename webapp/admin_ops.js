@@ -17,7 +17,7 @@
   let current = 'overview', META = null, refreshTimer = null, lastSensorApproval = null;
 
   // ---------------------------------------------------------------- 탭
-  const LOADERS = {overview: () => { loadSituation(); loadZoneMap(); }, supply: loadSupply, volunteer: loadVolunteer, recovery: loadRecovery,
+  const LOADERS = {overview: () => { loadAnnouncements(); loadSituation(); loadZoneMap(); }, supply: loadSupply, volunteer: loadVolunteer, recovery: loadRecovery,
                    welfare: loadChecks, sensor: () => { loadVerifyDocs(); loadSensorLive(); }, approvals: () => loadApprovals(), dispatch: () => { loadDispatch(); loadControl(); loadShelterOps(); },
                    guidance: loadIncidents};
   function go(tab) {
@@ -89,6 +89,7 @@
     const zoneOpts = options(META.zones, z => `${z.id} ${z.name}`, z => z.id);
     document.querySelectorAll('select.zoneSel').forEach(sel => { sel.innerHTML = zoneOpts; });
     $('ckZone').innerHTML = '<option value="all">전체</option>' + zoneOpts;
+    $('annZone').innerHTML = '<option value="all">전체</option>' + zoneOpts;
     const hhOpts = options(META.households, h => `${h.id} · ${h.zone} · ${h.floor}${h.factors.length ? ' · ' + h.factors.join('·') : ''}`, h => h.id);
     ['sHousehold', 'caseHousehold', 'rpHousehold'].forEach(id => { $(id).innerHTML = hhOpts; });
     $('vHousehold').innerHTML = '<option value="">선택 안 함</option>' + hhOpts;
@@ -128,6 +129,19 @@
       `<div>감시 에이전트가 지금 쓰는 강우 단계: <b>${E(w.applied_rain_stage)}</b></div>` +
       `<div style="margin-top:6px">${w.warnings === null ? E(w.warnings_error) : warn ? '발효 중인 특보(거제·경남 관련): ' + w.warnings.map(E).join(' / ') : '거제·경남에 발효 중인 특보 없음'}</div>` +
       `<div class="muted">출처: ${E(w.source)}</div>`;
+  }
+
+  // 공지: 담당자가 쓴 글을 주민·봉사자 화면 맨 위에 바로 띄운다(내리면 사라짐)
+  async function loadAnnouncements() {
+    try {
+      await loadMeta();   // 구역 고르기 목록
+      const d = await api('/api/announcements');
+      $('annList').classList.toggle('muted', !d.items.length);
+      $('annList').innerHTML = d.items.length ? table(['올린 때', '대상', '구역', '내용', ''], d.items.map(a =>
+        `<tr${a.active ? '' : ' class="muted"'}><td>${E(fmtTime(a.at))}</td><td>${E(d.audiences[a.audience] || a.audience)}</td><td>${E(a.zone === 'all' ? '전체' : a.zone)}</td>` +
+        `<td>${a.urgent ? chip('긴급', 'bad') + ' ' : ''}${E(a.text)}<div class="muted">${E(a.by)} 올림${a.active ? '' : ` · ${E(a.ended_by || '')} 내림`}</div></td>` +
+        `<td>${a.active ? `<button type="button" class="quiet" data-ann-end="${E(a.id)}">내리기</button>` : '내림'}</td></tr>`)) : '아직 올린 공지가 없습니다.';
+    } catch (e) { showError('annList', e); }
   }
 
   async function loadSituation() {
@@ -355,6 +369,21 @@
   // ---------------------------------------------------------------- 폼 연결
   function bind() {
     document.querySelectorAll('#tabs button').forEach(b => b.addEventListener('click', () => go(b.dataset.go)));
+    $('annForm').addEventListener('submit', async e => {   // 공지 올리기
+      e.preventDefault();
+      const b = e.submitter; if (b) b.disabled = true;
+      try {
+        await post('/api/announcements', {text: $('annText').value, audience: $('annAudience').value, zone: $('annZone').value, urgent: $('annUrgent').value === '1'});
+        $('annText').value = ''; show('annResult', '공지를 올렸습니다. 주민·봉사자 화면에 15초 안에 나타납니다.'); loadAnnouncements();
+      } catch (err) { fail('annResult', err); } finally { if (b) b.disabled = false; }
+    });
+    $('annList').addEventListener('click', async e => {   // 공지 내리기
+      const b = e.target.closest('button[data-ann-end]');
+      if (!b || !confirm('이 공지를 내릴까요? 주민·봉사자 화면에서 사라집니다.')) return;
+      b.disabled = true;
+      try { await post(`/api/announcements/${encodeURIComponent(b.dataset.annEnd)}/end`); loadAnnouncements(); }
+      catch (err) { alert(err.message); b.disabled = false; }
+    });
     $('sensorLive').addEventListener('click', async e => {   // 현장 SOS 등 급한 신호 '확인'
       const b = e.target.closest('button[data-ack-event]');
       if (!b) return;

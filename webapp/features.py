@@ -46,6 +46,7 @@ class Features:
         with open("data/scenario/inventory.json", encoding="utf-8") as f:
             self.inv_seed = json.load(f)
         self.households = {h["id"]: h for h in people["households"]}
+        self.households.update({h["id"]: h for h in db.list_records("household")})   # 주민이 화면에서 등록한 가구
         self.volunteers = {v["id"]: v for v in people["volunteers"]}
         self.locations = {l["id"]: l for l in self.inv_seed["locations"]}
         self.catalog = supply.load_catalog()

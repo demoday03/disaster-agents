@@ -801,6 +801,50 @@ def public_guidance(incident_id):
     return {"text": g["text"], "verdict": "grounded", "approved": True, "approved_at": row["approved_at"],
             "source": g.get("source", ""), "doc_ids": g.get("doc_ids", []), "evidence": g.get("standard", "")}
 
+ANNOUNCE_AUDIENCE = {"all": "모두", "citizen": "주민", "volunteer": "봉사자"}
+ANNOUNCE_MAX_ACTIVE = 20
+
+
+def list_announcements(public=False):
+    """담당자 공지(최신 순). public이면 게시 중인 것만, 작성자 이름은 빼고 돌려준다."""
+    rows = sorted(database.list_records("announcement"), key=lambda a: -a["at"])
+    if public:
+        return [{k: a[k] for k in ("id", "text", "audience", "zone", "urgent", "at")} for a in rows if a["active"]]
+    return rows[:50]
+
+
+def post_announcement(data, by):
+    """담당자가 쓴 공지를 바로 게시한다(사람이 직접 쓴 글이라 AI 검증·승인 대기열을 거치지 않음). 감사 기록에 남긴다."""
+    text, audience, zone, urgent = data.get("text"), data.get("audience", "all"), data.get("zone", "all"), data.get("urgent", False)
+    if not isinstance(text, str) or not text.strip() or len(text) > 300:
+        raise ValueError("공지 내용은 1~300자로 적어 주세요")
+    if audience not in ANNOUNCE_AUDIENCE:
+        raise ValueError("보낼 대상을 골라 주세요(모두·주민·봉사자)")
+    if zone != "all" and zone not in {z["id"] for z in SCENARIO["zones"]}:
+        raise ValueError("구역은 전체 또는 구역 ID여야 합니다")
+    if not isinstance(urgent, bool):
+        raise ValueError("긴급 여부는 예/아니오여야 합니다")
+    if sum(a["active"] for a in database.list_records("announcement")) >= ANNOUNCE_MAX_ACTIVE:
+        raise features.Conflict(f"게시 중인 공지가 {ANNOUNCE_MAX_ACTIVE}개입니다. 지난 공지를 내린 뒤 올려 주세요")
+    aid = "AN-" + uuid.uuid4().hex[:6].upper()
+    row = {"id": aid, "text": text.strip(), "audience": audience, "zone": zone, "urgent": urgent,
+           "at": time.time(), "by": by, "active": True}
+    database.put_record("announcement", aid, row)
+    database.log_audit("announcement_posted", "announcement", aid, {"by": by, "audience": audience, "zone": zone, "urgent": urgent})
+    return row
+
+
+def end_announcement(aid, by):
+    row = database.get_record("announcement", aid)
+    if row is None:
+        raise KeyError(aid)
+    if row["active"]:
+        row.update(active=False, ended_at=time.time(), ended_by=by)
+        database.put_record("announcement", aid, row)
+        database.log_audit("announcement_ended", "announcement", aid, {"by": by})
+    return row
+
+
 def public_status():
     """접수 사이트 첫 화면용 공개 상황(로그인 없음). 담당자 이름·승인 ID·신고 원문은 넣지 않는다."""
     stage = database.get_record("stage", "current") or {}
@@ -819,7 +863,7 @@ def public_status():
                 for s in scenario.shelter_candidates(scenario_now(), assigned)]
     return {"stage": {"level": stage.get("level", "정상"), "hazards": stage.get("hazards", []),
                       "confirmed": bool(stage.get("confirmed")), "at": stage.get("at")},
-            "notices": notices, "shelters": shelters,
+            "notices": notices, "shelters": shelters, "announcements": list_announcements(public=True),
             "control_zones": [{"name": c["name"], "between": c.get("between", [])}
                               for c in current_control_zones() if c.get("active")],
             "zones": {z["id"]: z["name"] for z in SCENARIO["zones"]},
@@ -965,6 +1009,8 @@ class Handler(BaseHTTPRequestHandler):
         p = path.strip("/").split("/")[2:]   # api/public/ 뒤
         routes = {
             ("GET", "households"): lambda: {"items": PUBLIC.households()},
+            ("POST", "households"): lambda: PUBLIC.register_household(data),
+            ("POST", "households", "*", "update"): lambda: PUBLIC.update_household(p[1], data),
             ("GET", "households", "*"): lambda: PUBLIC.household(p[1]),
             ("POST", "households", "*", "safe"): lambda: PUBLIC.respond_check(p[1]),
             ("POST", "supply"): lambda: PUBLIC.supply_request(data),
@@ -1015,7 +1061,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/access":
             return self.send_html("access.html")
-        if path in {"/", "/report"}:
+        if path == "/":   # 첫 화면: 주민·봉사자·담당자 중 골라 들어간다
+            return self.send_html("home.html")
+        if path in {"/citizen", "/report"}:
             return self.send_html("report.html")
         if path == "/admin":
             return self.send_html("admin.html")
@@ -1063,6 +1111,10 @@ class Handler(BaseHTTPRequestHandler):
             if not self.require_staff():
                 return
             return self.send_json(200, {**SENSORS.status(), "gateway_enabled": bool(SENSOR_TOKEN), "cloud": CLOUD})
+        if path == "/api/announcements":   # 담당자: 공지 목록(내린 것 포함, 작성자 표시)
+            if not self.require_staff():
+                return
+            return self.send_json(200, {"items": list_announcements(), "audiences": ANNOUNCE_AUDIENCE})
         if path == "/api/sensor/downlink":   # 게이트웨이: 현장 마이크로비트로 방송할 확정 단계·안부 확인 요청
             if not self.require_gateway():
                 return
@@ -1135,6 +1187,18 @@ class Handler(BaseHTTPRequestHandler):
                 if not self.require_gateway():
                     return
                 return self.send_json(200, ingest_sensor_batch(data))
+            if path == "/api/announcements" or (path.startswith("/api/announcements/") and path.endswith("/end")):
+                s = self.require_staff(check_csrf=True)   # 담당자: 공지 올리기·내리기
+                if not s:
+                    return
+                try:
+                    if path == "/api/announcements":
+                        return self.send_json(201, post_announcement(data, s["username"]))
+                    return self.send_json(200, end_announcement(path.split("/")[-2], s["username"]))
+                except KeyError:
+                    return self.send_json(404, {"error": "공지를 찾을 수 없습니다"})
+                except features.Conflict as e:
+                    return self.send_json(409, {"error": str(e)})
             if path.startswith("/api/sensor/events/") and path.endswith("/ack"):   # 담당자: 급한 현장 신호(SOS 등) 확인
                 s = self.require_staff(check_csrf=True)
                 if not s:

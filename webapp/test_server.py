@@ -645,6 +645,25 @@ class TestPublicStatus(ServerBase):
         self.assertEqual(Client(self.base).get("/api/weather")[0], 401)
         self.assertEqual(self.post("/api/weather/apply-rain", {})[0], 409)   # 실제 강수 없이는 적용 안 됨
 
+    def test_staff_announcement_shows_on_public_and_can_be_taken_down(self):
+        anon = Client(self.base)
+        self.assertEqual(anon.post("/api/announcements", {"text": "공지"})[0], 401)                 # 담당자만
+        self.assertEqual(anon.get("/api/announcements")[0], 401)
+        for bad in ({"text": ""}, {"text": "x" * 301}, {"text": "공지", "audience": "기자"}, {"text": "공지", "zone": "Z99"},
+                    {"text": "공지", "urgent": "yes"}):
+            self.assertEqual(self.post("/api/announcements", bad)[0], 400, bad)
+        code, a = self.post("/api/announcements", {"text": "<b>1구역 하천변</b> 통제합니다", "audience": "citizen", "zone": "Z1", "urgent": True})
+        self.assertEqual((code, a["by"], a["active"]), (201, "담당자", True))
+        pub = anon.get("/api/public/status")[1]["announcements"]
+        shown = next(x for x in pub if x["id"] == a["id"])
+        self.assertEqual((shown["text"], shown["urgent"], shown["zone"]), ("<b>1구역 하천변</b> 통제합니다", True, "Z1"))   # 원문 그대로(화면에서 이스케이프)
+        self.assertNotIn("by", shown)                                                           # 공개 화면에는 담당자 이름 없음
+        self.assertEqual(self.post(f"/api/announcements/{a['id']}/end", {})[1]["active"], False)
+        self.assertNotIn(a["id"], [x["id"] for x in anon.get("/api/public/status")[1]["announcements"]])
+        listing = self.get("/api/announcements")[1]["items"]
+        self.assertEqual(next(x for x in listing if x["id"] == a["id"])["ended_by"], "담당자")
+        self.assertEqual(self.post("/api/announcements/AN-NONE/end", {})[0], 404)
+
     def test_anonymous_sees_stage_shelters_without_staff_names(self):
         anon = Client(self.base)
         status, d = anon.get("/api/public/status")
