@@ -673,9 +673,7 @@ class TestPublicStatus(ServerBase):
         self.assertEqual((d["stage"]["level"], d["stage"]["confirmed"]), ("정상", False))
         self.assertTrue(d["shelters"])
         self.assertTrue(all("capacity_left" in s for s in d["shelters"]))
-        self.assertTrue(all({"id", "row", "col", "risk"} <= set(z) for z in d["zone_grid"]))   # 구역도용
-        with urllib.request.urlopen(self.base + "/static/zonemap.js", timeout=2) as r:
-            self.assertIn(b"renderZoneMap", r.read())
+        self.assertTrue(all({"id", "row", "col", "risk"} <= set(z) for z in d["zone_grid"]))   # 가까운 대피소 순서용
         aid = self._new_approval()
         self.assertFalse(anon.get("/api/public/status")[1]["stage"]["confirmed"])   # 승인 전에는 그대로
         self.assertEqual(self.post(f"/api/approvals/{aid}/resolve", {"approved": True, "reason": "센서 두 개 동시 확인"})[0], 200)

@@ -87,7 +87,7 @@ class TestIntake(unittest.TestCase):
         # 구역이 둘 이상 적히면 AI가 하나를 골라도 미상(보완 요청), 하나만 적혔는데 AI가 놓치면 글의 구역을 쓴다
         two = I.classify("Z", "2구역인지 3구역인지 산이 무너져요", 0, CFG,
                          fake('{"type":"산사태·토사","zone":"Z2","people":null,"vulnerable":false}')).output
-        self.assertEqual((two["zone"], two["missing"]), ("미상", ["위치(구역)"]))
+        self.assertEqual((two["zone"], two["missing"]), ("미상", ["위치"]))
         one = I.classify("Z", "Z6 피해 신고는 어디서 하나요", 0, CFG,
                          fake('{"type":"대민지원","zone":"미상","people":null,"vulnerable":false}')).output
         self.assertEqual((one["zone"], one["missing"]), ("Z6", []))

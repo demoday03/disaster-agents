@@ -5,7 +5,7 @@
 import base64, binascii, json, threading, time, uuid
 
 from agents import recovery, supply, verify, volunteer, welfare
-from common import docparse, scenario
+from common import docparse, places, scenario
 from common.masking import mask
 
 DAMAGE_TYPES = ("주택침수", "주택파손", "사면유실")
@@ -48,6 +48,7 @@ class Features:
         self.households = {h["id"]: h for h in people["households"]}
         self.households.update({h["id"]: h for h in db.list_records("household")})   # 주민이 화면에서 등록한 가구
         self.volunteers = {v["id"]: v for v in people["volunteers"]}
+        self.volunteers.update({v["id"]: v for v in db.list_records("volunteer")})   # 봉사자 화면에서 회원가입한 봉사자
         self.locations = {l["id"]: l for l in self.inv_seed["locations"]}
         self.catalog = supply.load_catalog()
         self.tcfg = volunteer.load_tasks()
@@ -355,18 +356,17 @@ class Features:
         return self.db.put_record("case", cid, case)
 
     def survey_add(self, data):
-        zone = data.get("zone")
-        if zone not in {z["id"] for z in self.sc["zones"]}:
-            raise ValueError("구역을 골라야 합니다")
+        zone, address = places.resolve(data, "피해 위치")
         dmg = data.get("damage_type")
         if dmg not in DAMAGE_TYPES:
             raise ValueError(f"피해 유형은 {DAMAGE_TYPES} 중 하나여야 합니다")
         sid = _new_id("SV")
-        return self.db.put_record("survey", sid, {"id": sid, "zone": zone, "damage_type": dmg, "ts": time.time()})
+        return self.db.put_record("survey", sid, {"id": sid, "zone": zone, "address": address, "damage_type": dmg, "ts": time.time()})
 
     def recovery_status(self):
         return {"cases": self.db.list_records("case"), "reports": self.db.list_records("report"),
                 "aggregate": recovery.aggregate(self.db.list_records("survey")),
+                "surveys": sorted(self.db.list_records("survey"), key=lambda x: -x.get("ts", 0))[:50],
                 "households": list(self.households.values()), "stages": recovery.STAGES,
                 "damage_types": DAMAGE_TYPES, "notice": recovery.NOTICE, "doc_parser": self.doc_parser is not None,
                 "zones": [{"id": z["id"], "name": z["name"]} for z in self.sc["zones"]]}
@@ -385,12 +385,12 @@ class Features:
 
     def volunteer_request(self, data):
         text = _text(data.get("text"), "작업 요청", 300)
-        zone = data.get("zone")
-        if zone not in {z["id"] for z in self.sc["zones"]}:
-            raise ValueError("구역을 골라야 합니다")
         hid = data.get("household")
         if hid is not None and hid not in self.households:
             raise KeyError(hid)
+        if hid is not None and not data.get("zone") and not data.get("address"):   # 가구를 고르면 위치는 그 가구로
+            data = {**data, "zone": self.households[hid]["zone"], "address": self.households[hid].get("address")}
+        zone, address = places.resolve(data, "작업 위치")
         temp = data.get("temperature_c")
         if temp is not None and (isinstance(temp, bool) or not isinstance(temp, (int, float)) or not -20 <= temp <= 60):
             raise ValueError("현장 온도는 -20~60 사이 숫자여야 합니다")
@@ -398,7 +398,7 @@ class Features:
         tasks, ai, why = volunteer.decompose(req_id, text, zone, self.tcfg, client=self.llm)
         out = []
         for t in tasks:
-            rec = {**t, "request_id": req_id, "household": hid, "request_text": text, "state": "대기",
+            rec = {**t, "address": address, "request_id": req_id, "household": hid, "request_text": text, "state": "대기",
                    "temperature_c": temp, "created_at": time.time(), "incident_id": data.get("incident_id")}
             self.db.put_record("task", t["id"], rec)
             out.append(self._recommend_task(rec))
@@ -468,7 +468,7 @@ class Features:
         e = volunteer.FieldSession().sos(vid, tid, time.time())
         sid = _new_id("SOS")
         self.db.log_audit("sos_raised", "volunteer", vid, {"task": tid})
-        return self.db.put_record("sos", sid, {"id": sid, **e, "open": True})
+        return self.db.put_record("sos", sid, {"id": sid, **e, "name": self.volunteers[vid].get("name", vid), "open": True})
 
     def sos_ack(self, sid):
         s = self.db.get_record("sos", sid)
@@ -693,15 +693,14 @@ class Features:
         return req
 
     def donation_add(self, data):
+        zone, address = places.resolve(data, "전달 장소")
         d = {"donor": data.get("donor"), "item": data.get("item"), "qty": data.get("qty"), "unit": data.get("unit"),
-             "condition": data.get("condition"), "days_left": data.get("days_left"), "zone": data.get("zone")}
+             "condition": data.get("condition"), "days_left": data.get("days_left"), "zone": zone, "address": address}
         if d["donor"] not in self.volunteers:
             raise ValueError("기부자(봉사자 ID)를 골라야 합니다")
         _int(d["qty"], "수량", 1, 10000)
         if d["days_left"] is not None:
             _int(d["days_left"], "유통기한까지 남은 일수", -3650, 3650)
-        if d["zone"] not in {z["id"] for z in self.sc["zones"]}:
-            raise ValueError("전달 구역을 골라야 합니다")
         check = supply.validate_donation(d, self.catalog)   # B8 등록 검사(의약품·파손·기한 경과·단위 불명 거부)
         if not check["ok"]:
             raise ValueError("등록할 수 없습니다: " + ", ".join(check["issues"]) + (f" ({check['action']})" if check["action"] else ""))

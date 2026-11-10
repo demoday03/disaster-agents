@@ -10,6 +10,7 @@
 .who{background:var(--surface);border-bottom:1px solid var(--line);padding:8px max(16px,calc((100vw - 1000px)/2));display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .who b{font-size:.95rem}.who .muted{flex:1}
 .layout{max-width:1000px;margin:16px auto;padding:0 16px;display:grid;grid-template-columns:200px minmax(0,1fr);gap:18px;align-items:start}
+.solo{max-width:720px;margin:16px auto;padding:0 16px}
 .menu{position:sticky;top:12px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:8px}
 .menu button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;margin:2px 0;background:none;color:var(--ink);font-weight:700;padding:12px;min-height:0;border-radius:8px;position:relative}
 .menu button .ic{font-size:1.2rem;width:1.4em;text-align:center}
@@ -17,27 +18,37 @@
 .view{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:22px}
 .view h2{font-size:1.3rem;font-weight:800;margin:0 0 4px}.view .lead{color:var(--muted);margin:0 0 16px}.view h3{font-size:1.05rem;font-weight:800;margin:22px 0 8px}
 .row{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
-label{display:block;font-weight:700;margin:10px 0 4px;font-size:.92rem}input,select{width:100%;font:inherit;padding:10px 12px;border:1px solid #BFC9D8;border-radius:10px;background:#fff;color:var(--ink)}
+label{display:block;font-weight:700;margin:12px 0 4px;font-size:.95rem}input,select{width:100%;font:inherit;padding:11px 12px;border:1px solid #BFC9D8;border-radius:10px;background:#fff;color:var(--ink)}
 button{font:inherit;font-weight:700;background:var(--action);color:#fff;border:0;border-radius:10px;padding:10px 16px;min-height:48px;cursor:pointer;margin:8px 8px 0 0}button:hover{filter:brightness(1.08)}button:disabled{opacity:.6;cursor:wait}
+button.sub{background:#E3E8F0;color:var(--ink)}button.big{width:100%;font-size:1.08rem;min-height:54px;margin-right:0}
 .sos{background:var(--s-danger)}.who .sos{margin:0;font-size:1.02rem;padding:8px 18px}
 .muted{color:var(--muted);font-size:.92rem}.err{color:var(--bad-ink)}
-.chips span{display:inline-block;padding:2px 10px;border-radius:999px;background:var(--line-soft);font-size:.85rem;margin:2px 4px 2px 0}
+.q{font-weight:800;margin:20px 0 8px;display:flex;align-items:center;gap:8px}.q .n{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--ink);color:#fff;font-size:.8rem;flex:none}.q .opt{font-weight:500;color:var(--muted);font-size:.88rem}
+.choices{display:flex;flex-wrap:wrap;gap:8px}.choices label{margin:0;font-weight:600;display:flex;align-items:center;gap:8px;border:1.5px solid #BFC9D8;border-radius:12px;padding:10px 14px;cursor:pointer;background:#fff;min-height:48px}
+.choices input{width:auto;margin:0;accent-color:var(--action)}.choices label:has(input:checked){border-color:var(--action);background:var(--action-bg);color:var(--action)}
+.skills{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px}.skills label{margin:0;display:flex;gap:10px;align-items:flex-start;border:1.5px solid #BFC9D8;border-radius:12px;padding:12px 14px;cursor:pointer;background:#fff}
+.skills input{width:auto;margin:4px 0 0;accent-color:var(--action)}.skills label:has(input:checked){border-color:var(--action);background:var(--action-bg)}.skills b{display:block}.skills small{color:var(--muted);font-weight:500}
+.preview{background:var(--ok-bg);border:1px solid #9FD3B6;border-radius:12px;padding:12px 14px;margin-top:14px}.preview.none{background:#F5F8FC;border-color:var(--line)}
+.seg{display:grid;grid-template-columns:1fr 1fr;background:var(--line-soft);border-radius:12px;padding:4px;gap:4px;margin:0 0 6px}
+.seg button{margin:0;background:transparent;color:var(--ink-2);min-height:46px}.seg button[aria-selected="true"]{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(22,35,59,.15)}
+.hero{font-size:1.35rem;font-weight:800;margin:0 0 4px}
+.chips span{display:inline-block;padding:3px 11px;border-radius:999px;background:var(--line-soft);font-size:.88rem;margin:2px 4px 2px 0}.chips span.can{background:var(--ok-bg);color:var(--ok-ink);font-weight:700}
 details.acc.order{border-left:6px solid var(--action)}details.acc.order.prog{border-left-color:var(--s-alert)}details.acc.order.done{border-left-color:var(--s-normal);opacity:.8}
-.order dl{display:grid;grid-template-columns:4.5em 1fr;gap:2px 10px;margin:0}.order dt{color:var(--muted);font-weight:600}.order dd{margin:0}
+.order dl,.dl{display:grid;grid-template-columns:5em 1fr;gap:4px 10px;margin:0}.order dt,.dl dt{color:var(--muted);font-weight:600}.order dd,.dl dd{margin:0}
 .state{font-size:.8rem;font-weight:700;padding:1px 9px;border-radius:999px;background:var(--line-soft);white-space:nowrap}.state.prog{background:var(--warn-bg);color:var(--warn-ink)}.state.done{background:var(--ok-bg);color:var(--ok-ink)}
 .mine{font-size:.85rem;font-weight:700;color:var(--action);margin-bottom:6px}
 .need{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid var(--line-soft)}.need:first-child{border-top:0}
 .grid2{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 10px}
-.box{background:#F5F8FC;border:1px solid var(--line-soft);border-radius:10px;padding:12px;margin-top:12px}.box.err{background:#FBE3E5}.box.ok{background:var(--ok-bg);border-color:#9FD3B6}
+.box{background:#F5F8FC;border:1px solid var(--line-soft);border-radius:10px;padding:12px;margin-top:12px}.box.err{background:#FBE3E5;border-color:#F0B7BE}.box.ok{background:var(--ok-bg);border-color:#9FD3B6}
 .safety{margin:0;padding-left:1.2em}.safety li{margin:6px 0}
 .annbar{background:#FBE3E5;border-bottom:2px solid var(--s-danger);color:var(--bad-ink);padding:10px max(16px,calc((100vw - 1000px)/2));font-weight:700;overflow-wrap:anywhere}.annbar a{color:var(--bad-ink);font-weight:600;margin-left:6px}
 .ann{border-left:5px solid var(--action);background:#F5F8FC;border-radius:8px;padding:12px 14px;margin:8px 0;overflow-wrap:anywhere}.ann.urgent{border-left-color:var(--s-danger);background:#FDF0F1}
 .badge{display:inline-block;min-width:20px;padding:0 6px;margin-left:6px;border-radius:99px;background:var(--s-danger);color:#fff;font-size:.75rem;text-align:center;line-height:1.5}
 .acc>summary{flex-wrap:wrap;row-gap:0}
-.pickcard{border:2px dashed #BFC9D8;border-radius:12px;padding:16px;background:#F7F9FC}
+#editBody .q .n{display:none}#editBody .q{margin-top:14px}
 [hidden]{display:none!important}
 @media(max-width:760px){
- body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
+ body.app{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
  .layout{grid-template-columns:1fr;margin-top:12px}
  .menu{position:fixed;left:0;right:0;bottom:0;top:auto;z-index:20;display:grid;grid-template-columns:repeat(4,1fr);gap:0;padding:4px 4px calc(4px + env(safe-area-inset-bottom));border-radius:0;border:0;border-top:1px solid var(--line);box-shadow:0 -4px 16px rgba(22,35,59,.08)}
  .menu button{flex-direction:column;gap:0;text-align:center;justify-content:center;margin:0;padding:6px 2px;font-size:.78rem;border-radius:10px;min-height:58px}
@@ -48,8 +59,44 @@ details.acc.order{border-left:6px solid var(--action)}details.acc.order.prog{bor
 <header class="top"><a class="back" href="/">← 처음으로</a><h1>봉사자 화면</h1><a class="tel" href="tel:119" aria-label="119에 전화하기">📞 119</a></header>
 <div class="band" id="band" data-level="정상" role="status" aria-live="polite">지금 위기 단계: <span id="bandLevel">확인 중</span></div>
 <div class="annbar" id="annBar" hidden role="alert"></div>
-<div class="who"><b>나:</b><span class="muted" id="whoText">아직 고르지 않았습니다 → '내 정보'에서 골라 주세요</span><button type="button" class="sos" id="sosBtn" hidden>🆘 위급해요 (SOS)</button></div>
-<div class="layout">
+<div class="who" id="whoBar" hidden><b>나:</b><span class="muted" id="whoText"></span><button type="button" class="sos" id="sosBtn">🆘 위급해요 (SOS)</button></div>
+
+<!-- 로그인 전: 회원가입·로그인 -->
+<div class="solo" id="authWrap" hidden>
+<section class="view">
+<p class="hero">봉사자로 함께해 주세요</p><p class="lead">가입할 때 할 수 있는 일을 알려 주시면, 그 일에 맞는 작업을 바로 보여 드리고 담당자에게 추천합니다. 실명·전화번호는 받지 않아요.</p>
+<div class="seg" role="tablist"><button type="button" role="tab" id="tabJoin" aria-selected="true">회원가입</button><button type="button" role="tab" id="tabLogin" aria-selected="false">로그인</button></div>
+<form id="joinForm" autocomplete="off">
+<p class="q"><span class="n">1</span>별명과 비밀번호</p>
+<div class="grid2" style="grid-template-columns:1fr 1fr"><div><label for="jName">별명 <span class="muted" style="font-weight:500">(2~20자)</span></label><input id="jName" maxlength="20" required placeholder="예: 옥포동삽"></div><div><label for="jPw">비밀번호 <span class="muted" style="font-weight:500">(6자 이상)</span></label><input id="jPw" type="password" minlength="6" maxlength="100" required autocomplete="new-password"></div></div>
+<div id="profileFields">
+<p class="q"><span class="n">2</span>어디에서 활동할 수 있나요?</p>
+<input id="pAddress" maxlength="80" required placeholder="예: 옥포동 일대 / 고현동 ○○아파트 근처" aria-label="활동할 곳">
+<p class="q"><span class="n">3</span>할 수 있는 일 <span class="opt">(모두 골라 주세요)</span></p>
+<div class="skills" id="pSkills"></div>
+<p class="q"><span class="n">4</span>가진 장비 <span class="opt">(있는 것만)</span></p>
+<div class="choices" id="pEquip"></div>
+<p class="q"><span class="n">5</span>한 번에 얼마나 도울 수 있나요?</p>
+<div class="choices" id="pTime"></div>
+<p class="q"><span class="n">6</span>어떻게 참여할까요?</p>
+<div class="choices" id="pMode"></div>
+<div class="preview none" id="pPreview" aria-live="polite">할 수 있는 일을 고르면 맡을 수 있는 작업을 여기에 보여 드려요.</div>
+</div>
+<button type="submit" class="big" id="joinBtn">가입하고 시작하기</button>
+<p class="err" id="joinErr" aria-live="assertive"></p>
+</form>
+<form id="loginForm" hidden>
+<label for="lName">별명</label><input id="lName" maxlength="20" required autocomplete="username">
+<label for="lPw">비밀번호</label><input id="lPw" type="password" maxlength="100" required autocomplete="current-password">
+<button type="submit" class="big">로그인</button>
+<p class="err" id="loginErr" aria-live="assertive"></p>
+</form>
+<details class="acc" style="margin-top:18px"><summary>시연용 봉사자로 둘러보기 <span class="sum-sub">가입하지 않고 미리 만들어 둔 봉사자로</span></summary><div class="acc-body"><label for="vSel" style="margin-top:0">봉사자 고르기</label><select id="vSel"><option value="">고르기</option></select></div></details>
+</section>
+</div>
+
+<!-- 로그인 후 -->
+<div class="layout" id="appLayout" hidden>
 <nav class="menu" aria-label="봉사자 메뉴">
 <button type="button" data-view="tasks"><span class="ic" aria-hidden="true">🧰</span>내 작업<span class="badge" id="taskCount" hidden></span></button>
 <button type="button" data-view="notices"><span class="ic" aria-hidden="true">📢</span>공지<span class="badge" id="annCount" hidden></span></button>
@@ -58,85 +105,112 @@ details.acc.order{border-left:6px solid var(--action)}details.acc.order.prog{bor
 </nav>
 <main>
 <section class="view" data-view="tasks" hidden>
-<h2>내 작업</h2><p class="lead">담당자가 승인한 작업과 내 역량에 맞는 대기 작업입니다. 현장에 도착하면 '도착', 끝나면 '완료'를 눌러 주세요.</p>
+<h2>내 작업</h2><p class="lead">담당자가 승인한 작업과 내가 할 수 있는 일에 맞는 작업입니다. 현장에 도착하면 '도착', 끝나면 '완료'를 눌러 주세요.</p>
+<div class="box" id="canDoBox" style="margin-top:0"></div>
 <details class="acc" id="safetyAcc"><summary>⚠️ 활동 전 안전 수칙 <span class="sum-sub">4가지 · 꼭 읽어 주세요</span></summary><div class="acc-body"><ul id="safety" class="safety"></ul><p class="muted">활동 시간 상한·휴식·고온 기준 수치는 공식 운영지침을 확인한 뒤 넣습니다(아직 미확인).</p></div></details>
-<h3>작업 위치</h3>
-<div id="taskMap" class="muted">지도를 불러오는 중…</div>
-<p class="muted" style="margin:6px 0 0" id="mapHint">구역을 누르면 그 구역 작업만 보여 드려요.</p>
 <h3>승인된 내 작업</h3><div id="myTasks" class="muted" data-fold="3"></div>
-<div class="row"><h3>도움이 필요한 작업</h3><button type="button" id="taskAll" hidden style="margin:0;min-height:36px;padding:4px 12px;background:#E3E8F0;color:var(--ink)">모든 구역 보기</button></div>
-<div id="openTasks" class="muted" data-fold="3"></div>
+<h3>도움이 필요한 작업</h3><div id="openTasks" class="muted" data-fold="3"></div>
 </section>
 <section class="view" data-view="notices" hidden><h2>공지</h2><p class="lead">담당자가 봉사자에게 알리는 소식입니다. 새 공지는 15초 안에 나타납니다.</p><div id="annList" class="muted" data-fold="4">아직 공지가 없습니다.</div></section>
 <section class="view" data-view="gift" hidden><h2>물품 기부</h2><p class="lead">부족이 예상되는 물품을 보고 기부를 등록합니다. 담당자가 검수한 뒤 필요한 곳에 연결됩니다.</p>
 <h3>부족이 예상되는 물품</h3><div id="needs" class="muted" data-fold="4"></div>
-<details class="acc" id="giftAcc" open><summary>🎁 기부 등록하기</summary><div class="acc-body"><form id="giftForm"><div class="grid2"><label>품목<select id="gItem"></select></label><label>수량<input id="gQty" type="number" min="1" max="10000" value="10" required></label><label>단위<select id="gUnit"></select></label><label>상태<select id="gCond"><option>새것</option><option>사용 가능</option><option>파손·오염</option></select></label><label>유통기한까지 남은 일수<input id="gDays" type="number" placeholder="해당 없으면 비움"></label></div><label for="gZone">전달 구역 <span class="muted" style="font-weight:500">(처음에는 내 활동 구역)</span></label><select id="gZone"></select><button type="submit">기부 등록</button></form>
+<details class="acc" id="giftAcc" open><summary>🎁 기부 등록하기</summary><div class="acc-body"><form id="giftForm"><div class="grid2"><label>품목<select id="gItem"></select></label><label>수량<input id="gQty" type="number" min="1" max="10000" value="10" required></label><label>단위<select id="gUnit"></select></label><label>상태<select id="gCond"><option>새것</option><option>사용 가능</option><option>파손·오염</option></select></label><label>유통기한까지 남은 일수<input id="gDays" type="number" placeholder="해당 없으면 비움"></label></div><label for="gPlace">어디로 가져다줄 수 있나요?</label><input id="gPlace" maxlength="80" required placeholder="예: 옥포동 주민센터 앞"><button type="submit">기부 등록</button></form>
 <div id="giftResult" class="box" hidden aria-live="polite"></div></div></details>
 <h3>내 기부</h3><div id="myGifts" class="muted" data-fold="3"></div></section>
-<section class="view" data-view="me">
-<h2>내 정보</h2><p class="lead">시연용 가상 봉사자 중 나를 고르세요. 고르면 이 기기에 기억됩니다. 투입은 담당자가 승인합니다.</p>
-<div class="pickcard"><label for="vSel" style="margin-top:0">나는 누구인가요?</label><select id="vSel"><option value="">고르기</option></select></div>
-<div id="vBody" hidden><h3>내 역량과 장비</h3><div class="chips" id="vChips"></div><p class="muted" id="vInfo"></p>
-<h3>활동 기록</h3><p class="muted">완료한 작업과 기부를 1365 자원봉사 포털 입력용 형식을 흉내 낸 파일로 내려받습니다(모의, 실제 전송 없음).</p><a id="csvLink" href="#">활동 기록 내려받기 (CSV)</a></div>
+<section class="view" data-view="me" hidden>
+<h2>내 정보</h2>
+<dl class="dl" id="meInfo"></dl>
+<details class="acc" id="editAcc" hidden><summary>✏️ 내 정보 고치기 <span class="sum-sub">활동할 곳·할 수 있는 일·장비·시간</span></summary><div class="acc-body" id="editBody"></div></details>
+<h3>활동 기록</h3><p class="muted">완료한 작업과 기부를 1365 자원봉사 포털 입력용 형식을 흉내 낸 파일로 내려받습니다(모의, 실제 전송 없음).</p><a id="csvLink" href="#">활동 기록 내려받기 (CSV)</a>
 <div id="sosResult" class="box" hidden aria-live="polite"></div>
+<p style="margin:24px 0 0"><button type="button" class="sub" id="logoutBtn" style="margin:0">로그아웃</button></p>
 </section>
-<p class="muted" id="pickFirst" hidden style="margin:12px 4px">먼저 '내 정보'에서 나를 골라 주세요.</p>
 </main></div>
-<script src="/static/zonemap.js"></script>
 <script src="/static/ui.js"></script>
 <script>
-const $=id=>document.getElementById(id);let VID='',DATA=null,PUB=null,PICK=null;
+const $=id=>document.getElementById(id);let VID='',DATA=null,PUB=null,OPT=null;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
 async function api(path,options={}){const r=await fetch(path,{...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});const d=await r.json().catch(()=>({error:'서버 응답을 읽을 수 없습니다'}));if(!r.ok)throw new Error(d.error||`HTTP ${r.status}`);return d}
 const post=(p,b)=>api(p,{method:'POST',body:JSON.stringify(b||{})});
-const store={get(){try{return localStorage.getItem('vid')||''}catch(e){return ''}},set(v){try{localStorage.setItem('vid',v)}catch(e){}}};
+const store={get(){try{return localStorage.getItem('vid')||''}catch(e){return ''}},set(v){try{v?localStorage.setItem('vid',v):localStorage.removeItem('vid')}catch(e){}}};
 const fmt=ts=>ts?new Date(ts*1000).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'}):'';
-const zname=z=>(PUB&&PUB.zones[z])||z;const zno=z=>(String(zname(z)).match(/^\d+구역/)||[z])[0];
 const STATE={'투입승인':['투입 승인됨',''],'진행':['작업 중','prog'],'완료':['완료','done']};
-// 메뉴: 누른 기능 하나만 보인다. 봉사자를 고르기 전에는 '내 정보'·'공지'만 쓸 수 있다. 예전 주소(#mine 등)도 연다
+
+// ---- 화면 전환: 로그인 전에는 가입·로그인만, 로그인 후에는 메뉴 4개. 예전 주소(#mine 등)도 연다
 const VIEWS=['tasks','notices','gift','me'],OLD={mine:'tasks',open:'tasks',safety:'tasks',log:'me'};
-function go(v){const sub=v;v=OLD[v]||v;if(!VIEWS.includes(v))v=VID?'tasks':'me';const locked=!VID&&!['me','notices'].includes(v);document.querySelectorAll('section.view').forEach(s=>s.hidden=locked||s.dataset.view!==v);$('pickFirst').hidden=!locked;
+function go(v){const sub=v;v=OLD[v]||v;const on=!!VID;$('authWrap').hidden=on;$('appLayout').hidden=!on;$('whoBar').hidden=!on;document.body.classList.toggle('app',on);
+if(!on){if(location.hash)history.replaceState(null,'',location.pathname);return}
+if(!VIEWS.includes(v))v='tasks';document.querySelectorAll('section.view[data-view]').forEach(s=>s.hidden=s.dataset.view!==v);
 if(sub==='safety')$('safetyAcc').open=true;
 document.querySelectorAll('.menu button').forEach(b=>b.dataset.view===v?b.setAttribute('aria-current','page'):b.removeAttribute('aria-current'));
-if(location.hash!=='#'+v)history.replaceState(null,'','#'+v);if(v==='tasks')drawMap();window.scrollTo({top:0})}
+if(location.hash!=='#'+v)history.replaceState(null,'','#'+v);window.scrollTo({top:0})}
 document.querySelectorAll('.menu button').forEach(b=>b.addEventListener('click',()=>go(b.dataset.view)));
 window.addEventListener('hashchange',()=>go(location.hash.slice(1)));
 document.addEventListener('click',e=>{const a=e.target.closest('a[href^="#"]');if(a&&a.getAttribute('href').length>1){e.preventDefault();go(a.getAttribute('href').slice(1))}});
-async function band(){try{const d=await api('/api/public/status'),s=d.stage;PUB=d;const lv=s.confirmed&&['주의','경계','위험'].includes(s.level)?s.level:'정상';$('band').dataset.level=lv;$('bandLevel').textContent=lv+(s.confirmed&&s.hazards.length?' · '+s.hazards.join(', '):'');drawAnn(d);if(location.hash==='#tasks')drawMap()}catch(e){}}
-// 공지: 봉사자 대상(모두·봉사자). 긴급 공지는 모든 화면 위 빨간 띠로
-function drawAnn(d){const list=(d.announcements||[]).filter(a=>a.audience!=='citizen').sort((a,b)=>b.urgent-a.urgent||b.at-a.at),urgent=list.filter(a=>a.urgent),zn=z=>z==='all'?'모든 구역':(d.zones[z]||z);
-$('annBar').hidden=!urgent.length;if(urgent.length)$('annBar').innerHTML=`📢 긴급 공지 · ${esc(urgent[0].text)}${urgent.length>1?` (외 ${urgent.length-1}건)`:''}<a href="#notices">공지 모두 보기</a>`;
+
+async function band(){try{const d=await api('/api/public/status'),s=d.stage;PUB=d;const lv=s.confirmed&&['주의','경계','위험'].includes(s.level)?s.level:'정상';$('band').dataset.level=lv;$('bandLevel').textContent=lv+(s.confirmed&&s.hazards.length?' · '+s.hazards.join(', '):'');drawAnn(d)}catch(e){}}
+const place=z=>{const n=PUB&&PUB.zones[z];return n?(n.match(/\(([^)]+)\)/)||[,n])[1]:'모든 곳'};
+function drawAnn(d){const list=(d.announcements||[]).filter(a=>a.audience!=='citizen').sort((a,b)=>b.urgent-a.urgent||b.at-a.at),urgent=list.filter(a=>a.urgent);
+$('annBar').hidden=!urgent.length;if(urgent.length)$('annBar').innerHTML=`📢 긴급 공지 · ${esc(urgent[0].text)}${urgent.length>1?` (외 ${urgent.length-1}건)`:''}${VID?'<a href="#notices">공지 모두 보기</a>':''}`;
 $('annCount').hidden=!list.length;$('annCount').textContent=list.length;
-$('annList').className=list.length?'':'muted';$('annList').innerHTML=list.length?list.map(a=>`<div class="ann${a.urgent?' urgent':''}"><div class="muted">${a.urgent?'<b class="err">긴급</b> · ':''}${esc(zn(a.zone))} · ${esc(new Date(a.at*1000).toLocaleString('ko-KR'))}</div>${esc(a.text)}</div>`).join(''):'지금 게시 중인 공지가 없습니다.'}
-async function init(){try{const d=await api('/api/public/volunteers');$('vSel').innerHTML='<option value="">고르기</option>'+d.items.map(v=>`<option value="${esc(v.id)}">${esc(v.id)} · ${esc(zno(v.zone))} · ${esc(v.skills.join(', '))}</option>`).join('');const s=store.get();if(s&&d.items.some(v=>v.id===s)){$('vSel').value=s;VID=s;await load()}}catch(e){$('vInfo').textContent='봉사자 목록을 불러오지 못했습니다: '+e.message}go(location.hash.slice(1))}
-$('vSel').addEventListener('change',async()=>{VID=$('vSel').value;store.set(VID);$('sosResult').hidden=true;$('giftResult').hidden=true;$('gZone').innerHTML='';await load();if(VID)go('tasks')});
-// 작업 하나 = 접고 펼치는 카드. 요약 줄에 '무엇 · 어디 · 상태'를 보여 주고, 내가 할 일이 있는 카드는 펼쳐 둔다
+$('annList').className=list.length?'':'muted';$('annList').innerHTML=list.length?list.map(a=>`<div class="ann${a.urgent?' urgent':''}"><div class="muted">${a.urgent?'<b class="err">긴급</b> · ':''}${esc(a.zone==='all'?'모든 봉사자':place(a.zone))} · ${esc(new Date(a.at*1000).toLocaleString('ko-KR'))}</div>${esc(a.text)}</div>`).join(''):'지금 게시 중인 공지가 없습니다.'}
+
+// ---- 회원가입·내 정보 고치기에 함께 쓰는 입력(활동할 곳·할 수 있는 일·장비·시간·참여 방식)
+function fillProfile(v){$('pAddress').value=v?.address||'';
+$('pSkills').innerHTML=OPT.skills.map(s=>`<label><input type="checkbox" value="${esc(s.id)}"${v&&v.skills.includes(s.id)?' checked':''}><span><b>${esc(s.label)}</b><small>맡을 수 있는 작업: ${esc(s.tasks.join(', ')||'-')}</small></span></label>`).join('');
+$('pEquip').innerHTML=OPT.equipment.map(e=>`<label><input type="checkbox" value="${esc(e)}"${v&&v.equipment.includes(e)?' checked':''}> ${esc(e)}</label>`).join('');
+$('pTime').innerHTML=OPT.times.map(t=>`<label><input type="radio" name="ptime" value="${t.min}"${(v?v.available_min:120)===t.min?' checked':''}> ${esc(t.label)}</label>`).join('');
+$('pMode').innerHTML=OPT.modes.map(m=>`<label><input type="radio" name="pmode" value="${esc(m.id)}"${(v?v.mode:'둘 다')===m.id?' checked':''}> ${esc(m.label)}</label>`).join('');previewProfile()}
+function readProfile(){return {address:$('pAddress').value.trim(),skills:[...$('pSkills').querySelectorAll('input:checked')].map(c=>c.value),equipment:[...$('pEquip').querySelectorAll('input:checked')].map(c=>c.value),
+available_min:Number(document.querySelector('input[name=ptime]:checked')?.value||120),mode:document.querySelector('input[name=pmode]:checked')?.value||'둘 다'}}
+// 가입할 때 '내가 맡을 수 있는 작업'을 미리 보여 준다. 작업에 필요한 장비가 없으면 함께 알려 준다
+function previewProfile(){const p=readProfile(),box=$('pPreview');if(p.mode==='기부'){box.className='preview';box.innerHTML='<b>물품 기부로 참여해요.</b> 부족한 물품 목록을 보고 기부를 등록할 수 있어요.';return}
+const tasks=[...new Set(OPT.skills.filter(s=>p.skills.includes(s.id)).flatMap(s=>s.tasks))];
+if(!tasks.length){box.className='preview none';box.textContent='할 수 있는 일을 고르면 맡을 수 있는 작업을 여기에 보여 드려요.';return}
+box.className='preview';box.innerHTML='<b>이런 작업을 맡을 수 있어요</b><ul style="margin:6px 0 0;padding-left:1.2em">'+tasks.map(t=>{const need=(OPT.task_equipment[t]||[]).filter(e=>!p.equipment.includes(e));return `<li>${esc(t)}${need.length?` <span class="muted">(${esc(need.join(', '))}이 있으면 더 잘 맞아요)</span>`:''}</li>`}).join('')+'</ul>'}
+document.addEventListener('change',e=>{if(e.target.closest('#profileFields'))previewProfile()});
+function tab(join){$('tabJoin').setAttribute('aria-selected',String(join));$('tabLogin').setAttribute('aria-selected',String(!join));$('joinForm').hidden=!join;$('loginForm').hidden=join}
+$('tabJoin').addEventListener('click',()=>tab(true));$('tabLogin').addEventListener('click',()=>tab(false));
+$('joinForm').addEventListener('submit',async e=>{e.preventDefault();$('joinErr').textContent='';const b=$('joinBtn');b.disabled=true;
+try{const r=await post('/api/public/volunteers',{name:$('jName').value.trim(),password:$('jPw').value,...readProfile()});await enter(r.id)}catch(err){$('joinErr').textContent=err.message}finally{b.disabled=false}});
+$('loginForm').addEventListener('submit',async e=>{e.preventDefault();$('loginErr').textContent='';try{const r=await post('/api/public/volunteer-login',{name:$('lName').value,password:$('lPw').value});await enter(r.id)}catch(err){$('loginErr').textContent=err.message}});
+$('vSel').addEventListener('change',()=>{if($('vSel').value)enter($('vSel').value)});
+async function enter(id){VID=id;store.set(id);$('jPw').value='';$('lPw').value='';await load();go('tasks')}
+$('logoutBtn').addEventListener('click',()=>{store.set('');location.replace(location.pathname)});   // 이 기기에서 나가기(다시 처음 화면으로)
+
+// ---- 작업 카드: 요약 줄에 '무엇 · 어디 · 상태'. 내가 할 일이 있는 카드는 펼쳐 둔다
 function order(t,mine){const [label,cls]=STATE[t.state]||[t.state,''];const act=mine&&(t.state==='투입승인'||t.state==='진행');
-return `<details class="acc order ${cls}" data-zone="${esc(t.zone)}" data-tid="${esc(t.id)}"${act?' open':''}><summary><span>${esc(t.type)} · ${esc(zno(t.zone))}</span><span class="state ${cls}">${esc(label)}</span>${!mine&&t.recommended_for_me?'<span class="sum-sub">AI가 나를 추천</span>':''}</summary><div class="acc-body">${!mine&&t.recommended_for_me?'<div class="mine">AI가 나를 추천했고 담당자 승인을 기다리는 중</div>':''}<dl><dt>위치</dt><dd>${esc(zname(t.zone))}</dd><dt>필요 인원</dt><dd>${esc(t.people)}명${t.team&&t.team.length?' · 팀 '+esc(t.team.join(', ')):''}</dd><dt>장비</dt><dd>${esc((t.equipment||[]).join(', ')||'없음')}</dd><dt>예상</dt><dd>${esc(t.hours)}시간</dd>${t.checked_in_at?`<dt>도착</dt><dd>${esc(fmt(t.checked_in_at))}</dd>`:''}${t.completed_at?`<dt>완료</dt><dd>${esc(fmt(t.completed_at))}</dd>`:''}<dt>주의</dt><dd>통제 구간 접근 금지 · 휴식과 수분 섭취 · 위급하면 SOS</dd></dl>${mine&&t.state==='투입승인'?`<button type="button" data-act="checkin" data-t="${esc(t.id)}">📍 현장 도착 (체크인)</button>`:''}${mine&&t.state==='진행'?`<button type="button" data-act="complete" data-t="${esc(t.id)}">✅ 작업 완료 보고</button><button type="button" class="sos" data-sos="${esc(t.id)}">이 작업에서 SOS</button>`:''}</div></details>`}
-function drawMap(){if(!PUB||!DATA)return;const v=DATA.volunteer,pins=[{zone:v.zone,label:'🙋 내 활동 구역',kind:'me'}];
-const cnt=(xs,lab,kind)=>{const by={};xs.forEach(t=>by[t.zone]=(by[t.zone]||0)+1);Object.entries(by).forEach(([z,n])=>pins.push({zone:z,label:`${lab} ${n}`,kind}))};
-cnt(DATA.my_tasks.filter(t=>t.state!=='완료'),'내 작업','task');cnt(DATA.open_tasks,'도움 필요','');
-window.renderZoneMap($('taskMap'),{zones:PUB.zone_grid,controls:PUB.control_zones,shelters:[],pins,selected:PICK,onPick:z=>{PICK=PICK===z?null:z;filterTasks();drawMap()}});$('taskMap').classList.remove('muted')}
-function filterTasks(){document.querySelectorAll('#myTasks details,#openTasks details').forEach(d=>d.hidden=!!PICK&&d.dataset.zone!==PICK);$('taskAll').hidden=!PICK;$('mapHint').textContent=PICK?`${zno(PICK)} 작업만 보는 중 · 같은 구역을 다시 누르면 전체`:'구역을 누르면 그 구역 작업만 보여 드려요.'}
-$('taskAll').addEventListener('click',()=>{PICK=null;filterTasks();drawMap()});
-async function load(){const on=!!VID;$('vBody').hidden=!on;$('sosBtn').hidden=!on;if(!on){$('whoText').textContent="아직 고르지 않았습니다 → '내 정보'에서 골라 주세요";return}try{const d=await api('/api/public/volunteers/'+encodeURIComponent(VID));DATA=d;const v=d.volunteer;
-$('whoText').textContent=`${v.id} · ${zno(v.zone)} 활동${v.busy?' · 지금 투입 중':''}`;$('vInfo').textContent=`참여 방식: ${v.mode}`;$('vChips').innerHTML=v.skills.map(s=>`<span>${esc(s)}</span>`).join('')+v.equipment.map(s=>`<span>장비 ${esc(s)}</span>`).join('');
+return `<details class="acc order ${cls}" data-tid="${esc(t.id)}"${act?' open':''}><summary><span>${esc(t.type)}</span><span class="state ${cls}">${esc(label)}</span>${!mine&&t.recommended_for_me?'<span class="sum-sub">AI가 나를 추천</span>':''}<span class="sum-sub" style="flex-basis:100%">📍 ${esc(t.place)}</span></summary><div class="acc-body">${!mine&&t.recommended_for_me?'<div class="mine">AI가 나를 추천했고 담당자 승인을 기다리는 중</div>':''}<dl><dt>위치</dt><dd>${esc(t.place)}</dd><dt>필요 인원</dt><dd>${esc(t.people)}명${t.team&&t.team.length?' · 팀 '+esc(t.team.join(', ')):''}</dd><dt>장비</dt><dd>${esc((t.equipment||[]).join(', ')||'없음')}</dd><dt>예상</dt><dd>${esc(t.hours)}시간</dd>${t.checked_in_at?`<dt>도착</dt><dd>${esc(fmt(t.checked_in_at))}</dd>`:''}${t.completed_at?`<dt>완료</dt><dd>${esc(fmt(t.completed_at))}</dd>`:''}<dt>주의</dt><dd>통제 중인 길 접근 금지 · 휴식과 수분 섭취 · 위급하면 SOS</dd></dl>${mine&&t.state==='투입승인'?`<button type="button" data-act="checkin" data-t="${esc(t.id)}">📍 현장 도착 (체크인)</button>`:''}${mine&&t.state==='진행'?`<button type="button" data-act="complete" data-t="${esc(t.id)}">✅ 작업 완료 보고</button><button type="button" class="sos" data-sos="${esc(t.id)}">이 작업에서 SOS</button>`:''}</div></details>`}
+const MODE_TXT={'작업':'현장 작업','기부':'물품 기부만','둘 다':'현장 작업과 기부'};
+async function load(){if(!VID)return;try{const d=await api('/api/public/volunteers/'+encodeURIComponent(VID));DATA=d;const v=d.volunteer;
+$('whoText').textContent=`${v.name} · ${v.place}${v.busy?' · 지금 투입 중':''}`;
+$('canDoBox').innerHTML=v.mode==='기부'?'물품 기부로 참여하고 있어요. 현장 작업도 하려면 \'내 정보\'에서 참여 방식을 바꿔 주세요.':`<b>내가 할 수 있는 일</b> <span class="chips">${d.can_do.map(t=>`<span class="can">${esc(t)}</span>`).join('')||'<span>아직 없음</span>'}</span>`;
+$('meInfo').innerHTML=`<dt>별명</dt><dd>${esc(v.name)}</dd><dt>활동할 곳</dt><dd>${esc(v.place)}</dd><dt>할 수 있는 일</dt><dd class="chips">${v.skills.map(s=>`<span>${esc(d.skill_labels[s]||s)}</span>`).join('')||'-'}</dd><dt>장비</dt><dd>${esc(v.equipment.join(', ')||'없음')}</dd><dt>시간</dt><dd>한 번에 ${esc(Math.round(v.available_min/60))}시간</dd><dt>참여</dt><dd>${esc(MODE_TXT[v.mode]||v.mode)}</dd>`;
+$('editAcc').hidden=!v.registered;if(v.registered&&!$('editBody').firstChild){$('editBody').append($('profileFields'));const sv=document.createElement('button');sv.type='submit';sv.id='saveProfile';sv.textContent='고친 내용 저장하기';const msg=document.createElement('p');msg.className='muted';msg.id='saveMsg';const f=document.createElement('form');f.id='editForm';f.append($('profileFields'),sv,msg);$('editBody').append(f);
+ f.addEventListener('submit',async e=>{e.preventDefault();try{await post(`/api/public/volunteers/${encodeURIComponent(VID)}/update`,readProfile());$('saveMsg').textContent='저장했습니다.';load()}catch(err){$('saveMsg').textContent='저장하지 못했습니다: '+err.message}})}
+if(v.registered&&!$('editAcc').open)fillProfile(v);
 const opened=new Set([...document.querySelectorAll('#myTasks details[open],#openTasks details[open]')].map(x=>x.dataset.tid));
 const active=d.my_tasks.filter(t=>t.state!=='완료').length;$('taskCount').hidden=!active;$('taskCount').textContent=active;
 $('myTasks').className=d.my_tasks.length?'':'muted';$('myTasks').innerHTML=d.my_tasks.length?[...d.my_tasks].sort((a,b)=>(a.state==='완료')-(b.state==='완료')).map(t=>order(t,true)).join(''):'담당자가 투입을 승인한 작업이 아직 없습니다.';
-$('openTasks').className=d.open_tasks.length?'':'muted';$('openTasks').innerHTML=d.open_tasks.length?d.open_tasks.map(t=>order(t,false)).join(''):'지금 내 역량에 맞는 대기 작업이 없습니다.';document.querySelectorAll('#myTasks details,#openTasks details').forEach(x=>{if(opened.has(x.dataset.tid))x.open=true});filterTasks();
-$('safety').innerHTML=['통제 구간(지도의 빨간 점선)에는 들어가지 않습니다','혼자 작업하지 말고 팀과 함께 움직입니다','물이 찬 곳에서는 전기 시설을 만지지 않습니다','어지럽거나 다치면 바로 SOS를 누릅니다'].map(s=>`<li>${esc(s)}</li>`).join('');
+$('openTasks').className=d.open_tasks.length?'':'muted';$('openTasks').innerHTML=d.open_tasks.length?d.open_tasks.map(t=>order(t,false)).join(''):'지금 내가 할 수 있는 일에 맞는 대기 작업이 없습니다.';
+document.querySelectorAll('#myTasks details,#openTasks details').forEach(x=>{if(opened.has(x.dataset.tid))x.open=true});
+$('safety').innerHTML=['통제 중인 길에는 들어가지 않습니다','혼자 작업하지 말고 팀과 함께 움직입니다','물이 찬 곳에서는 전기 시설을 만지지 않습니다','어지럽거나 다치면 바로 SOS를 누릅니다'].map(s=>`<li>${esc(s)}</li>`).join('');
 $('needs').className=d.needed_items.length?'':'muted';$('needs').innerHTML=d.needed_items.length?d.needed_items.map(n=>`<div class="need"><b>${esc(n.item)}</b><span>약 ${esc(n.hours_left)}시간 뒤 부족 예상</span></div>`).join(''):'지금 부족이 예상되는 물품은 없습니다.';
 if(!$('gItem').options.length){$('gItem').innerHTML=Object.keys(d.catalog).map(i=>`<option>${esc(i)}</option>`).join('');units()}
-if(!$('gZone').options.length){$('gZone').innerHTML=d.zones.map(z=>`<option value="${esc(z)}"${z===v.zone?' selected':''}>${esc(zname(z))}</option>`).join('');zonePicker($('gZone'),{pins:()=>[{zone:v.zone,label:'🙋 나',kind:'me'}]})}
-$('myGifts').className=d.my_donations.length?'':'muted';$('myGifts').innerHTML=d.my_donations.length?d.my_donations.map(g=>`<div class="need"><span>${esc(g.item)} ${esc(g.qty)}</span><span>${esc(g.state)}</span></div>`).join(''):'아직 등록한 기부가 없습니다.';
+if(!$('gPlace').value)$('gPlace').value=v.address||'';
+$('myGifts').className=d.my_donations.length?'':'muted';$('myGifts').innerHTML=d.my_donations.length?d.my_donations.map(g=>`<div class="need"><span>${esc(g.item)} ${esc(g.qty)} <span class="muted">· ${esc(g.place)}</span></span><span>${esc(g.state)}</span></div>`).join(''):'아직 등록한 기부가 없습니다.';
 $('csvLink').href='/api/public/volunteers/'+encodeURIComponent(VID)+'/activity.csv';
 document.querySelectorAll('button[data-act]').forEach(b=>b.addEventListener('click',async()=>{b.disabled=true;try{await post(`/api/public/volunteers/${encodeURIComponent(VID)}/tasks/${encodeURIComponent(b.dataset.t)}/${b.dataset.act}`);load()}catch(e){alert(e.message);b.disabled=false}}));
-document.querySelectorAll('button[data-sos]').forEach(b=>b.addEventListener('click',()=>sos(b.dataset.sos)));drawMap()}catch(e){$('vInfo').textContent='불러오지 못했습니다: '+e.message}}
+document.querySelectorAll('button[data-sos]').forEach(b=>b.addEventListener('click',()=>sos(b.dataset.sos)))}
+catch(e){if(/찾을 수 없/.test(e.message)){VID='';store.set('');go('')}else $('whoText').textContent='불러오지 못했습니다: '+e.message}}
 function units(){const u=(DATA?.catalog[$('gItem').value]||{}).units||[];$('gUnit').innerHTML=u.map(x=>`<option>${esc(x)}</option>`).join('')}
 $('gItem').addEventListener('change',units);
 async function sos(task){if(!confirm('담당자 화면에 SOS를 보냅니다. 위급하면 119에도 바로 전화하세요.'))return;try{const r=await post(`/api/public/volunteers/${encodeURIComponent(VID)}/sos`,task?{task}:{});go('me');$('sosResult').hidden=false;$('sosResult').textContent=`SOS를 보냈습니다(${r.id}). 담당자 상황판 맨 위에 표시됩니다. 위급하면 119에도 전화하세요.`}catch(e){alert(e.message)}}
 $('sosBtn').addEventListener('click',()=>sos(null));
-$('giftForm').addEventListener('submit',async e=>{e.preventDefault();const days=$('gDays').value;try{const r=await post(`/api/public/volunteers/${encodeURIComponent(VID)}/donations`,{item:$('gItem').value,qty:Number($('gQty').value),unit:$('gUnit').value,condition:$('gCond').value,days_left:days===''?null:Number(days),zone:$('gZone').value});$('giftResult').hidden=false;$('giftResult').className='box ok';$('giftResult').textContent=`${r.item} ${r.qty} 기부 등록(${r.id}) · ${r.state}. 담당자가 검수하면 필요한 곳에 연결됩니다.`;load()}catch(err){$('giftResult').hidden=false;$('giftResult').className='box err';$('giftResult').textContent='등록하지 못했습니다: '+err.message}});
-band().then(init);setInterval(()=>{band();if(VID&&!document.activeElement?.closest?.('form'))load()},15000);
+$('giftForm').addEventListener('submit',async e=>{e.preventDefault();const days=$('gDays').value;try{const r=await post(`/api/public/volunteers/${encodeURIComponent(VID)}/donations`,{item:$('gItem').value,qty:Number($('gQty').value),unit:$('gUnit').value,condition:$('gCond').value,days_left:days===''?null:Number(days),address:$('gPlace').value.trim()});$('giftResult').hidden=false;$('giftResult').className='box ok';$('giftResult').textContent=`${r.item} ${r.qty} 기부 등록(${r.id}) · ${r.state}. 담당자가 검수하면 필요한 곳에 연결됩니다.`;load()}catch(err){$('giftResult').hidden=false;$('giftResult').className='box err';$('giftResult').textContent='등록하지 못했습니다: '+err.message}});
+
+(async()=>{await band();try{[OPT]=await Promise.all([api('/api/public/volunteer-options')]);fillProfile(null);
+const d=await api('/api/public/volunteers');$('vSel').innerHTML='<option value="">고르기</option>'+d.items.map(v=>`<option value="${esc(v.id)}">${esc(v.id)} · ${esc(v.place)} · ${esc(v.skills.join(', '))}</option>`).join('')}catch(e){$('joinErr').textContent='가입 화면을 불러오지 못했습니다: '+e.message}
+VID=store.get();if(VID)await load();go(location.hash.slice(1))})();
+setInterval(()=>{band();if(VID&&!document.activeElement?.closest?.('form'))load()},15000);
 </script></body></html>

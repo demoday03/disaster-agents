@@ -17,9 +17,9 @@
   let current = 'overview', META = null, refreshTimer = null, lastSensorApproval = null;
 
   // ---------------------------------------------------------------- 탭
-  const LOADERS = {overview: () => { loadSituation(); loadZoneMap(); }, notice: loadAnnouncements, supply: loadSupply, volunteer: loadVolunteer, recovery: loadRecovery,
+  const LOADERS = {overview: () => { loadSituation(); }, notice: loadAnnouncements, supply: loadSupply, volunteer: loadVolunteer, recovery: loadRecovery,
                    welfare: loadChecks, sensor: () => { loadVerifyDocs(); loadSensorLive(); }, approvals: () => loadApprovals(),
-                   dispatch: () => { loadDispatch(); loadControl(); loadShelterOps(); loadDispatchMap(); },
+                   dispatch: () => { loadDispatch(); loadControl(); loadShelterOps(); },
                    guidance: loadIncidents, system: () => { loadHealth(); loadAgents(); }};
   function go(tab) {
     current = tab;
@@ -32,6 +32,9 @@
     try { localStorage.setItem('adminTab', tab); } catch (e) { /* 저장 불가 환경 */ }
   }
 
+  // 가구의 위치: 주민이 적은 주소, 없으면(시연 가구) 장소 설명
+  const hhPlace = id => { const h = META && META.households.find(x => x.id === id); return h ? (h.address || place(h.zone)) : null; };
+
   // 대피소 운영(O6): 입소·퇴소 기록과 남은 자리
   async function loadShelterOps() {
     try {
@@ -39,64 +42,18 @@
       $('shelterOps').classList.remove('muted');
       $('shelterOps').innerHTML = d.shelters.map(s => {
         const pct = Math.round(100 * (s.capacity - s.capacity_left) / s.capacity);
-        return `<div class="occ"><span class="nm"><b>${E(s.name)}</b> <span class="muted">${E(s.zone)} · ${E(s.type)}${s.amenities.length ? ' · ' + E(s.amenities.join(', ')) : ''}</span></span>` +
+        return `<div class="occ"><span class="nm"><b>${E(s.name)}</b> <span class="muted">${E(place(s.zone))} · ${E(s.type)}${s.amenities.length ? ' · ' + E(s.amenities.join(', ')) : ''}</span></span>` +
           `<span class="meter${s.capacity_left <= 0 ? ' full' : ''}" title="${pct}%"><span style="width:${Math.min(100, pct)}%"></span></span>` +
           `<span>${E(s.occupied)}명 입소 · 남은 자리 ${E(Math.max(0, s.capacity_left))}명</span>` +
           [[1, '입소 +1'], [5, '+5'], [-1, '퇴소 −1']].map(([n, t]) => `<button type="button" class="${n < 0 ? 'quiet' : ''}" data-occ="${E(s.id)}" data-n="${n}">${t}</button>`).join('') + '</div>';
       }).join('');
       $('shelterOps').querySelectorAll('button[data-occ]').forEach(b => b.addEventListener('click', async () => {
         b.disabled = true;
-        try { await post(`/api/shelters/${encodeURIComponent(b.dataset.occ)}/occupancy`, {delta: Number(b.dataset.n)}); loadShelterOps(); loadDispatch(); if (current === 'dispatch') loadDispatchMap(); }
+        try { await post(`/api/shelters/${encodeURIComponent(b.dataset.occ)}/occupancy`, {delta: Number(b.dataset.n)}); loadShelterOps(); loadDispatch(); }
         catch (err) { alert(err.message); b.disabled = false; }
       }));
     } catch (e) { showError('shelterOps', e); }
   }
-
-  // 구역 현황(모의 구역도): 구역을 누르면 신고 목록을 그 구역만 보이게 거른다(다시 누르면 전체)
-  let zoneFilter = null;
-  function applyZoneFilter() {
-    document.querySelectorAll('#incidents .incident').forEach(d => { d.hidden = !!zoneFilter && d.dataset.zone !== zoneFilter; });
-    $('zoneHint').textContent = zoneFilter ? `${zoneFilter} 신고만 보는 중 · 같은 구역을 다시 누르면 전체` : '구역을 누르면 그 구역 신고만 봅니다';
-  }
-  async function loadZoneMap() {
-    try {
-      const [d, inc] = await Promise.all([api('/api/dispatch'), api('/api/incidents')]);
-      const live = inc.items.map(x => x.output).filter(o => o.state !== '오접수');
-      window.renderZoneMap($('zoneMap'), {zones: d.zones, shelters: d.shelters, controls: d.control_zones,
-        incidents: live, selected: zoneFilter,
-        onPick: z => { zoneFilter = zoneFilter === z ? null : z; applyZoneFilter(); loadZoneMap(); }});
-      $('zoneMap').classList.remove('muted');
-    } catch (e) { showError('zoneMap', e); }
-  }
-  // 탭마다 위치가 있는 것은 같은 모의 지도에 핀으로 올린다(구역 격자는 한 번만 받아 둔다)
-  let GRID = null;
-  const zoneGrid = async () => GRID || (GRID = (await api('/api/dispatch')).zones);
-  const countPins = (xs, label, kind) => {
-    const by = {};
-    xs.forEach(z => { by[z] = (by[z] || 0) + 1; });
-    return Object.entries(by).map(([zone, n]) => ({zone, label: `${label} ${n}`, kind}));
-  };
-  // 배치 지도: 대피소 남은 자리·공공 인력 위치·통제 구간(해제 포함). 구역 두 곳을 누르면 통제 구간 등록의 A·B로 넣는다
-  let ctlPick = [];
-  async function loadDispatchMap() {
-    try {
-      await loadMeta();
-      const [d, inc] = await Promise.all([api('/api/dispatch'), api('/api/incidents')]);
-      const live = inc.items.map(x => x.output).filter(o => o.state !== '오접수');
-      window.renderZoneMap($('dispatchMap'), {zones: d.zones, shelters: d.shelters, controls: d.control_zones, showInactive: true, incidents: live,
-        highlight: new Set(ctlPick), pins: countPins(d.public.filter(t => t.available !== false).map(t => t.zone), '인력', ''),
-        onPick: z => {
-          ctlPick = ctlPick.length >= 2 ? [z] : [...ctlPick.filter(x => x !== z), z];
-          if (ctlPick[0]) $('czA').value = ctlPick[0];
-          if (ctlPick[1]) $('czB').value = ctlPick[1];
-          $('dmapHint').textContent = ctlPick.length === 2 ? `통제 구간 등록에 ${ctlPick[0]} ↔ ${ctlPick[1]}을 넣었습니다. 구간 이름을 쓰고 등록하세요.` : `구역 A = ${ctlPick[0]}. 맞닿은 구역 하나를 더 누르세요.`;
-          loadDispatchMap();
-        }});
-      $('dispatchMap').classList.remove('muted');
-    } catch (e) { showError('dispatchMap', e); }
-  }
-  const baseLoadIncidents = loadIncidents;
-  loadIncidents = async function () { await baseLoadIncidents(); applyZoneFilter(); };
 
   // 승인 대기열 개수 배지 + 처리 후 관련 탭 새로 고침
   const baseLoadApprovals = loadApprovals;
@@ -114,23 +71,21 @@
     if (META) return META;
     const r = await api('/api/recovery'), s = await api('/api/supply');
     META = {zones: r.zones, households: r.households, volunteers: s.volunteers, catalog: s.catalog};
-    const zoneOpts = options(META.zones, z => `${z.id} ${z.name}`, z => z.id);
+    ZDESC = Object.fromEntries(META.zones.map(z => [z.id, (String(z.name).match(/\(([^)]+)\)/) || [, z.name])[1]]));
+    VNAME = Object.fromEntries(META.volunteers.map(v => [v.id, v.name || v.id]));
+    const zoneOpts = options(META.zones, z => place(z.id), z => z.id);
     document.querySelectorAll('select.zoneSel').forEach(sel => { sel.innerHTML = zoneOpts; });
-    $('ckZone').innerHTML = '<option value="all">전체</option>' + zoneOpts;
-    $('annZone').innerHTML = '<option value="all">전체</option>' + zoneOpts;
-    const hhOpts = options(META.households, h => `${h.id} · ${h.zone} · ${h.floor}${h.factors.length ? ' · ' + h.factors.join('·') : ''}`, h => h.id);
+    const hhOpts = options(META.households, h => `${h.id} · ${h.address || place(h.zone)} · ${h.floor}${h.factors.length ? ' · ' + h.factors.join('·') : ''}`, h => h.id);
     ['sHousehold', 'caseHousehold', 'rpHousehold'].forEach(id => { $(id).innerHTML = hhOpts; });
     $('vHousehold').innerHTML = '<option value="">선택 안 함</option>' + hhOpts;
     const items = Object.keys(META.catalog);
     $('sItem').innerHTML = '<option value="">(메모에서 찾기)</option>' + options(items, i => `${i} (${META.catalog[i].category})`, i => i);
     $('dnItem').innerHTML = options(items, i => `${i} (${META.catalog[i].category})`, i => i);
-    const volOpts = options(META.volunteers, v => `${v.id} · ${v.zone} · ${v.mode}`, v => v.id);
+    const volOpts = options(META.volunteers, v => `${v.name || v.id} · ${v.address || place(v.zone)} · ${v.mode}`, v => v.id);
     $('dnDonor').innerHTML = volOpts; $('sosVol').innerHTML = volOpts;
-    const hhZone = id => META.households.find(h => h.id === id)?.zone;
-    [['rpHousehold', 'rpZone'], ['vHousehold', 'vZone']].forEach(([h, z]) => {
-      const set = () => { const zone = hhZone($(h).value); if (zone) $(z).value = zone; };
-      $(h).addEventListener('change', set); set();
-    });
+    // 피해 신고서의 위치는 고른 가구의 위치로 채운다(같은 내용을 두 번 입력하지 않게)
+    const fillRpPlace = () => { const h = META.households.find(x => x.id === $('rpHousehold').value); if (h) $('rpZone').value = h.address || place(h.zone); };
+    $('rpHousehold').addEventListener('change', fillRpPlace); fillRpPlace();
     const syncUnits = () => { $('dnUnit').innerHTML = options(META.catalog[$('dnItem').value]?.units || []); };
     $('dnItem').addEventListener('change', syncUnits); syncUnits();
     return META;
@@ -170,8 +125,8 @@
       await loadMeta();   // 구역 고르기 목록
       const d = await api('/api/announcements');
       $('annList').classList.toggle('muted', !d.items.length);
-      $('annList').innerHTML = d.items.length ? table(['올린 때', '대상', '구역', '내용', ''], d.items.map(a =>
-        `<tr${a.active ? '' : ' class="muted"'}><td>${E(fmtTime(a.at))}</td><td>${E(d.audiences[a.audience] || a.audience)}</td><td>${E(a.zone === 'all' ? '전체' : a.zone)}</td>` +
+      $('annList').innerHTML = d.items.length ? table(['올린 때', '대상', '받는 곳', '내용', ''], d.items.map(a =>
+        `<tr${a.active ? '' : ' class="muted"'}><td>${E(fmtTime(a.at))}</td><td>${E(d.audiences[a.audience] || a.audience)}</td><td>${E(a.zone === 'all' ? '전체' : place(a.zone))}</td>` +
         `<td>${a.urgent ? chip('긴급', 'bad') + ' ' : ''}${E(a.text)}<div class="muted">${E(a.by)} 올림${a.active ? '' : ` · ${E(a.ended_by || '')} 내림`}</div></td>` +
         `<td>${a.active ? `<button type="button" class="quiet" data-ann-end="${E(a.id)}">내리기</button>` : '내림'}</td></tr>`)) : '아직 올린 공지가 없습니다.';
     } catch (e) { showError('annList', e); }
@@ -180,7 +135,7 @@
   async function loadSituation() {
     try {
       const [stage, checks, vol, sup] = await Promise.all([api('/api/stage'), api('/api/welfare/checks'), api('/api/volunteer'), api('/api/supply')]);
-      const sos = vol.sos.map(s => `<div class="incident err"><b>SOS</b> · 봉사자 ${E(s.volunteer)}${s.task ? ' · 작업 ' + E(s.task) : ''} · ${E(fmtTime(s.ts))} <button data-ack="${E(s.id)}" class="red">확인</button></div>`).join('');
+      const sos = vol.sos.map(s => `<div class="incident err"><b>SOS</b> · 봉사자 ${E(s.name || vn(s.volunteer))}${s.task ? ' · 작업 ' + E(s.task) : ''} · ${E(fmtTime(s.ts))} <button data-ack="${E(s.id)}" class="red">확인</button></div>`).join('');
       const esc = checks.checks.filter(c => c.state === '격상');
       const short = sup.forecast.filter(f => f.shortage);
       const waiting = sup.requests.filter(r => r.state === '검토').length;
@@ -208,7 +163,7 @@
     try {
       await loadMeta();
       const d = await api('/api/supply');
-      $('supplyRequests').innerHTML = table(['요청', '가구·구역', '품목·수량', '긴급도', '표시', '상태', '처리'], d.requests.map(r => {
+      $('supplyRequests').innerHTML = table(['요청', '가구·위치', '품목·수량', '긴급도', '표시', '상태', '처리'], d.requests.map(r => {
         const acts = r.pending_approval ? `<span class="muted">배치 승인 대기 ${E(r.pending_approval)}</span>`
           : (REQ_ACTIONS[r.state] || []).map(([label, act, body, needReason]) =>
             `<button data-req="${E(r.id)}" data-act="${E(act)}" data-body='${E(JSON.stringify(body))}' ${needReason ? 'data-reason="1"' : ''} class="${label.includes('반려') || label.includes('못') ? 'gray' : ''}">${E(label)}</button>`).join('');
@@ -216,7 +171,7 @@
           r.route === 'manual_medicine' ? chip('의약품: 직접 처리', 'bad') : '', r.qty_unconfirmed ? chip('수량 확인 필요', 'warn') : '',
           r.merged_count > 1 ? chip(`요청 ${r.merged_count}건 병합`) : '',
           r.last_proposal?.procurement_needed ? chip(`부족 ${r.last_proposal.shortfall} · 외부 조달 필요`, 'bad') : ''].join('');
-        return `<tr><td>${E(r.id)}</td><td>${r.household ? E(r.household) : '신고 ' + E(r.incident_id)} · ${E(r.zone)}${r.review_reason ? ' ' + chip(r.review_reason, 'warn') : ''}</td><td>${E(r.item)} ${E(r.qty)}</td><td>${E(r.urgency)}</td><td>${marks}</td><td>${chip(r.state, STATE_CLS[r.state] || '')}</td><td>${acts}</td></tr>`;
+        return `<tr><td>${E(r.id)}</td><td>${r.household ? E(r.household) : '신고 ' + E(r.incident_id)} · ${E(hhPlace(r.household) || place(r.zone))}${r.review_reason ? ' ' + chip(r.review_reason, 'warn') : ''}</td><td>${E(r.item)} ${E(r.qty)}</td><td>${E(r.urgency)}</td><td>${marks}</td><td>${chip(r.state, STATE_CLS[r.state] || '')}</td><td>${acts}</td></tr>`;
       }));
       $('supplyRequests').querySelectorAll('button[data-req]').forEach(b => b.addEventListener('click', async () => {
         const body = JSON.parse(b.dataset.body);
@@ -247,17 +202,14 @@
     try {
       await loadMeta();
       const d = await api('/api/volunteer');
-      window.renderZoneMap($('volMap'), {zones: await zoneGrid(), legend: false,
-        pins: [...countPins(d.tasks.filter(t => t.state !== '완료').map(t => t.zone), '작업', 'task'),
-               ...countPins(d.volunteers.filter(v => !v.busy).map(v => v.zone), '대기 봉사자', '')]});
       const pend = Object.entries(d.safety).filter(([, v]) => v == null).length;
       $('volSafety').textContent = pend ? `안전 기준(연속 활동 시간·고온 등) ${pend}개가 공식 지침 확인 전이라 '기준 미확정'으로 두고 적용하지 않습니다.` : '';
-      $('volTasks').innerHTML = table(['작업', '유형·구역', '필요', '추천·투입 인원', '상태', '처리'], [...d.tasks].reverse().map(t => {
+      $('volTasks').innerHTML = table(['작업', '작업·위치', '필요', '추천·투입 인원', '상태', '처리'], [...d.tasks].reverse().map(t => {
         const rec = t.last_recommendation || {};
-        const team = (t.team || rec.team || []).join(', ') || '-';
+        const team = (t.team || rec.team || []).map(vn).join(', ') || '-';
         const acts = t.pending_approval ? `<span class="muted">투입 승인 대기 ${E(t.pending_approval)}</span>`
           : (TASK_ACTIONS[t.state] || []).map(([label, act]) => `<button data-task="${E(t.id)}" data-act="${act}">${E(label)}</button>`).join('');
-        return `<tr><td>${E(t.id)}</td><td>${E(t.type)} · ${E(t.zone)}${t.household ? ' · ' + E(t.household) : ''}</td><td>${E(t.people)}명 · ${E(t.hours)}시간 · ${E((t.equipment || []).join(', ') || '장비 없음')}</td><td>${E(team)}${rec.shortfall ? ' ' + chip('부족 ' + rec.shortfall + '명', 'warn') : ''}</td><td>${chip(t.state, STATE_CLS[t.state] || '')}</td><td>${acts}</td></tr>`;
+        return `<tr><td>${E(t.id)}</td><td>${E(t.type)} · ${E(t.address || place(t.zone))}${t.household ? ' · ' + E(t.household) : ''}</td><td>${E(t.people)}명 · ${E(t.hours)}시간 · ${E((t.equipment || []).join(', ') || '장비 없음')}</td><td>${E(team)}${rec.shortfall ? ' ' + chip('부족 ' + rec.shortfall + '명', 'warn') : ''}</td><td>${chip(t.state, STATE_CLS[t.state] || '')}</td><td>${acts}</td></tr>`;
       }));
       $('volTasks').querySelectorAll('button[data-task]').forEach(b => b.addEventListener('click', async () => {
         b.disabled = true;
@@ -267,12 +219,12 @@
           await loadApprovals(); await loadVolunteer();
         } catch (e) { alert(e.message); b.disabled = false; }
       }));
-      $('volSos').innerHTML = d.sos.map(s => `<div class="incident err"><b>SOS</b> · ${E(s.volunteer)}${s.task ? ' · ' + E(s.task) : ''} · ${E(fmtTime(s.ts))} <button data-ack="${E(s.id)}" class="red">확인</button></div>`).join('');
+      $('volSos').innerHTML = d.sos.map(s => `<div class="incident err"><b>SOS</b> · ${E(s.name || vn(s.volunteer))}${s.task ? ' · ' + E(s.task) : ''} · ${E(fmtTime(s.ts))} <button data-ack="${E(s.id)}" class="red">확인</button></div>`).join('');
       $('volSos').querySelectorAll('button[data-ack]').forEach(b => b.addEventListener('click', async () => {
         try { await post(`/api/volunteer/sos/${encodeURIComponent(b.dataset.ack)}/ack`); loadVolunteer(); } catch (e) { alert(e.message); }
       }));
-      $('volList').innerHTML = table(['봉사자', '구역', '역량', '장비', '가능 시간', '참여 방식', '상태'], d.volunteers.map(v =>
-        `<tr><td>${E(v.id)}</td><td>${E(v.zone)}</td><td>${E(v.skills.join(', '))}</td><td>${E(v.equipment.join(', ') || '-')}</td><td>${E(v.available_min)}분</td><td>${E(v.mode)}</td><td>${v.busy ? chip('투입 중', 'warn') : chip('대기', 'ok')}</td></tr>`));
+      $('volList').innerHTML = table(['봉사자', '활동할 곳', '역량', '장비', '가능 시간', '참여 방식', '상태'], d.volunteers.map(v =>
+        `<tr><td>${E(v.name || v.id)}</td><td>${E(v.address || place(v.zone))}</td><td>${E(v.skills.join(', '))}</td><td>${E(v.equipment.join(', ') || '-')}</td><td>${E(v.available_min)}분</td><td>${E(v.mode)}</td><td>${v.busy ? chip('투입 중', 'warn') : chip('대기', 'ok')}</td></tr>`));
     } catch (e) { showError('volTasks', e); }
   }
 
@@ -282,21 +234,18 @@
       await loadMeta();
       const d = await api('/api/recovery');
       if (!d.doc_parser) $('docParserNote').textContent = '문서 파싱 API가 연결되지 않아(mock 모드) 지금은 텍스트(.txt) 파일만 읽을 수 있습니다. PDF·사진은 LLM_MODE=solar로 실행하세요.';
-      $('caseList').innerHTML = table(['케이스', '가구·구역', '현재 단계', '이력', '봉사 작업', '처리'], d.cases.map(c => {
+      $('caseList').innerHTML = table(['케이스', '가구·위치', '현재 단계', '이력', '봉사 작업', '처리'], d.cases.map(c => {
         const idx = d.stages.indexOf(c.stage), next = d.stages[idx + 1];
         const tasks = Object.entries(c.tasks || {}).map(([t, s]) => chip(`${t} ${s}`, s === '완료' ? 'ok' : '')).join('') || '-';
-        return `<tr><td>${E(c.id)}</td><td>${E(c.household)} · ${E(c.zone)}</td><td>${d.stages.map((s, i) => chip(s, i < idx ? 'ok' : i === idx ? 'warn' : '')).join('')}</td><td>${E(c.timeline.map(t => t.stage + (t.by ? '(' + t.by + ')' : '')).join(' → '))}</td><td>${tasks}</td><td>${next ? `<button data-case="${E(c.id)}" data-to="${E(next)}">${E(next)} 단계로</button>` : chip('완료', 'ok')}</td></tr>`;
+        return `<tr><td>${E(c.id)}</td><td>${E(c.household)} · ${E(hhPlace(c.household) || place(c.zone))}</td><td>${d.stages.map((s, i) => chip(s, i < idx ? 'ok' : i === idx ? 'warn' : '')).join('')}</td><td>${E(c.timeline.map(t => t.stage + (t.by ? '(' + t.by + ')' : '')).join(' → '))}</td><td>${tasks}</td><td>${next ? `<button data-case="${E(c.id)}" data-to="${E(next)}">${E(next)} 단계로</button>` : chip('완료', 'ok')}</td></tr>`;
       }));
       $('caseList').querySelectorAll('button[data-case]').forEach(b => b.addEventListener('click', async () => {
         b.disabled = true;
         try { await post(`/api/recovery/cases/${encodeURIComponent(b.dataset.case)}/advance`, {to: b.dataset.to}); loadRecovery(); } catch (e) { alert(e.message); b.disabled = false; }
       }));
-      window.renderZoneMap($('surveyMap'), {zones: await zoneGrid(), legend: false,
-        pins: Object.entries(d.aggregate.by_zone).map(([zone, by]) => ({zone, label: `피해 ${Object.values(by).reduce((a, b) => a + b, 0)}`, kind: 'alert'}))
-          .concat(countPins(d.cases.filter(c => c.stage !== '지원금').map(c => c.zone), '복구 중', 'task'))});
-      const zones = Object.keys(d.aggregate.by_zone).sort((a, b) => a.localeCompare(b, 'ko', {numeric: true}));
-      $('surveyTable').innerHTML = `<p>입력 ${E(d.aggregate.total)}건</p>` + table(['구역', ...d.damage_types], zones.map(z =>
-        `<tr><td>${E(z)}</td>${d.damage_types.map(t => `<td>${E(d.aggregate.by_zone[z][t] || 0)}</td>`).join('')}</tr>`));
+      const tot = Object.fromEntries(d.damage_types.map(t => [t, Object.values(d.aggregate.by_zone).reduce((n, by) => n + (by[t] || 0), 0)]));
+      $('surveyTable').innerHTML = `<p>입력 ${E(d.aggregate.total)}건 · ${d.damage_types.map(t => `${E(t)} ${E(tot[t])}건`).join(' · ')}</p>` +
+        table(['입력 시각', '피해 위치', '피해 유형'], (d.surveys || []).map(x => `<tr><td>${E(fmtTime(x.ts))}</td><td>${E(x.address || place(x.zone))}</td><td>${E(x.damage_type)}</td></tr>`));
     } catch (e) { showError('caseList', e); }
   }
 
@@ -305,14 +254,9 @@
     try {
       await loadMeta();
       const d = await api('/api/welfare/checks');
-      window.renderZoneMap($('welfareMap'), {zones: await zoneGrid(), legend: false,
-        highlight: new Set(d.checks.filter(c => c.state === '격상').map(c => c.zone)),
-        pins: [...countPins(d.checks.filter(c => c.state === '격상').map(c => c.zone), '격상', 'alert'),
-               ...countPins(d.checks.filter(c => c.state === '대기').map(c => c.zone), '응답 대기', 'task'),
-               ...countPins(d.checks.filter(c => c.state === '안전').map(c => c.zone), '안전', 'shel')]});
       if (d.escalated_now.length) $('checkResult').innerHTML = `<span class="err">방금 격상: ${E(d.escalated_now.join(', '))} (담당자 확인 필요, 자동 출동 없음)</span>`;
-      $('checkList').innerHTML = table(['가구', '구역', '취약 요인', '상태', '남은 시간', '처리'], d.checks.map(c =>
-        `<tr><td>${E(c.household)}</td><td>${E(c.zone)}</td><td>${E(c.factors.join(', ') || '-')}</td><td>${chip(c.state, STATE_CLS[c.state] || '')}</td><td>${c.seconds_left != null ? E(Math.max(0, c.seconds_left)) + '초' : '-'}</td><td>${['대기', '격상'].includes(c.state) ? `<button data-hh="${E(c.household)}">안전 응답(노드 D 모의)</button>` : ''}</td></tr>`));
+      $('checkList').innerHTML = table(['가구', '위치', '취약 요인', '상태', '남은 시간', '처리'], d.checks.map(c =>
+        `<tr><td>${E(c.household)}</td><td>${E(hhPlace(c.household) || place(c.zone))}</td><td>${E(c.factors.join(', ') || '-')}</td><td>${chip(c.state, STATE_CLS[c.state] || '')}</td><td>${c.seconds_left != null ? E(Math.max(0, c.seconds_left)) + '초' : '-'}</td><td>${['대기', '격상'].includes(c.state) ? `<button data-hh="${E(c.household)}">안전 응답(노드 D 모의)</button>` : ''}</td></tr>`));
       $('checkList').querySelectorAll('button[data-hh]').forEach(b => b.addEventListener('click', async () => {
         b.disabled = true;
         try { await post(`/api/welfare/checks/${encodeURIComponent(b.dataset.hh)}/respond`); loadChecks(); } catch (e) { alert(e.message); b.disabled = false; }
@@ -325,11 +269,11 @@
     try {
       await loadMeta();
       const d = await api('/api/dispatch');
-      $('controlList').innerHTML = table(['ID', '구간', '연결 구역', '상태', '처리'], d.control_zones.map(c =>
-        `<tr><td>${E(c.id)}</td><td>${E(c.name)}</td><td>${E(c.between.join(' ↔ '))}</td><td>${c.active ? chip('통제 중', 'bad') : chip('해제', 'ok')}</td><td><button data-cz="${E(c.id)}" data-on="${c.active ? '' : '1'}" class="${c.active ? 'gray' : 'red'}">${c.active ? '통제 해제' : '통제 시작'}</button></td></tr>`));
+      $('controlList').innerHTML = table(['ID', '막힌 길', '막히는 곳', '상태', '처리'], d.control_zones.map(c =>
+        `<tr><td>${E(c.id)}</td><td>${E(c.name)}</td><td>${E(c.between.map(place).join(' ↔ '))}</td><td>${c.active ? chip('통제 중', 'bad') : chip('해제', 'ok')}</td><td><button data-cz="${E(c.id)}" data-on="${c.active ? '' : '1'}" class="${c.active ? 'gray' : 'red'}">${c.active ? '통제 해제' : '통제 시작'}</button></td></tr>`));
       $('controlList').querySelectorAll('button[data-cz]').forEach(b => b.addEventListener('click', async () => {
         b.disabled = true;
-        try { const r = await post(`/api/control-zones/${encodeURIComponent(b.dataset.cz)}/toggle`, {active: !!b.dataset.on}); reportAffected(r); loadControl(); loadDispatch(); loadDispatchMap(); }
+        try { const r = await post(`/api/control-zones/${encodeURIComponent(b.dataset.cz)}/toggle`, {active: !!b.dataset.on}); reportAffected(r); loadControl(); loadDispatch(); }
         catch (e) { alert(e.message); b.disabled = false; }
       }));
     } catch (e) { showError('controlList', e); }
@@ -417,7 +361,7 @@
       e.preventDefault();
       const b = e.submitter; if (b) b.disabled = true;
       try {
-        await post('/api/announcements', {text: $('annText').value, audience: $('annAudience').value, zone: $('annZone').value, urgent: $('annUrgent').value === '1'});
+        await post('/api/announcements', {text: $('annText').value, audience: $('annAudience').value, zone: 'all', urgent: $('annUrgent').value === '1'});
         $('annText').value = ''; show('annResult', '공지를 올렸습니다. 주민·봉사자 화면에 15초 안에 나타납니다.'); loadAnnouncements();
       } catch (err) { fail('annResult', err); } finally { if (b) b.disabled = false; }
     });
@@ -443,7 +387,7 @@
       try {
         await post(`/api/incidents/${encodeURIComponent(b.dataset.classify)}/classify`,
           {type: v('type'), zone: v('zone'), urgency: Number(v('urgency'))});
-        await loadIncidents(); loadZoneMap();
+        await loadIncidents();
       } catch (err) { alert(err.message); b.disabled = false; }
     });
     $('applyRain').addEventListener('click', async () => {
@@ -459,7 +403,7 @@
     $('controlForm').addEventListener('submit', async e => {
       e.preventDefault();
       try { const r = await post('/api/control-zones', {name: $('czName').value, between: [$('czA').value, $('czB').value]});
-            reportAffected(r); $('czName').value = ''; ctlPick = []; loadControl(); loadDispatch(); loadDispatchMap(); }
+            reportAffected(r); $('czName').value = ''; loadControl(); loadDispatch(); }
       catch (err) { $('controlResult').innerHTML = '<span class="err">오류: ' + E(err.message) + '</span>'; }
     });
     $('gZonesFill').addEventListener('click', async () => {
@@ -484,13 +428,14 @@
       e.preventDefault();
       const days = $('dnDays').value.trim();
       const body = {donor: $('dnDonor').value, item: $('dnItem').value, qty: Number($('dnQty').value), unit: $('dnUnit').value,
-                    condition: $('dnCond').value === '파손·오염' ? '파손' : $('dnCond').value, days_left: days === '' ? null : Number(days), zone: $('dnZone').value};
+                    condition: $('dnCond').value === '파손·오염' ? '파손' : $('dnCond').value, days_left: days === '' ? null : Number(days), address: $('dnAddress').value};
       try { const r = await post('/api/supply/donations', body); show('donationResult', `${E(r.id)} 등록 · ${E(r.state)} (담당자 검수 후 매칭 대상)`); loadSupply(); }
       catch (err) { fail('donationResult', err); }
     });
     $('volForm').addEventListener('submit', async e => {
       e.preventDefault();
-      const body = {text: $('vText').value, zone: $('vZone').value};
+      const body = {text: $('vText').value};
+      if ($('vAddress').value.trim()) body.address = $('vAddress').value.trim();
       if ($('vHousehold').value) body.household = $('vHousehold').value;
       if ($('vTemp').value !== '') body.temperature_c = Number($('vTemp').value);
       try {
@@ -516,7 +461,7 @@
     });
     const fillExtract = (r, prefix = '') => {
       const f = r.fields;
-      if (f.zone && [...$('rpZone').options].some(o => o.value === f.zone)) $('rpZone').value = f.zone;
+      if (f.zone) $('rpZone').value = place(f.zone);
       if (f.householder) $('rpHolder').value = f.householder;
       if (f.damage_type && [...$('rpDamage').options].some(o => o.value === f.damage_type)) $('rpDamage').value = f.damage_type;
       $('extractResult').innerHTML = prefix + (r.manual_form_required
@@ -554,12 +499,12 @@
     });
     $('surveyForm').addEventListener('submit', async e => {
       e.preventDefault();
-      try { await post('/api/recovery/surveys', {zone: $('svZone').value, damage_type: $('svDamage').value}); loadRecovery(); } catch (err) { alert(err.message); }
+      try { await post('/api/recovery/surveys', {address: $('svAddress').value, damage_type: $('svDamage').value}); loadRecovery(); } catch (err) { alert(err.message); }
     });
     $('checkForm').addEventListener('submit', async e => {
       e.preventDefault();
       try {
-        const r = await post('/api/welfare/checks/start', {zone: $('ckZone').value, timeout_s: Number($('ckTimeout').value)});
+        const r = await post('/api/welfare/checks/start', {zone: 'all', timeout_s: Number($('ckTimeout').value)});
         $('checkResult').textContent = `${r.started.length}가구에 안전 확인을 요청했습니다(모의).` + (r.skipped_no_consent.length ? ` 동의하지 않은 ${r.skipped_no_consent.join(', ')}는 제외했습니다.` : '');
         loadChecks();
       } catch (err) { $('checkResult').innerHTML = '<span class="err">오류: ' + E(err.message) + '</span>'; }
@@ -594,6 +539,7 @@
 
   window.opsInit = async () => {
     bind();
+    try { await loadMeta(); loadIncidents(); } catch (e) { /* 메타 정보 없이도 화면은 쓴다 */ }
     let saved = 'overview';
     try { saved = localStorage.getItem('adminTab') || 'overview'; } catch (e) { /* 저장 불가 환경 */ }
     go(document.querySelector(`#tabs button[data-go="${saved}"]`) ? saved : 'overview');

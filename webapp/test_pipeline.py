@@ -58,7 +58,7 @@ class TestPipeline(ServerBase):
 
     def test_missing_location_asks_reporter_then_continues(self):
         o = self.report("생수 10병 보내 주세요")
-        self.assertEqual((o["state"], o["missing"], o["linked"]), ("보완 필요", ["위치(구역)"], {}))
+        self.assertEqual((o["state"], o["missing"], o["linked"]), ("보완 필요", ["위치"], {}))
         self.assertEqual(self.supply_requests(o["id"]), [])   # 위치 없이 물품을 보내지 않는다
         anon = Client(self.base)
         code, d = anon.post(f"/api/incidents/{o['id']}/supplement", {"text": "Z5 구역입니다"})
@@ -174,7 +174,7 @@ class TestPipeline(ServerBase):
     def test_unknown_zone_does_not_break_agents(self):
         o = self.report("Z99 구역 산사태가 났어요 할머니 혼자 계세요")
         self.assertEqual(o["state"], "보완 필요")
-        self.assertIn("위치(구역): 없는 구역 번호", o["missing"])
+        self.assertIn("위치: 없는 구역 번호", o["missing"])
         _, a = self.get("/api/agents")
         self.assertFalse([x["id"] for x in a["items"] if x["status"] == "manual"])   # 입력 문제로 수동 전환하지 않음
 
@@ -347,6 +347,58 @@ class TestPipeline(ServerBase):
         with urllib.request.urlopen(f"{self.base}/api/public/volunteers/{team[0]}/activity.csv", timeout=3) as r:
             body = r.read().decode("utf-8-sig")
         self.assertIn("작업 봉사", body); self.assertIn("물품 기부", body)
+
+    def test_written_location_instead_of_zone(self):
+        """위치는 구역을 고르지 않고 글로 쓴다. 관리 구역은 가상 장소 이름이 있을 때만 추정하고, 모르면 담당자가 확인한다."""
+        anon = Client(self.base)
+        self.assertEqual(anon.post("/api/public/households", {"floor": "1층"})[0], 400)            # 위치는 꼭 필요
+        code, r = anon.post("/api/public/households", {"address": "옥포동 ○○아파트 101동", "floor": "1층", "members": 2})
+        self.assertEqual(code, 201, r)
+        _, h = anon.get(f"/api/public/households/{r['id']}")
+        self.assertEqual((h["household"]["zone"], h["household"]["address"]), ("미상", "옥포동 ○○아파트 101동"))
+        self.assertTrue(h["risks"] and h["nearest_shelter"])                   # 구역을 몰라도 안내·대피소는 나온다
+        code, r = anon.post("/api/public/households", {"address": "가람초 뒤 주택 010-1234-5678", "floor": "반지하"})
+        _, h = anon.get(f"/api/public/households/{r['id']}")
+        self.assertEqual(h["household"]["zone"], "Z2")                        # 가상 장소 이름으로 추정
+        self.assertNotIn("1234", h["household"]["address"])                   # 전화번호는 가린다
+        o = self.report("위치: 옥포동 ○○아파트 앞 · 물이 차고 있어요(침수) · 2명")
+        self.assertEqual((o["zone"], o["missing"], o["state"]), ("미상", [], "접수"))   # 위치를 적었으면 다시 묻지 않음
+        o = self.report("위치: 한빛중 근처 · 흙·돌이 무너졌어요(산사태·토사)")
+        self.assertEqual(o["zone"], "Z8")
+        code, v = self.post("/api/volunteer/requests", {"text": "마당 토사 치워 주세요", "address": "장평동 주택가"})
+        self.assertEqual(code, 200, v)
+        self.assertEqual((v["tasks"][0]["zone"], v["tasks"][0]["address"]), ("미상", "장평동 주택가"))
+
+    def test_volunteer_signup_knows_what_they_can_do(self):
+        anon = Client(self.base)
+        _, opt = anon.get("/api/public/volunteer-options")
+        self.assertIn("토사 제거", next(s for s in opt["skills"] if s["id"] == "토사")["tasks"])   # 가입 화면에서 미리 보여 줌
+        body = {"name": "동네삽", "password": "secret12", "address": "하천 하류 쪽 마을", "skills": ["토사"],
+                "equipment": ["삽"], "available_min": 480, "mode": "작업"}
+        for bad in ({**body, "password": "123"}, {**body, "skills": []}, {**body, "name": "V01"}, {**body, "address": ""}):
+            self.assertEqual(anon.post("/api/public/volunteers", bad)[0], 400, bad)
+        code, r = anon.post("/api/public/volunteers", body)
+        self.assertEqual(code, 201, r)
+        vid = r["id"]
+        self.assertEqual(anon.post("/api/public/volunteers", {**body, "name": "동네삽"})[0], 409)  # 같은 별명
+        self.assertEqual(anon.post("/api/public/volunteer-login", {"name": "동네삽", "password": "wrong!!"})[0], 403)
+        self.assertEqual(anon.post("/api/public/volunteer-login", {"name": "동네삽", "password": "secret12"})[1]["id"], vid)
+        self.assertNotIn(vid, [x["id"] for x in anon.get("/api/public/volunteers")[1]["items"]])   # ID는 목록에 안 나옴
+        _, me = anon.get(f"/api/public/volunteers/{vid}")
+        self.assertEqual((me["volunteer"]["name"], me["volunteer"]["zone"], me["can_do"]), ("동네삽", "Z1", ["토사 제거"]))
+        self.assertNotIn("password_hash", str(me) + str(self.get("/api/volunteer")[1]))
+        # 담당자가 작업을 만들면 가입한 봉사자도 추천 후보가 되고, 다른 봉사자에게는 별명만 보인다
+        _, v = self.post("/api/volunteer/requests", {"text": "토사 치워 주세요", "zone": "Z1"})
+        t = next(x for x in v["tasks"] if x.get("pending_approval"))
+        self.assertIn(vid, t["last_recommendation"]["team"])
+        self.post(f"/api/approvals/{t['pending_approval']}/resolve", {"approved": True, "reason": "투입"})
+        mate = next(x for x in t["last_recommendation"]["team"] if x != vid)
+        shown = anon.get(f"/api/public/volunteers/{mate}")[1]["my_tasks"]
+        self.assertIn("동네삽", next(x for x in shown if x["id"] == t["id"])["team"])
+        self.assertNotIn(vid, str(shown))
+        self.assertEqual(anon.post(f"/api/public/volunteers/{vid}/update", {**body, "skills": ["토사", "청소"]})[0], 201)
+        self.assertEqual(anon.get(f"/api/public/volunteers/{vid}")[1]["can_do"], ["토사 제거", "가재도구 세척"])
+        self.assertEqual(anon.post("/api/public/volunteers/V01/update", body)[0], 403)            # 시연 봉사자는 못 바꿈
 
     def test_labor_request_chains_to_volunteer(self):
         o = self.report("Z3 집 안 진흙 퍼낼 일손이 필요해요")

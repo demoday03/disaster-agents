@@ -236,7 +236,7 @@ def link_incident(row):
     if out.get("triage"):
         notes.append(out["triage"])
     if out.get("zone") not in (None, "미상") and out["zone"] not in {z["id"] for z in SCENARIO["zones"]}:
-        missing.append("위치(구역): 없는 구역 번호")   # 'Z99'처럼 형식만 맞는 구역은 배치·물품을 보낼 수 없다
+        missing.append("위치: 없는 구역 번호")   # 'Z99'처럼 형식만 맞는 구역은 배치·물품을 보낼 수 없다
     if not missing:
         auto_dispatch(out, linked, notes)
     if out.get("route") == "supply" and not missing:
@@ -1016,6 +1016,10 @@ class Handler(BaseHTTPRequestHandler):
             ("POST", "supply"): lambda: PUBLIC.supply_request(data),
             ("POST", "supply", "*", "receipt"): lambda: PUBLIC.receipt(p[1], data),
             ("GET", "volunteers"): lambda: {"items": PUBLIC.volunteers()},
+            ("GET", "volunteer-options"): PUBLIC.volunteer_options,          # 회원가입 선택지·할 수 있는 일 미리 보기
+            ("POST", "volunteers"): lambda: PUBLIC.register_volunteer(data),  # 봉사자 회원가입
+            ("POST", "volunteer-login"): lambda: PUBLIC.login_volunteer(data),
+            ("POST", "volunteers", "*", "update"): lambda: PUBLIC.update_volunteer(p[1], data),
             ("GET", "volunteers", "*"): lambda: PUBLIC.volunteer(p[1]),
             ("POST", "volunteers", "*", "tasks", "*", "checkin"): lambda: PUBLIC.checkin(p[1], p[3]),
             ("POST", "volunteers", "*", "tasks", "*", "complete"): lambda: PUBLIC.complete(p[1], p[3]),
@@ -1069,7 +1073,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_html("admin.html")
         if path == "/login":
             return self.send_html("login.html")
-        if path in ("/static/admin_ops.js", "/static/zonemap.js", "/static/ui.js"):   # 정해진 파일만 제공(경로 조작 방지)
+        if path in ("/static/admin_ops.js", "/static/ui.js"):   # 정해진 파일만 제공(경로 조작 방지)
             return self.send_html(path.rsplit("/", 1)[-1], "application/javascript; charset=utf-8")
         if path == "/api/me":
             _, s = self.session()

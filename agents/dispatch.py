@@ -32,6 +32,8 @@ def _travel(ctx, a, b):
 
 
 def _dist(ctx, cfg, a, b):
+    if a in (None, "미상") or b in (None, "미상"):
+        return 0.5   # 직접 쓴 위치에서 구역을 추정하지 못했으면 가깝다고도 멀다고도 보지 않는다(담당자 확인 전)
     return max(0.0, 1 - _travel(ctx, a, b)["minutes"] / cfg["max_travel_min"])
 
 
