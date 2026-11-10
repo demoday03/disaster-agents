@@ -1082,7 +1082,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {"username": s["username"], "role": s["role"], "csrf_token": s["csrf"]})
         if path == "/api/health":
             return self.send_json(200, {"ok": True, "mode": MODE, "llm_enabled": LLM is not None,
-                "llm_calls": LLM.calls if LLM else 0, "llm_max_calls": LLM.max_calls if LLM else 0, "database": "SQLite", "database_ready": True, "prototype": True,
+                "llm_calls": LLM.calls if LLM else 0, "llm_max_calls": LLM.max_calls if LLM else 0, "database": database.backend_label(), "database_ready": True, "prototype": True,
                 "warning": "시뮬레이션/프로토타입입니다. 실제 출동·재난 경보 시스템이 아닙니다."})
         if path == "/api/agents":
             return self.send_json(200, {"items": agents_status()})

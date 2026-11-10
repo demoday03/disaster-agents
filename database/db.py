@@ -1,4 +1,12 @@
-"""SQLite persistence and simple SQL migration runner for the local demo."""
+"""SQLite persistence and simple SQL migration runner for the local demo.
+
+저장소는 두 가지다.
+- 기본: 이 PC의 SQLite 파일(DISASTER_DB_PATH). 내부망 배포는 이것만 쓴다(추가 설치 없음).
+- Turso(클라우드 SQLite): TURSO_DATABASE_URL·TURSO_AUTH_TOKEN이 있으면 libsql 임베디드 복제본으로 연다.
+  읽기는 서버 안의 복제본 파일에서 하고, 쓰기는 Turso로 보내 저장한다. 무료 서버처럼 다시 시작하면 디스크가
+  비는 곳에서도 신고·가구·봉사자 계정이 남는다. libsql 패키지가 필요하다(requirements.txt).
+  DISASTER_DB_BACKEND=libsql이면 Turso 없이 같은 어댑터를 로컬 파일로 시험한다.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -7,6 +15,7 @@ import json
 import os
 import secrets
 import sqlite3
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -15,11 +24,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = Path(os.environ.get("DISASTER_DB_PATH", str(ROOT / "data" / "disaster.db"))).expanduser().resolve()
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
+TURSO_URL = os.environ.get("TURSO_DATABASE_URL", "").strip()
+TURSO_TOKEN = os.environ.get("TURSO_AUTH_TOKEN", "").strip()
+BACKEND = "libsql" if TURSO_URL or os.environ.get("DISASTER_DB_BACKEND") == "libsql" else "sqlite"
+SYNC_EVERY_S = 30   # 다른 곳(다른 서버·turso 셸)에서 바꾼 내용을 받아 오는 간격
 
+
+def backend_label() -> str:
+    return "Turso(libSQL)" if TURSO_URL else "SQLite"
 
 
 @contextmanager
 def connect():
+    if BACKEND == "libsql":
+        with _libsql_connect() as conn:
+            yield conn
+        return
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=10)
     try:
@@ -31,10 +51,147 @@ def connect():
     finally:
         conn.close()
 
+
+# ---- libsql(Turso) 어댑터: sqlite3와 같은 모양(이름으로 꺼내는 행, IntegrityError)으로 감싼다 ----------------
+class _Row:
+    """sqlite3.Row처럼 row["열"]·row[0]·dict(row)로 쓴다."""
+    __slots__ = ("_v", "_i")
+
+    def __init__(self, values, index):
+        self._v, self._i = tuple(values), index
+
+    def __getitem__(self, k):
+        return self._v[self._i[k]] if isinstance(k, str) else self._v[k]
+
+    def keys(self):
+        return list(self._i)
+
+    def __iter__(self):
+        return iter(self._v)
+
+    def __len__(self):
+        return len(self._v)
+
+
+def _db_error(e):
+    msg = str(e)
+    return sqlite3.IntegrityError(msg) if "constraint" in msg.lower() else sqlite3.OperationalError(msg)
+
+
+class _Cursor:
+    def __init__(self, cur):
+        self._c = cur
+        desc = cur.description or ()
+        self._index = {d[0]: n for n, d in enumerate(desc)}
+
+    def _row(self, r):
+        return None if r is None else _Row(r, self._index)
+
+    def fetchone(self):
+        return self._row(self._c.fetchone())
+
+    def fetchall(self):
+        return [self._row(r) for r in self._c.fetchall()]
+
+    def __iter__(self):
+        return iter(self.fetchall())
+
+    @property
+    def rowcount(self):
+        return self._c.rowcount
+
+    @property
+    def lastrowid(self):
+        return self._c.lastrowid
+
+    @property
+    def description(self):
+        return self._c.description
+
+
+class _LibsqlConn:
+    READ_ONLY = ("select", "pragma", "explain")
+
+    def __init__(self, raw):
+        self.raw, self.dirty = raw, False
+
+    def execute(self, sql, params=()):
+        if not sql.lstrip().lower().startswith(self.READ_ONLY):
+            self.dirty = True
+        try:
+            return _Cursor(self.raw.execute(sql, tuple(params)))
+        except ValueError as e:   # libsql은 SQLite 오류를 ValueError로 낸다
+            raise _db_error(e) from None
+
+    def executescript(self, script):
+        self.dirty = True
+        try:
+            self.raw.executescript(script)
+        except ValueError as e:
+            raise _db_error(e) from None
+
+
+_LIBSQL = {"conn": None, "depth": 0, "synced": 0.0}
+_LIBSQL_LOCK = threading.RLock()   # 복제본 연결 하나를 스레드가 차례로 쓴다(바깥 with가 끝날 때 한 번 커밋)
+
+
+def _libsql_raw():
+    # 로컬 SQLite 파일과 섞이지 않게 Turso 복제본은 따로 둔다
+    path = DB_PATH.with_name(DB_PATH.stem + "-turso-replica.db") if TURSO_URL else DB_PATH
+    # DB_PATH가 바뀌었거나(시험·스크립트) 파일이 지워졌으면 다시 연다
+    if _LIBSQL["conn"] is None or _LIBSQL.get("path") != path or not path.exists():
+        try:
+            import libsql   # Turso를 쓸 때만 필요
+        except ImportError:
+            raise RuntimeError("TURSO_DATABASE_URL을 쓰려면 libsql 패키지가 필요합니다: pip install -r requirements.txt "
+                               "(Render는 Build Command가 'pip install -r requirements.txt'인지 확인)") from None
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if _LIBSQL["conn"] is not None:
+            try:
+                _LIBSQL["conn"].raw.close()
+            except Exception:
+                pass
+        if TURSO_URL:   # 처음 열 때 Turso의 내용을 받아 온다
+            raw = libsql.connect(str(path), sync_url=TURSO_URL, auth_token=TURSO_TOKEN)
+            raw.sync()
+            _LIBSQL["synced"] = time.time()
+        else:
+            raw = libsql.connect(str(path))
+        _LIBSQL["conn"], _LIBSQL["path"] = _LibsqlConn(raw), path
+    return _LIBSQL["conn"]
+
+
+@contextmanager
+def _libsql_connect():
+    with _LIBSQL_LOCK:
+        conn = _libsql_raw()
+        outer = _LIBSQL["depth"] == 0
+        if outer and TURSO_URL and time.time() - _LIBSQL["synced"] > SYNC_EVERY_S:
+            conn.raw.sync()
+            _LIBSQL["synced"] = time.time()
+        _LIBSQL["depth"] += 1
+        try:
+            yield conn
+            if outer:
+                conn.raw.commit()
+                if conn.dirty and TURSO_URL:
+                    conn.raw.sync()   # 방금 쓴 내용을 복제본에도 반영
+                    _LIBSQL["synced"] = time.time()
+        except BaseException:
+            if outer:
+                conn.raw.rollback()
+            raise
+        finally:
+            _LIBSQL["depth"] -= 1
+            if outer:
+                conn.dirty = False
+
+
 def init_db():
     """Apply each numbered SQL migration once, in order."""
     with connect() as conn:
-        conn.execute("PRAGMA journal_mode = WAL")
+        if BACKEND == "sqlite":   # Turso 복제본은 저널 방식을 libsql이 관리한다
+            conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("""CREATE TABLE IF NOT EXISTS schema_migrations (
             version TEXT PRIMARY KEY,
             applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
