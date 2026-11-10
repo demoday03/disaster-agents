@@ -17,9 +17,10 @@
   let current = 'overview', META = null, refreshTimer = null, lastSensorApproval = null;
 
   // ---------------------------------------------------------------- 탭
-  const LOADERS = {overview: () => { loadAnnouncements(); loadSituation(); loadZoneMap(); }, supply: loadSupply, volunteer: loadVolunteer, recovery: loadRecovery,
-                   welfare: loadChecks, sensor: () => { loadVerifyDocs(); loadSensorLive(); }, approvals: () => loadApprovals(), dispatch: () => { loadDispatch(); loadControl(); loadShelterOps(); },
-                   guidance: loadIncidents};
+  const LOADERS = {overview: () => { loadSituation(); loadZoneMap(); }, notice: loadAnnouncements, supply: loadSupply, volunteer: loadVolunteer, recovery: loadRecovery,
+                   welfare: loadChecks, sensor: () => { loadVerifyDocs(); loadSensorLive(); }, approvals: () => loadApprovals(),
+                   dispatch: () => { loadDispatch(); loadControl(); loadShelterOps(); loadDispatchMap(); },
+                   guidance: loadIncidents, system: () => { loadHealth(); loadAgents(); }};
   function go(tab) {
     current = tab;
     document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.go === tab));
@@ -45,7 +46,7 @@
       }).join('');
       $('shelterOps').querySelectorAll('button[data-occ]').forEach(b => b.addEventListener('click', async () => {
         b.disabled = true;
-        try { await post(`/api/shelters/${encodeURIComponent(b.dataset.occ)}/occupancy`, {delta: Number(b.dataset.n)}); loadShelterOps(); loadDispatch(); }
+        try { await post(`/api/shelters/${encodeURIComponent(b.dataset.occ)}/occupancy`, {delta: Number(b.dataset.n)}); loadShelterOps(); loadDispatch(); if (current === 'dispatch') loadDispatchMap(); }
         catch (err) { alert(err.message); b.disabled = false; }
       }));
     } catch (e) { showError('shelterOps', e); }
@@ -66,6 +67,33 @@
         onPick: z => { zoneFilter = zoneFilter === z ? null : z; applyZoneFilter(); loadZoneMap(); }});
       $('zoneMap').classList.remove('muted');
     } catch (e) { showError('zoneMap', e); }
+  }
+  // 탭마다 위치가 있는 것은 같은 모의 지도에 핀으로 올린다(구역 격자는 한 번만 받아 둔다)
+  let GRID = null;
+  const zoneGrid = async () => GRID || (GRID = (await api('/api/dispatch')).zones);
+  const countPins = (xs, label, kind) => {
+    const by = {};
+    xs.forEach(z => { by[z] = (by[z] || 0) + 1; });
+    return Object.entries(by).map(([zone, n]) => ({zone, label: `${label} ${n}`, kind}));
+  };
+  // 배치 지도: 대피소 남은 자리·공공 인력 위치·통제 구간(해제 포함). 구역 두 곳을 누르면 통제 구간 등록의 A·B로 넣는다
+  let ctlPick = [];
+  async function loadDispatchMap() {
+    try {
+      await loadMeta();
+      const [d, inc] = await Promise.all([api('/api/dispatch'), api('/api/incidents')]);
+      const live = inc.items.map(x => x.output).filter(o => o.state !== '오접수');
+      window.renderZoneMap($('dispatchMap'), {zones: d.zones, shelters: d.shelters, controls: d.control_zones, showInactive: true, incidents: live,
+        highlight: new Set(ctlPick), pins: countPins(d.public.filter(t => t.available !== false).map(t => t.zone), '인력', ''),
+        onPick: z => {
+          ctlPick = ctlPick.length >= 2 ? [z] : [...ctlPick.filter(x => x !== z), z];
+          if (ctlPick[0]) $('czA').value = ctlPick[0];
+          if (ctlPick[1]) $('czB').value = ctlPick[1];
+          $('dmapHint').textContent = ctlPick.length === 2 ? `통제 구간 등록에 ${ctlPick[0]} ↔ ${ctlPick[1]}을 넣었습니다. 구간 이름을 쓰고 등록하세요.` : `구역 A = ${ctlPick[0]}. 맞닿은 구역 하나를 더 누르세요.`;
+          loadDispatchMap();
+        }});
+      $('dispatchMap').classList.remove('muted');
+    } catch (e) { showError('dispatchMap', e); }
   }
   const baseLoadIncidents = loadIncidents;
   loadIncidents = async function () { await baseLoadIncidents(); applyZoneFilter(); };
@@ -98,6 +126,11 @@
     $('dnItem').innerHTML = options(items, i => `${i} (${META.catalog[i].category})`, i => i);
     const volOpts = options(META.volunteers, v => `${v.id} · ${v.zone} · ${v.mode}`, v => v.id);
     $('dnDonor').innerHTML = volOpts; $('sosVol').innerHTML = volOpts;
+    const hhZone = id => META.households.find(h => h.id === id)?.zone;
+    [['rpHousehold', 'rpZone'], ['vHousehold', 'vZone']].forEach(([h, z]) => {
+      const set = () => { const zone = hhZone($(h).value); if (zone) $(z).value = zone; };
+      $(h).addEventListener('change', set); set();
+    });
     const syncUnits = () => { $('dnUnit').innerHTML = options(META.catalog[$('dnItem').value]?.units || []); };
     $('dnItem').addEventListener('change', syncUnits); syncUnits();
     return META;
@@ -214,6 +247,9 @@
     try {
       await loadMeta();
       const d = await api('/api/volunteer');
+      window.renderZoneMap($('volMap'), {zones: await zoneGrid(), legend: false,
+        pins: [...countPins(d.tasks.filter(t => t.state !== '완료').map(t => t.zone), '작업', 'task'),
+               ...countPins(d.volunteers.filter(v => !v.busy).map(v => v.zone), '대기 봉사자', '')]});
       const pend = Object.entries(d.safety).filter(([, v]) => v == null).length;
       $('volSafety').textContent = pend ? `안전 기준(연속 활동 시간·고온 등) ${pend}개가 공식 지침 확인 전이라 '기준 미확정'으로 두고 적용하지 않습니다.` : '';
       $('volTasks').innerHTML = table(['작업', '유형·구역', '필요', '추천·투입 인원', '상태', '처리'], [...d.tasks].reverse().map(t => {
@@ -255,6 +291,9 @@
         b.disabled = true;
         try { await post(`/api/recovery/cases/${encodeURIComponent(b.dataset.case)}/advance`, {to: b.dataset.to}); loadRecovery(); } catch (e) { alert(e.message); b.disabled = false; }
       }));
+      window.renderZoneMap($('surveyMap'), {zones: await zoneGrid(), legend: false,
+        pins: Object.entries(d.aggregate.by_zone).map(([zone, by]) => ({zone, label: `피해 ${Object.values(by).reduce((a, b) => a + b, 0)}`, kind: 'alert'}))
+          .concat(countPins(d.cases.filter(c => c.stage !== '지원금').map(c => c.zone), '복구 중', 'task'))});
       const zones = Object.keys(d.aggregate.by_zone).sort((a, b) => a.localeCompare(b, 'ko', {numeric: true}));
       $('surveyTable').innerHTML = `<p>입력 ${E(d.aggregate.total)}건</p>` + table(['구역', ...d.damage_types], zones.map(z =>
         `<tr><td>${E(z)}</td>${d.damage_types.map(t => `<td>${E(d.aggregate.by_zone[z][t] || 0)}</td>`).join('')}</tr>`));
@@ -266,6 +305,11 @@
     try {
       await loadMeta();
       const d = await api('/api/welfare/checks');
+      window.renderZoneMap($('welfareMap'), {zones: await zoneGrid(), legend: false,
+        highlight: new Set(d.checks.filter(c => c.state === '격상').map(c => c.zone)),
+        pins: [...countPins(d.checks.filter(c => c.state === '격상').map(c => c.zone), '격상', 'alert'),
+               ...countPins(d.checks.filter(c => c.state === '대기').map(c => c.zone), '응답 대기', 'task'),
+               ...countPins(d.checks.filter(c => c.state === '안전').map(c => c.zone), '안전', 'shel')]});
       if (d.escalated_now.length) $('checkResult').innerHTML = `<span class="err">방금 격상: ${E(d.escalated_now.join(', '))} (담당자 확인 필요, 자동 출동 없음)</span>`;
       $('checkList').innerHTML = table(['가구', '구역', '취약 요인', '상태', '남은 시간', '처리'], d.checks.map(c =>
         `<tr><td>${E(c.household)}</td><td>${E(c.zone)}</td><td>${E(c.factors.join(', ') || '-')}</td><td>${chip(c.state, STATE_CLS[c.state] || '')}</td><td>${c.seconds_left != null ? E(Math.max(0, c.seconds_left)) + '초' : '-'}</td><td>${['대기', '격상'].includes(c.state) ? `<button data-hh="${E(c.household)}">안전 응답(노드 D 모의)</button>` : ''}</td></tr>`));
@@ -285,7 +329,7 @@
         `<tr><td>${E(c.id)}</td><td>${E(c.name)}</td><td>${E(c.between.join(' ↔ '))}</td><td>${c.active ? chip('통제 중', 'bad') : chip('해제', 'ok')}</td><td><button data-cz="${E(c.id)}" data-on="${c.active ? '' : '1'}" class="${c.active ? 'gray' : 'red'}">${c.active ? '통제 해제' : '통제 시작'}</button></td></tr>`));
       $('controlList').querySelectorAll('button[data-cz]').forEach(b => b.addEventListener('click', async () => {
         b.disabled = true;
-        try { const r = await post(`/api/control-zones/${encodeURIComponent(b.dataset.cz)}/toggle`, {active: !!b.dataset.on}); reportAffected(r); loadControl(); loadDispatch(); }
+        try { const r = await post(`/api/control-zones/${encodeURIComponent(b.dataset.cz)}/toggle`, {active: !!b.dataset.on}); reportAffected(r); loadControl(); loadDispatch(); loadDispatchMap(); }
         catch (e) { alert(e.message); b.disabled = false; }
       }));
     } catch (e) { showError('controlList', e); }
@@ -415,7 +459,7 @@
     $('controlForm').addEventListener('submit', async e => {
       e.preventDefault();
       try { const r = await post('/api/control-zones', {name: $('czName').value, between: [$('czA').value, $('czB').value]});
-            reportAffected(r); $('czName').value = ''; loadControl(); loadDispatch(); }
+            reportAffected(r); $('czName').value = ''; ctlPick = []; loadControl(); loadDispatch(); loadDispatchMap(); }
       catch (err) { $('controlResult').innerHTML = '<span class="err">오류: ' + E(err.message) + '</span>'; }
     });
     $('gZonesFill').addEventListener('click', async () => {

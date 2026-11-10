@@ -1069,7 +1069,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_html("admin.html")
         if path == "/login":
             return self.send_html("login.html")
-        if path in ("/static/admin_ops.js", "/static/zonemap.js"):   # 정해진 파일만 제공(경로 조작 방지)
+        if path in ("/static/admin_ops.js", "/static/zonemap.js", "/static/ui.js"):   # 정해진 파일만 제공(경로 조작 방지)
             return self.send_html(path.rsplit("/", 1)[-1], "application/javascript; charset=utf-8")
         if path == "/api/me":
             _, s = self.session()
