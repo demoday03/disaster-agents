@@ -58,6 +58,7 @@ button.sub{background:#E3E8F0;color:var(--ink)}button.big{width:100%;font-size:1
 .stickysend button{pointer-events:auto;max-width:520px;margin:0;box-shadow:0 6px 20px rgba(22,35,59,.3);background:var(--s-danger)}
 body.has-sticky main{padding-bottom:84px}
 .gpsrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px}.gpsrow button{margin:0;min-height:44px;padding:8px 14px}
+a.tgbtn{display:inline-flex;align-items:center;gap:6px;margin-top:8px;background:#229ED9;color:#fff;text-decoration:none;font-weight:800;border-radius:10px;padding:10px 16px;min-height:46px}
 .sec-h{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
 [hidden]{display:none!important}
 @media(max-width:760px){
@@ -124,6 +125,7 @@ body.has-sticky main{padding-bottom:84px}
 <!-- 알림: 담당자 공지 + 승인된 안내를 한곳에 -->
 <section class="view" data-view="news" hidden>
 <h2>알림</h2><p class="lead">담당자가 올린 공지와 확인한 안내입니다. 15초마다 새로 확인해요.</p>
+<div id="tgBox" class="box ok" hidden style="margin-top:0"></div>
 <h3>공지</h3><div id="annList" class="muted" data-fold="4">아직 공지가 없습니다.</div>
 <h3>담당자 안내</h3><div id="notices" class="muted" data-fold="3">불러오는 중…</div>
 </section>
@@ -132,6 +134,7 @@ body.has-sticky main{padding-bottom:84px}
 <section class="view" data-view="home" hidden>
 <h2>우리 집</h2><p class="lead">한 번만 알려 주시면 신고·대비 안내·물품 요청·안전 확인에 함께 쓰입니다. 이 기기에만 기억됩니다.</p>
 <div id="homeSummary" class="box ok" hidden></div>
+<div id="tgHome" class="box" hidden></div>
 <details class="acc" id="accHome" open><summary>🏠 우리 집 정보 <span class="sum-sub" id="homeSumSub"></span></summary><div class="acc-body">
 <form id="homeForm">
 <label for="hAddress">우리 집 위치</label><input id="hAddress" maxlength="80" required autocomplete="street-address" placeholder="예: 옥포동 ○○아파트 101동"><p class="muted" style="margin:6px 0 0">동·건물 이름 정도면 충분해요. 담당자가 물품을 보내거나 안전을 확인할 때만 씁니다.</p>
@@ -210,7 +213,11 @@ function annList(){const mine=HOME&&HOME.household.zone;return (PUB.announcement
 function drawAnn(){if(!PUB)return;const list=annList(),urgent=list.filter(a=>a.urgent);$('annBar').hidden=!urgent.length;
 if(urgent.length)$('annBar').innerHTML=`📢 긴급 공지 · ${esc(urgent[0].text)}${urgent.length>1?` (외 ${urgent.length-1}건)`:''}<a href="#news">알림 모두 보기</a>`;
 $('annCount').hidden=!list.length;$('annCount').textContent=list.length;if(location.hash==='#news')drawNews()}
-function drawNews(){if(!PUB)return;const list=annList(),d=PUB;
+// 텔레그램 알림: 우리 집을 저장했으면 그 집과 연결되는 링크(안부 확인에 텔레그램 버튼으로 답할 수 있다)
+function tgLink(){if(!PUB||!PUB.telegram_bot)return null;const reg=HOME&&HOME.household.registered;return `https://t.me/${encodeURIComponent(PUB.telegram_bot)}${reg?'?start='+encodeURIComponent(HH):''}`}
+function drawTg(){const l=tgLink();for(const id of ['tgBox','tgHome']){const el=$(id);el.hidden=!l;if(!l)continue;const reg=HOME&&HOME.household.registered;
+ el.innerHTML=`<b>📲 텔레그램으로 알림 받기</b><div class="muted">앱을 열지 않아도 위기 단계와 공지가 텔레그램으로 와요.${reg?' 우리 집과 연결되어, 담당자가 안전을 물으면 텔레그램에서 버튼으로 답할 수 있어요.':' 우리 집 정보를 먼저 저장하면 안부 확인에도 답할 수 있어요.'}</div><a class="tgbtn" href="${esc(l)}" target="_blank" rel="noopener">텔레그램 열기 → 시작 누르기</a>`}}
+function drawNews(){if(!PUB)return;drawTg();const list=annList(),d=PUB;
 $('annList').className=list.length?'':'muted';$('annList').innerHTML=list.length?list.map(a=>`<div class="notice${a.urgent?' urgent':''}"><div class="muted">${a.urgent?'<b class="err">긴급</b> · ':''}${esc(a.zone==='all'?'모든 주민':place(a.zone))} · ${esc(fmt(a.at*1000))}</div>${esc(a.text)}</div>`).join(''):'지금 게시 중인 공지가 없습니다.';
 $('notices').className=d.notices.length?'':'muted';$('notices').innerHTML=d.notices.length?d.notices.map(n=>`<div class="notice"><div class="muted">${esc(place(n.zone))} · ${esc(n.type||'')} · 승인 ${esc(fmt(n.approved_at))}</div>${esc(n.text)}<details><summary class="muted">근거 보기</summary><div class="muted">출처: ${esc(n.source||'정보 없음')}<br>${esc(n.evidence||'')}</div></details></div>`).join(''):'아직 담당자가 승인한 안내가 없습니다.'}
 
@@ -329,7 +336,7 @@ function showHomeParts(){const has=!!HOME;drawAnn();drawTodo();syncWhere();docum
 $('homeSummary').hidden=!has;$('homeSave').textContent=has&&HOME.household.registered?'고친 내용 저장하기':'저장하기';
 const c=has&&HOME.check,asking=c&&(c.state==='대기'||c.state==='격상');$('checkBar').hidden=!asking;
 if(asking)$('checkText').textContent=c.state==='격상'?'응답이 늦어 담당자가 우선 확인 대상으로 보고 있어요. 안전하면 지금 눌러 주세요.':`담당자가 우리 집이 안전한지 묻고 있습니다 (${Math.max(0,c.seconds_left)}초 안에 응답).`;
-if(!has){$('homeSumSub').textContent='아직 입력하지 않았어요';$('accHome').open=true;return}
+drawTg();if(!has){$('homeSumSub').textContent='아직 입력하지 않았어요';$('accHome').open=true;return}
 const h=HOME.household;$('homeSummary').innerHTML=`<b>우리 집</b> · ${homeText(h)}`+(h.registered?'':'<br><span class="muted">시연용 가구입니다.</span>');$('homeSumSub').textContent=h.registered?'고칠 때만 펼치세요':'';
 if(!homeFilled&&document.activeElement?.closest?.('#homeForm')==null){fillHomeForm(h);homeFilled=true;$('accHome').open=false}
 $('tips').innerHTML=HOME.risks.map(r=>`<li>${esc(r)}</li>`).join('');$('nearShelter').textContent=HOME.nearest_shelter?`${HOME.nearest_shelter.name} (${HOME.nearest_shelter.place}) · 남은 자리는 '대피소' 메뉴에서 확인하세요`:'정보 없음';

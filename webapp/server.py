@@ -20,7 +20,7 @@ from common import scenario
 from agents import crosscheck, dispatch, intake, monitor, recovery, welfare, verify
 from coordinator import Coordinator
 from database import db as database
-from webapp import features, public_api, sensors, weather
+from webapp import features, public_api, sensors, telegram_bot, weather
 
 # 클라우드 모드(Render 등): 플랫폼이 HTTPS를 앞에서 처리하고 PORT를 정해 준다. 이때는 사이트 접속 코드가 필수다.
 CLOUD = os.getenv("WEBAPP_CLOUD") == "1" or os.getenv("RENDER") == "true"
@@ -109,7 +109,8 @@ def record_login(username, ok):
 
 
 SITE_TOKEN = hmac.new(SITE_CODE.encode(), b"site-access-v1", "sha256").hexdigest() if SITE_CODE else ""
-GATE_FREE = {"/access", "/api/access", "/api/health", "/api/sensor/readings", "/api/sensor/downlink"}   # 게이트웨이는 자기 토큰으로 인증
+GATE_FREE = {"/access", "/api/access", "/api/health", "/api/sensor/readings", "/api/sensor/downlink",
+             "/api/telegram/webhook"}   # 게이트웨이·텔레그램은 자기 토큰으로 인증
 
 
 def site_cookie(max_age=30 * 24 * 3600):
@@ -666,6 +667,8 @@ FEATURES = features.Features(database, SCENARIO, travel, DISPATCH_CFG, GUIDANCE_
 SENSORS = sensors.SensorHub(database)
 WEATHER = weather.WeatherFeed()   # 기상청 초단기실황·특보(참고 정보, 키 없으면 표시만 안 함)
 PUBLIC = public_api.PublicAPI(FEATURES, database, scenario_now)   # 시민·봉사자 화면(가상 코드 선택, 로그인 없음)
+TELEGRAM = telegram_bot.TelegramBot(database, PUBLIC, lambda: public_status())   # 주민 알림(TELEGRAM_BOT_TOKEN이 있을 때만)
+FEATURES.notify = TELEGRAM.event   # 위기 단계 확정·안부 확인 시작을 텔레그램으로
 
 
 def change_occupancy(sid, delta, by):
@@ -831,6 +834,7 @@ def post_announcement(data, by):
            "at": time.time(), "by": by, "active": True}
     database.put_record("announcement", aid, row)
     database.log_audit("announcement_posted", "announcement", aid, {"by": by, "audience": audience, "zone": zone, "urgent": urgent})
+    TELEGRAM.announcement(row)   # 주민 대상이면 텔레그램 구독자에게도
     return row
 
 
@@ -868,7 +872,8 @@ def public_status():
                               for c in current_control_zones() if c.get("active")],
             "zones": {z["id"]: z["name"] for z in SCENARIO["zones"]},
             "zone_grid": [{k: z[k] for k in ("id", "name", "risk", "row", "col")} for z in SCENARIO["zones"]],
-            "weather": WEATHER.status()}
+            "weather": WEATHER.status(),
+            "telegram_bot": TELEGRAM.username if TELEGRAM.enabled and TELEGRAM.mode else None}   # 주민 화면의 '텔레그램으로 알림 받기'
 
 
 def read_json_body(handler, limit=MAX_BODY):
@@ -1082,7 +1087,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {"username": s["username"], "role": s["role"], "csrf_token": s["csrf"]})
         if path == "/api/health":
             return self.send_json(200, {"ok": True, "mode": MODE, "llm_enabled": LLM is not None,
-                "llm_calls": LLM.calls if LLM else 0, "llm_max_calls": LLM.max_calls if LLM else 0, "database": database.backend_label(), "database_ready": True, "prototype": True,
+                "llm_calls": LLM.calls if LLM else 0, "llm_max_calls": LLM.max_calls if LLM else 0, "database": database.backend_label(), "telegram": TELEGRAM.status(), "database_ready": True, "prototype": True,
                 "warning": "시뮬레이션/프로토타입입니다. 실제 출동·재난 경보 시스템이 아닙니다."})
         if path == "/api/agents":
             return self.send_json(200, {"items": agents_status()})
@@ -1187,6 +1192,15 @@ class Handler(BaseHTTPRequestHandler):
                 database.log_audit("login", "user", user["username"], {"role": user["role"]})
                 return self.send_json(200, {"username": user["username"], "role": user["role"], "csrf_token": csrf},
                                       headers={"Set-Cookie": session_cookie(token, database.SESSION_TTL_S)})
+            if path == "/api/telegram/webhook":   # 텔레그램 웹훅: setWebhook 때 정한 비밀 값이 헤더에 있어야 한다
+                if not TELEGRAM.check_secret(self.headers.get("X-Telegram-Bot-Api-Secret-Token", "")):
+                    return self.send_json(403, {"error": "forbidden"})
+                try:
+                    with FEATURES.lock:
+                        TELEGRAM.handle(data)
+                except Exception as e:   # 이상한 업데이트 하나 때문에 텔레그램이 같은 요청을 계속 다시 보내지 않게 200
+                    print("telegram update error:", type(e).__name__, e)
+                return self.send_json(200, {"ok": True})
             if path == "/api/sensor/readings":   # 마이크로비트 게이트웨이(로그인 대신 게이트웨이 토큰)
                 if not self.require_gateway():
                     return
@@ -1715,6 +1729,9 @@ def main():
     print("Ctrl+C로 종료하세요. 실재난 경보/출동 용도로 사용하지 마세요.")
     if AUTO_FOLLOWUPS:   # 미리 넣은 시연 신고 등 아직 연결되지 않은 신고를 백그라운드로 처리(서버는 바로 응답)
         threading.Thread(target=link_pending_incidents, daemon=True).start()
+    TELEGRAM.start()   # 봇 이름 확인, 웹훅(공개 주소가 있을 때) 또는 폴링 시작
+    if TELEGRAM.enabled:
+        print(f"텔레그램 봇: {TELEGRAM.username or '연결 실패'} ({TELEGRAM.mode or TELEGRAM.error})")
     try: server.serve_forever()
     except KeyboardInterrupt: pass
     finally: server.server_close()

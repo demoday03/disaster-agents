@@ -22,6 +22,10 @@ services:
         sync: false
       - key: TURSO_AUTH_TOKEN     # Turso DB 토큰
         sync: false
+      - key: TELEGRAM_BOT_TOKEN   # 주민 알림 텔레그램 봇 토큰(@BotFather). 비우면 봇 없이 동작
+        sync: false
+      - key: TELEGRAM_CHANNEL_ID  # 선택: 공지·위기 단계를 함께 올릴 채널(@채널이름 또는 -100…). 봇을 채널 관리자로 추가해야 함
+        sync: false
       - key: DISASTER_DB_PATH
         value: data/demo.db
       - key: DEMO_SEED_ON_START   # 무료 서버는 다시 시작하면 디스크가 비므로 시작할 때 시연 데이터를 넣는다

@@ -54,6 +54,7 @@ class Features:
         self.tcfg = volunteer.load_tasks()
         self.rcfg = recovery.load_rules()
         self.lock = threading.Lock()   # 상태 변경은 한 번에 하나씩(재고·투입 이중 처리 방지)
+        self.notify = None             # 서버가 텔레그램 알림 함수를 넣는다: notify(kind, data)
 
     # ------------------------------------------------------------------ 라우팅
     def get(self, path):
@@ -146,9 +147,11 @@ class Features:
     def after_resolve(self, approval, approved, session):
         kind, item, who = approval["kind"], approval["item"], session["username"]
         if kind == "monitor_stage" and approved:
-            self.db.put_record("stage", "current", {
+            stage = self.db.put_record("stage", "current", {
                 "level": item.get("level"), "hazards": item.get("hazards", []), "summary": item.get("summary"),
                 "confirmed": True, "approval_id": approval["id"], "approved_by": who, "at": time.time()})
+            if self.notify:
+                self.notify("stage", stage)
         elif kind == "welfare_check" and approved:   # 신고 자동 연결: 승인되면 그 구역 가구에 안부 확인 시작
             self.checks_start({"zone": item["zone"], "timeout_s": item.get("timeout_s", self.gcfg["timeout_s"])})
         elif kind == "volunteer_task":
@@ -204,6 +207,8 @@ class Features:
                                                   "state": row["state"], "started_at": now})
             started.append(h["id"])
         self.db.log_audit("welfare_check_started", "zone", zone, {"households": started, "timeout_s": timeout})
+        if self.notify and started:
+            self.notify("welfare", {"households": started, "timeout_s": timeout})
         return {"started": started, "skipped_no_consent": skipped}
 
     def checks_respond(self, hid):

@@ -395,6 +395,11 @@ def list_records(kind: str) -> list[dict]:
     return [json.loads(r["data_json"]) for r in rows]
 
 
+def delete_record(kind: str, rid: str) -> bool:
+    with connect() as conn:
+        return conn.execute("DELETE FROM records WHERE kind=? AND id=?", (kind, rid)).rowcount > 0
+
+
 def count_records(kind: str) -> int:
     with connect() as conn:
         return conn.execute("SELECT COUNT(*) FROM records WHERE kind=?", (kind,)).fetchone()[0]
