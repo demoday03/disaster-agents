@@ -540,7 +540,7 @@
   // ---------------------------------------------------------------- 새 긴급 신고·SOS 알림
   // 담당자가 새로고침을 누르지 않아도 주민의 긴급 신고(긴급도 1)와 봉사자 SOS가 15초 안에 보이게 한다.
   // 새로 들어오면 화면 맨 위 빨간 띠·탭 제목·짧은 소리로 알린다. 입력 중일 때는 목록을 다시 그리지 않는다
-  let seenUrgent = null, seenSos = null, alertCount = 0;
+  let seenUrgent = null, seenSos = null, alertCount = 0, lastAlertId = null;
   const TITLE = document.title;
   const editing = () => !!document.activeElement?.closest?.('#incidents, #approvals, form') || !!document.querySelector('#incidents details.fix[open]');
   function beep() {
@@ -557,7 +557,14 @@
     bar.innerHTML = `<span>🔴 <b>새 긴급 알림 ${alertCount}건</b> · ${lines.map(E).join(' · ')}</span>` +
       '<button type="button" id="urgentGo">상황판에서 보기</button><button type="button" class="ok2" id="urgentOk">확인함</button>';
     document.title = `🔴(${alertCount}) ${TITLE}`;
-    $('urgentGo').onclick = () => { go('overview'); window.scrollTo({top: 0}); };
+    // '상황판에서 보기': 방금 들어온 긴급 신고 카드로 바로 가서 깜빡여 보인다
+    $('urgentGo').onclick = async () => {
+      go('overview');
+      await loadIncidents();
+      const card = lastAlertId && document.querySelector(`#incidents .incident[data-id="${CSS.escape(lastAlertId)}"]`);
+      if (card) { card.classList.remove('fold-hide'); card.scrollIntoView({block: 'center', behavior: 'smooth'}); card.classList.add('flash'); setTimeout(() => card.classList.remove('flash'), 4000); }
+      else window.scrollTo({top: 0});
+    };
     $('urgentOk').onclick = () => { alertCount = 0; bar.hidden = true; document.title = TITLE; };
     beep();
   }
@@ -566,7 +573,9 @@
       const [inc, vol, ap] = await Promise.all([api('/api/incidents'), api('/api/volunteer'), api('/api/approvals')]);
       const urgent = inc.items.map(x => x.output).filter(o => o.urgency === 1 && o.state !== '오접수');
       if (seenUrgent) {
-        const lines = [...urgent.filter(o => !seenUrgent.has(o.id)).map(o => `${o.type} ${o.id}: ${String(o.text || '').slice(0, 40)}`),
+        const fresh = urgent.filter(o => !seenUrgent.has(o.id));
+        if (fresh.length) lastAlertId = fresh[0].id;
+        const lines = [...fresh.map(o => `${o.type} ${o.id}: ${String(o.text || '').slice(0, 40)}`),
                        ...vol.sos.filter(s => !seenSos.has(s.id)).map(s => `봉사자 SOS(${s.name || vn(s.volunteer)})`)];
         if (lines.length) raiseAlert(lines);
       }

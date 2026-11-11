@@ -40,6 +40,11 @@ def public_demand(output, sc):
         raise ValueError("물품 요청은 물품 수급(⑧)에서 처리합니다")
     if typ not in sc["type_skills"]:
         raise ValueError(f"배치 대상이 아닌 유형입니다: {typ}")
+    zone = output.get("zone")
+    if zone == "미상" and output.get("urgency") in (1, 2):
+        # 위치를 글·GPS로만 적은 긴급 신고: 관리 구역을 몰라도 추천을 미리 만들어 둔다(거리는 중간값으로 계산).
+        # 승인 카드에 '위치 확인 필요'로 보이고, 출동은 신고에 적힌 위치·GPS로 한다
+        return {"id": output["id"], "zone": "미상", "skills": sc["type_skills"][typ], "urgency": output["urgency"]}
     return {"id": output["id"], "zone": _incident_zone(output, sc), "skills": sc["type_skills"][typ],
             "urgency": output.get("urgency", 4)}
 

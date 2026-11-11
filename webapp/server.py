@@ -620,7 +620,7 @@ def _epoch(ts):
 def ongoing_dispatch(output):
     """같은 구역·유형 신고에 이미 대기 중이거나 투입 중인 공공 인력 배치(같은 사건의 반복 신고로 중복 배치하지 않게).
     인명구조는 별건 누락을 막기 위해 묶지 않는다."""
-    if output["type"] == "인명구조":
+    if output["type"] == "인명구조" or output.get("zone") in (None, "미상"):   # 위치를 모르면 같은 사건인지 알 수 없다
         return None
     pending = [a for a in database.list_pending_approvals() if a["kind"] == "dispatch_public"]
     active = [a for a in database.list_dispatch_approvals() if a["kind"] == "dispatch_public"]
@@ -793,6 +793,25 @@ def generate_guidance(incident_id, level, flags, control_zones, hazard=None):
         row["output"] = public
     row["incident_id"] = incident_id
     return row
+
+
+def public_progress(output):
+    """신고자에게 보여 줄 진행 상황(도움이 오고 있는지). 담당자 이름·승인 ID는 넣지 않는다."""
+    if output.get("state") == INVALID:
+        return []
+    steps, linked = [], output.get("linked") or {}
+    if output.get("classified_by"):
+        steps.append({"icon": "👤", "text": "담당자가 신고 내용을 확인했어요"})
+    states = [a["state"] for a in (database.get_approval(x) for x in linked.get("dispatch", []) if isinstance(x, str)) if a]
+    if "approved" in states:
+        steps.append({"icon": "🚒", "text": "대응 인력 출동이 승인됐어요", "done": True})
+    elif states:
+        steps.append({"icon": "🚒", "text": "대응 인력 출동을 담당자가 검토하고 있어요"})
+    if linked.get("supply"):
+        steps.append({"icon": "📦", "text": "물품 요청을 담당자가 검토하고 있어요"})
+    if linked.get("volunteer"):
+        steps.append({"icon": "🙋", "text": "봉사자를 찾고 있어요"})
+    return steps
 
 
 def public_guidance(incident_id):
@@ -1106,7 +1125,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(404, {"error": "접수번호를 찾을 수 없습니다"})
             invalid = incident["result"].get("output", {}).get("state") == INVALID
             return self.send_json(200, {"id": incident_id, **incident, "result": public_row(incident["result"]),
-                                        "guidance": None if invalid else public_guidance(incident_id)})
+                                        "guidance": None if invalid else public_guidance(incident_id),
+                                        "progress": public_progress(incident["result"].get("output", {}))})
         if path == "/api/approvals":
             if not self.require_staff():
                 return

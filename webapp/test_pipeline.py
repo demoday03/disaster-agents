@@ -365,12 +365,18 @@ class TestPipeline(ServerBase):
         self.assertEqual((o["zone"], o["missing"], o["state"]), ("미상", [], "접수"))   # 위치를 적었으면 다시 묻지 않음
         o = self.report("위치: 한빛중 근처 · 흙·돌이 무너졌어요(산사태·토사)")
         self.assertEqual(o["zone"], "Z8")
-        # 위치를 GPS로만 보낸 긴급 신고: 담당자가 위치(관리 구역)를 정하면 그때 배치 추천이 시작된다
+        # 위치를 GPS로만 보낸 긴급 신고: 구역을 몰라도 출동 추천을 바로 만들고, 신고자는 진행 상황을 본다
         o = self.report("위치: GPS 34.88012, 128.62145 (오차 약 12m) · 사람이 갇혔거나 다쳤어요(구조 요청)")
-        self.assertEqual((o["zone"], o["urgency"], o["linked"]), ("미상", 1, {}))
-        code, r = self.post(f"/api/incidents/{o['id']}/classify", {"type": o["type"], "zone": "Z3", "urgency": 1})
-        self.assertEqual(code, 200, r)
-        self.assertTrue(self.staff_view(o["id"])["linked"].get("dispatch"))
+        self.assertEqual((o["zone"], o["urgency"]), ("미상", 1))
+        [aid] = o["linked"]["dispatch"]
+        anon_view = lambda: Client(self.base).get(f"/api/incidents/{o['id']}")[1]["progress"]
+        self.assertIn("검토", anon_view()[0]["text"])
+        self.assertEqual(self.post(f"/api/approvals/{aid}/resolve", {"approved": True, "reason": "GPS 위치로 출동"})[0], 200)
+        self.assertTrue(any(p.get("done") and "승인" in p["text"] for p in anon_view()))
+        # 위치를 모르는 신고끼리는 같은 사건으로 묶지 않는다
+        o2 = self.report("위치: GPS 34.90000, 128.60000 · 물이 차고 있어요(침수) · 어르신 있음")
+        self.assertEqual((o2["zone"], o2["urgency"]), ("미상", 2))
+        self.assertNotEqual(o2["linked"].get("dispatch"), [aid])
         code, v = self.post("/api/volunteer/requests", {"text": "마당 토사 치워 주세요", "address": "장평동 주택가"})
         self.assertEqual(code, 200, v)
         self.assertEqual((v["tasks"][0]["zone"], v["tasks"][0]["address"]), ("미상", "장평동 주택가"))
