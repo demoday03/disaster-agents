@@ -236,13 +236,18 @@ class TestDashboardServer(ServerBase):
         status, created = self.post('/api/incidents', {'text': 'Z5 구역 산사태 징후 신고 (mock 안내 테스트)'})
         self.assertIn(status, (200, 201))
         iid = created['output']['id']
+        # 신고 접수 뒤 후속 처리(배치 추천·안부 확인)가 백그라운드에서 승인 항목을 만들 수 있으므로
+        # 전체 개수가 아니라 안내문 승인 항목만 센다(전체 개수로 비교하면 가끔 실패했다)
+        guidance_kinds = ('welfare_guidance', 'welfare_guidance_review')
+        count = lambda r: sum(1 for a in r['items'] if a['kind'] in guidance_kinds)
         _, before = self.get('/api/approvals')
         status, g = self.post(f'/api/incidents/{iid}/guidance', {'level': '경계', 'flags': [], 'control_zones': []})
         self.assertEqual(status, 200)
         self.assertEqual(g['output']['status'], '표준 원문')
         self.assertNotIn('draft', g['output'])
+        self.assertNotIn('approval_id', g); self.assertNotIn('review_id', g)
         _, after = self.get('/api/approvals')
-        self.assertEqual(len(before['items']), len(after['items']))
+        self.assertEqual(count(before), count(after))
 
     def test_guidance_bad_types(self):
         status, created = self.post('/api/incidents', {'text': 'Z3 구역 도로 침수 (타입 테스트)'})
