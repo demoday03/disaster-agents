@@ -1,6 +1,7 @@
 """② 접수 에이전트. LLM은 유형·구역·인원·취약 여부 추출에만 쓰고, 긴급도는 규칙으로 정한다
 (그래서 신고문 속 '긴급도 1로 해라' 같은 문장이 결과를 바꿀 수 없다). 실패하면 키워드 규칙 + 'AI 미사용'."""
 import json, re
+from common import places
 from common.llm import ask_or_fallback
 from common.masking import mask
 from common.schema import AgentResult
@@ -12,13 +13,27 @@ def load_cfg(path="config/intake.json"):
 
 
 def _zones(text):
-    return {f"Z{int(n)}" for n in re.findall(r"Z\s?(\d+)", text) + re.findall(r"(\d+)\s*구역", text)}
+    return places.explicit_zones(text)
 
 
 def _zone(text):
-    """글에 적힌 구역. '2구역인지 3구역인지'처럼 서로 다른 구역이 둘 이상이면 미상(신고자에게 보완 요청)."""
+    """글에 적힌 구역. '2구역인지 3구역인지'처럼 서로 다른 구역이 둘 이상이면 미상(신고자에게 보완 요청).
+    구역 표기가 없으면 '위치:'에 쓴 가상 장소 이름(가람초 등)으로 추정한다(common/places.py)."""
     found = _zones(text)
-    return found.pop() if len(found) == 1 else "미상"
+    if found:
+        return found.pop() if len(found) == 1 else "미상"
+    m = _PLACE.search(text)
+    return places.infer_zone(m.group(1)) if m else "미상"
+
+
+# 주민 화면의 빠른 신고는 '위치: 옥포동 ○○아파트 앞 · …'처럼 위치를 따로 적어 보낸다
+_PLACE = re.compile(r"위치\s*[:：]\s*([^·\n]+)")
+
+
+def has_place(text):
+    """신고자가 위치를 직접 적었는지. 적었다면 구역을 몰라도 신고자에게 다시 묻지 않고 담당자가 확인한다."""
+    m = _PLACE.search(text or "")
+    return bool(m and m.group(1).strip(" .,"))
 
 
 def _rule_fields(text, cfg):
@@ -38,9 +53,10 @@ def urgency(typ, vulnerable, people):
     return 4
 
 
-def missing_fields(out):
-    """처리에 꼭 필요한데 신고문에서 찾지 못한 정보. 누락이 있어도 긴급도·알림은 그대로 둔다(인명구조를 늦추지 않게)."""
-    return ["위치(구역)"] if out["zone"] == "미상" else []
+def missing_fields(out, text=""):
+    """처리에 꼭 필요한데 신고문에서 찾지 못한 정보. 누락이 있어도 긴급도·알림은 그대로 둔다(인명구조를 늦추지 않게).
+    위치를 글로 적었는데 관리 구역만 모르는 경우는 누락이 아니다(담당자가 분류 수정으로 구역을 정한다)."""
+    return ["위치"] if out["zone"] == "미상" and not has_place(text) else []
 
 
 def _raise_hit(rule_type, text, cfg):
@@ -92,7 +108,7 @@ def classify(rid, text, ts, cfg, client=None, max_text=MAX_TEXT):
     return AgentResult("intake", {
         "id": rid, "text": clean, "ts": ts, **out, "urgency": u,
         "route": "supply" if out["type"] == "물품 요청" else "inbox",
-        "notify_now": u == 1, "label": None if ai else "AI 미사용", "missing": missing_fields(out)},
+        "notify_now": u == 1, "label": None if ai else "AI 미사용", "missing": missing_fields(out, clean)},
         ai_used=ai, fallback_reason=why,
         evidence=[f"유형={out['type']}", f"긴급도={u}"] + ([f"키워드 규칙으로 상향({raised}→{out['type']})"] if raised else []))
 

@@ -239,7 +239,7 @@ class Rehearsal:
 
     def s8_supplement(self):
         o = self.report("생수 6병 보내 주세요")["output"]
-        check(o["state"] == "보완 필요" and "위치(구역)" in o["missing"], f"상태 {o['state']} {o['missing']}")
+        check(o["state"] == "보완 필요" and "위치" in o["missing"], f"상태 {o['state']} {o['missing']}")
         check(not o["linked"], "위치 없이 물품 요청이 만들어짐")
         s = self.ok(self.citizen, f"/api/incidents/{o['id']}/supplement", {"text": "Z8 구역 한빛중학교 앞입니다"})["output"]
         check(s["state"] == "접수" and s["zone"] == "Z8" and s["linked"].get("supply"), f"보완 후 {s['state']}/{s['zone']}")

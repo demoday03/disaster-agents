@@ -7,7 +7,7 @@ services:
     plan: free
     region: singapore          # 한국에서 가장 가까운 지역
     branch: claude/solar-connection-verify-byjenq
-    buildCommand: python --version   # 표준 라이브러리만 써서 설치할 패키지가 없다
+    buildCommand: pip install -r requirements.txt   # Turso 연결용 libsql만 설치(그 밖은 표준 라이브러리)
     startCommand: python webapp/server.py
     healthCheckPath: /api/health
     autoDeploy: true           # 이 브랜치에 push하면 자동으로 다시 배포
@@ -18,6 +18,10 @@ services:
         value: "1"
       - key: LLM_MODE
         value: solar
+      - key: TURSO_DATABASE_URL   # Turso DB 주소(libsql://…). 넣으면 다시 시작해도 데이터가 남는다. 비우면 서버 안 SQLite(재시작 때 초기화)
+        sync: false
+      - key: TURSO_AUTH_TOKEN     # Turso DB 토큰
+        sync: false
       - key: DISASTER_DB_PATH
         value: data/demo.db
       - key: DEMO_SEED_ON_START   # 무료 서버는 다시 시작하면 디스크가 비므로 시작할 때 시연 데이터를 넣는다

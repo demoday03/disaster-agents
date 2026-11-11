@@ -13,6 +13,8 @@
 | `DEMO_ADMIN_PASSWORD` | 담당자 화면 `시연담당` 계정 비밀번호(8자 이상). 접속 코드와 다르게 | |
 | `UPSTAGE_API_KEY` | Solar 키(이 PC에 저장한 것과 같은 값) | |
 | `KMA_API_KEY` | 공공데이터포털 인증키(Decoding). 없으면 비워도 됨(날씨만 '확인 불가') | |
+| `TURSO_DATABASE_URL` | Turso DB 주소(`libsql://…turso.io`). 아래 7번에서 만든다. 비우면 재시작할 때 데이터가 지워짐 | |
+| `TURSO_AUTH_TOKEN` | Turso DB 토큰 | |
 
 키 값은 Render 화면에만 입력한다. 저장소·채팅·문서에 적지 않는다.
 
@@ -50,7 +52,7 @@
 ## 5. 알아 둘 점(무료 요금제)
 
 - 15분쯤 아무도 안 들어오면 서버가 잠든다. 다음 첫 접속이 30초~1분 걸린다.
-- 서버가 다시 시작되거나 새로 배포되면 **데이터가 처음 상태로 돌아간다**(신고 6건이 자동으로 다시 들어감). 시연 연습에는 오히려 편하다.
+- Turso를 연결하지 않았다면, 서버가 다시 시작되거나 새로 배포되면 **데이터가 처음 상태로 돌아간다**(신고 6건이 자동으로 다시 들어감). 시연 연습에는 오히려 편하다.
 - Solar 호출은 서버가 켜져 있는 동안 300회(`SOLAR_MAX_CALLS`)까지만 하고, 넘으면 규칙으로만 동작한다. 공개 화면 요청은 접속 IP당 분당 30건으로 제한한다.
 - 이 브랜치에 push하면 자동으로 다시 배포된다.
 - 그만 공개하려면 Render 서비스 화면에서 **Suspend**(일시 중지) 또는 **Delete**. 접속 코드를 바꾸면(Environment에서 수정 → 저장) 예전 코드로 들어온 사람은 다시 코드를 넣어야 한다.
@@ -63,3 +65,23 @@
 - 공개(`SITE_PUBLIC=1`)일 때 보호 장치: 담당자 기능은 로그인·CSRF 필요, 신고는 IP당 분당 제한, Solar 호출은 300회 상한.
 - 접속 코드는 `/access`에서 받고, 맞으면 30일짜리 HttpOnly 쿠키를 준다. `/api/health`(Render 상태 확인)와 게이트웨이 경로만 코드 없이 열린다.
 - `DEMO_SEED_ON_START=1`이고 계정이 없으면 시작할 때 `scripts/demo_setup.py`와 같은 시연 데이터를 넣는다.
+
+## 7. 데이터가 남게 하기: Turso 연결
+
+무료 서버는 다시 시작하면 디스크가 비어서, 가입한 봉사자 계정·주민이 적은 우리 집·신고가 사라진다.
+Turso(클라우드 SQLite, 무료 요금제 있음)를 연결하면 이 데이터가 Turso에 저장되어 남는다.
+
+1. https://turso.tech 에 가입하고 로그인한다(GitHub 로그인 가능). 계정 만들기는 직접 한다.
+2. **Databases → Create Database**. 이름은 `disaster-agents`, 지역은 Render(싱가포르)와 가까운 곳(예: Tokyo `aws-ap-northeast-1`)을 고른다.
+3. 만든 DB 화면에서 **URL**(`libsql://disaster-agents-<계정>.turso.io` 모양)을 복사한다.
+4. 같은 화면에서 **Create Token**(읽기·쓰기, 만료 없음 또는 충분히 길게)으로 토큰을 만들어 복사한다. 토큰은 비밀번호와 같다.
+5. Render 서비스 화면 → **Environment**에서 `TURSO_DATABASE_URL`과 `TURSO_AUTH_TOKEN`에 붙여 넣고 저장한다. 저장하면 다시 배포된다.
+6. 확인: `링크/api/health`를 열어 `"database": "Turso(libSQL)"`이 보이면 연결된 것이다. 봉사자로 가입한 뒤 Render에서 **Manual Deploy → Restart**를 해도 로그인이 되면 성공.
+
+알아 둘 점
+- 처음 연결하면 Turso DB가 비어 있으므로 서버가 시연 계정과 신고 6건을 한 번 넣는다(`DEMO_SEED_ON_START`). 그 뒤로는 다시 넣지 않는다.
+- 서버 안에는 빠른 읽기용 복제본(`data/demo-turso-replica.db`)만 두고, 쓰기는 Turso에 바로 저장한다. 다시 시작하면 복제본을 Turso에서 새로 받는다.
+- 비밀번호는 원문이 아니라 해시만 저장된다(봉사자·담당자 모두). Turso 화면에서 표를 열어 봐도 비밀번호는 보이지 않는다.
+- 처음 상태로 되돌리려면 Turso에서 DB를 지우고 새로 만든 뒤 URL·토큰을 다시 넣는다.
+- 토큰이 새어 나갔다면 Turso에서 토큰을 폐기(rotate)하고 새 토큰으로 바꾼다.
+- 내부망(학교 PC) 배포는 Turso 없이 그 PC의 SQLite 파일을 쓴다(`docs/내부망_배포_점검표.md`).
