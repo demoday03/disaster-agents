@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>8개 에이전트 구조도</title>
+<style>
+/* 발표용 한 장(1920×1080). PNG는 같은 폴더의 에이전트_구조도.png */
+:root{--ink:#16233B;--ink2:#3B4A63;--muted:#5A6880;--line:#CBD4E1;--paper:#F4F6FA;--ai:#1F5FD1;--ai-bg:#E8F0FD;--rule:#1E7A4F;--rule-bg:#E1F3EA;--human:#B4235A;--human-bg:#FCE7EF;--sensor:#8A5A00;--sensor-bg:#FFF1D6;font-family:Pretendard,"Pretendard Variable","Noto Sans KR","Malgun Gothic","Apple SD Gothic Neo",sans-serif;color:var(--ink)}
+*{box-sizing:border-box}body{margin:0;background:#fff}
+.slide{width:1920px;height:1080px;padding:44px 52px;background:var(--paper);display:grid;grid-template-rows:auto 1fr auto;gap:22px}
+.head{display:flex;align-items:flex-end;justify-content:space-between}
+.head h1{margin:0;font-size:46px;letter-spacing:-.02em}.head p{margin:6px 0 0;font-size:22px;color:var(--ink2)}
+.legend{display:flex;gap:14px;font-size:19px;font-weight:700}
+.tag{display:inline-flex;align-items:center;gap:6px;border-radius:99px;padding:3px 12px;font-weight:700;font-size:16px;white-space:nowrap}
+.t-ai{background:var(--ai-bg);color:var(--ai)}.t-rule{background:var(--rule-bg);color:var(--rule)}.t-human{background:var(--human-bg);color:var(--human)}.t-sensor{background:var(--sensor-bg);color:var(--sensor)}
+.body{display:grid;grid-template-columns:230px 1fr 270px;gap:20px;min-height:0}
+.col{display:flex;flex-direction:column;gap:12px}
+.colh{font-size:20px;font-weight:800;color:var(--ink2);margin:0 0 2px}
+.in{background:#fff;border:2px solid var(--line);border-radius:16px;padding:14px 16px;font-size:19px;font-weight:700}
+.in small{display:block;font-weight:500;color:var(--muted);font-size:16px;margin-top:2px}
+.agents{display:grid;grid-template-columns:repeat(4,1fr);grid-template-rows:1fr 1fr;gap:14px;min-height:0}
+.ag{background:#fff;border:2px solid var(--line);border-radius:18px;padding:14px 16px;display:flex;flex-direction:column;gap:7px;position:relative}
+.ag h2{margin:0;font-size:27px;letter-spacing:-.01em}.ag h2 .n{display:inline-grid;place-items:center;width:34px;height:34px;border-radius:50%;background:var(--ink);color:#fff;font-size:19px;margin-right:6px;vertical-align:2px}
+.ag .role{font-size:19px;font-weight:600;color:var(--ink2);line-height:1.35;margin:0}
+.ag .row{display:flex;gap:8px;align-items:flex-start;font-size:17.5px;line-height:1.38}
+.ag .row .tag{flex:none;font-size:15px;padding:1px 10px}
+.ag .ok{margin-top:auto;border-top:1px dashed var(--line);padding-top:8px;font-size:17.5px;font-weight:700;color:var(--human)}
+.ag.verify{border-color:#7A3EC8}.ag.verify h2 .n{background:#7A3EC8}
+.human{background:var(--human-bg);border:3px solid var(--human);border-radius:20px;padding:18px;display:flex;flex-direction:column;gap:10px}
+.human h3{margin:0;font-size:27px;color:var(--human)}.human p{margin:0;font-size:17px;line-height:1.4;color:var(--ink)}
+.human ul{margin:0;padding-left:20px;font-size:17px;line-height:1.5}
+.out{background:#fff;border:2px solid var(--line);border-radius:16px;padding:12px 16px;font-size:18px;font-weight:700}
+.out small{display:block;font-weight:500;color:var(--muted);font-size:15px}
+.foot{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+.step{border-radius:16px;padding:12px 20px;font-size:23px;font-weight:800;display:flex;flex-direction:column;gap:2px}
+.step span{font-size:17px;font-weight:600}
+.step.a{background:var(--ai-bg);color:var(--ai)}.step.r{background:var(--rule-bg);color:var(--rule)}.step.h{background:var(--human-bg);color:var(--human)}
+.arrow{position:absolute;right:-13px;top:50%;font-size:22px;color:var(--muted)}
+</style></head><body>
+<div class="slide">
+<div class="head">
+ <div><h1>재난 탈출 넘버원 · 8개 에이전트 구조</h1><p>신고·센서가 들어오면 각 에이전트가 맡은 일만 하고, 결정은 담당자가 승인합니다</p></div>
+ <div class="legend"><span class="tag t-ai">AI(Solar)</span><span class="tag t-rule">규칙</span><span class="tag t-sensor">센서·공공데이터</span><span class="tag t-human">사람 승인</span></div>
+</div>
+<div class="body">
+ <div class="col">
+  <p class="colh">들어오는 것</p>
+  <div class="in">📝 주민 신고<small>빠른 신고(고르기), 직접 쓴 글, 위치·GPS</small></div>
+  <div class="in">📡 마이크로비트 센서<small>수위 2개·기울기·진동 → 라디오 → 게이트웨이</small></div>
+  <div class="in">🌧️ 기상청<small>초단기 실황(1시간 강수량)·특보</small></div>
+  <div class="in">🏠 우리 집·봉사자 가입<small>집 형태·함께 사는 분, 할 수 있는 일·장비</small></div>
+  <div class="in">📄 피해 서류<small>PDF·사진 → 문서 파싱</small></div>
+ </div>
+ <div class="agents">
+  <div class="ag"><h2><span class="n">①</span>감시</h2><p class="role">센서 값으로 위험 단계 후보를 만든다</p>
+   <div class="row"><span class="tag t-sensor">센서</span>수위 2개가 함께 넘거나, 기울기+진동이 함께 반응</div>
+   <div class="row"><span class="tag t-rule">규칙</span>연속 N회여야 '확정 후보', 하나만 반응하면 보류</div>
+   <div class="row"><span class="tag t-rule">규칙</span>신고 대조: 신고의 심각도를 같은 곳 센서와 비교(참고용)</div>
+   <div class="ok">✔ 위기 단계 확정은 담당자 승인</div></div>
+  <div class="ag"><h2><span class="n">②</span>접수</h2><p class="role">신고 글을 읽고 정리해 상황판에 올린다</p>
+   <div class="row"><span class="tag t-ai">AI</span>유형·위치·인원·취약 여부 추출</div>
+   <div class="row"><span class="tag t-rule">규칙</span>긴급도 1~4는 규칙이 정함(글 속 지시로 못 바꿈), 같은 사건 묶기</div>
+   <div class="row"><span class="tag t-rule">연결</span>급한 신고 → ④ · 물품 → ⑧ · 일손 → ⑥ · 안부 → ③</div>
+   <div class="ok">✔ 담당자가 분류 수정·오접수 처리</div></div>
+  <div class="ag"><h2><span class="n">③</span>안내·안부</h2><p class="role">가구 맞춤 안내문, 안전 확인과 무응답 격상</p>
+   <div class="row"><span class="tag t-ai">AI</span>표준 행동요령 문장을 가구에 맞게 다듬기 → ⑦ 검증</div>
+   <div class="row"><span class="tag t-rule">규칙</span>응답 시간 지나면 취약 가구부터 격상</div>
+   <div class="ok">✔ 안내문 게시·안부 확인 시작 승인</div></div>
+  <div class="ag"><h2><span class="n">④</span>배치</h2><p class="role">공공 인력·대피소를 추천한다</p>
+   <div class="row"><span class="tag t-rule">규칙</span>제약(통제 구간·수용량) → 점수 가중합 → 1순위+대안 2</div>
+   <div class="row"><span class="tag t-ai">AI</span>추천 근거 문장만(선택)</div>
+   <div class="ok">✔ 배치 승인·거절(거절하면 다시 추천)</div></div>
+  <div class="ag"><h2><span class="n">⑤</span>복구·지원</h2><p class="role">지원제도 찾기, 피해 신고서 초안, 복구 단계</p>
+   <div class="row"><span class="tag t-ai">AI</span>서류에서 필드 추출(업스테이지 문서 파싱)</div>
+   <div class="row"><span class="tag t-rule">규칙</span>지원 항목 매칭(정답표), 안내는 ⑦ 검증</div>
+   <div class="ok">✔ 제출·확정은 사람</div></div>
+  <div class="ag"><h2><span class="n">⑥</span>봉사</h2><p class="role">복구 요청을 작업으로 나누고 봉사자를 추천</p>
+   <div class="row"><span class="tag t-ai">AI</span>요청 글을 작업 단위로 나누기</div>
+   <div class="row"><span class="tag t-rule">규칙</span>할 수 있는 일·거리·장비·시간 매칭, 안전 규칙</div>
+   <div class="ok">✔ 봉사자 투입 승인</div></div>
+  <div class="ag verify"><h2><span class="n">⑦</span>검증</h2><p class="role">AI가 쓴 안내가 근거 문서와 맞는지 확인</p>
+   <div class="row"><span class="tag t-rule">규칙</span>근거에 없는 숫자는 바로 차단</div>
+   <div class="row"><span class="tag t-ai">AI</span>다른 판정 모델이 맞음·틀림·불확실</div>
+   <div class="ok">✔ 불확실하면 담당자 확인, 틀리면 표준 원문</div></div>
+  <div class="ag"><h2><span class="n">⑧</span>물품</h2><p class="role">급한 물품 요청을 정리하고 공급원을 추천</p>
+   <div class="row"><span class="tag t-ai">AI</span>자유 메모에서 품목 찾기, 부족 안내 초안 → ⑦</div>
+   <div class="row"><span class="tag t-rule">규칙</span>긴급도·공급원 점수, 의약품은 자동 매칭 금지</div>
+   <div class="ok">✔ 검토·출고(배치) 승인 뒤에만 재고 감소</div></div>
+ </div>
+ <div class="col">
+  <div class="human"><h3>👤 사람의 승인</h3>
+   <p>AI 제안은 모두 <b>담당자 승인 대기열</b>로 모입니다.</p>
+   <ul><li>승인해야만 반영</li><li>처리자 이름·사유 기록</li><li>신고 하나의 대응안은 한 번에 승인</li><li>거절하면 다시 추천</li></ul></div>
+  <p class="colh" style="margin-top:4px">나가는 것</p>
+  <div class="out">📱 주민 화면·텔레그램<small>위기 단계·공지·안부 확인 버튼</small></div>
+  <div class="out">🙋 봉사자 화면<small>승인된 작업·체크인·SOS</small></div>
+  <div class="out">📋 배치·출고 기록<small>일일 보고서·사후 평가</small></div>
+ </div>
+</div>
+<div class="foot">
+ <div class="step a">① AI는 읽고 정리한다 <span>신고·서류·메모에서 정보를 뽑고 문장을 다듬는다</span></div>
+ <div class="step r">② 규칙이 정한다 <span>긴급도·점수·제약·안전 기준(같은 입력이면 같은 결과)</span></div>
+ <div class="step h">③ 사람이 승인한다 <span>출동·출고·투입·게시는 담당자 승인 후에만</span></div>
+</div>
+</div>
+</body></html>
