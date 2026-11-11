@@ -36,6 +36,8 @@ class TestScenarioData(unittest.TestCase):
         self.assertEqual(scenario.public_demand({"id": "R5", "type": "인명구조", "zone": "미상", "urgency": 1}, SC)["zone"], "미상")
         with self.assertRaises(ValueError):
             scenario.public_demand({"id": "R6", "type": "침수", "zone": "미상", "urgency": 3}, SC)
+        with self.assertRaises(ValueError):   # 위치를 아예 적지 않은 신고는 보낼 곳이 없다
+            scenario.public_demand({"id": "R7", "type": "인명구조", "zone": "미상", "urgency": 1, "missing": ["위치"]}, SC)
         out = {"id": "R4", "type": "침수", "zone": "Z4"}
         self.assertEqual(scenario.shelter_demand(out, SC, 3, ["경사로", "경사로"])["amenities"], ["경사로"])
         for people, am in ((0, []), (True, []), (3, ["수영장"]), (3, "경사로")):

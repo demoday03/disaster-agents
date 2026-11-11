@@ -41,8 +41,10 @@ def public_demand(output, sc):
     if typ not in sc["type_skills"]:
         raise ValueError(f"배치 대상이 아닌 유형입니다: {typ}")
     zone = output.get("zone")
-    if zone == "미상" and output.get("urgency") in (1, 2):
+    written = not any(str(m).startswith("위치") for m in (output.get("missing") or []))   # 위치를 글·GPS로 적었는지
+    if zone == "미상" and output.get("urgency") in (1, 2) and written:
         # 위치를 글·GPS로만 적은 긴급 신고: 관리 구역을 몰라도 추천을 미리 만들어 둔다(거리는 중간값으로 계산).
+        # 위치를 아예 적지 않았으면(보완 필요) 보낼 곳이 없으므로 신고자에게 위치를 먼저 받는다
         # 승인 카드에 '위치 확인 필요'로 보이고, 출동은 신고에 적힌 위치·GPS로 한다
         return {"id": output["id"], "zone": "미상", "skills": sc["type_skills"][typ], "urgency": output["urgency"]}
     return {"id": output["id"], "zone": _incident_zone(output, sc), "skills": sc["type_skills"][typ],
