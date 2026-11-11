@@ -365,6 +365,12 @@ class TestPipeline(ServerBase):
         self.assertEqual((o["zone"], o["missing"], o["state"]), ("미상", [], "접수"))   # 위치를 적었으면 다시 묻지 않음
         o = self.report("위치: 한빛중 근처 · 흙·돌이 무너졌어요(산사태·토사)")
         self.assertEqual(o["zone"], "Z8")
+        # 위치를 GPS로만 보낸 긴급 신고: 담당자가 위치(관리 구역)를 정하면 그때 배치 추천이 시작된다
+        o = self.report("위치: GPS 34.88012, 128.62145 (오차 약 12m) · 사람이 갇혔거나 다쳤어요(구조 요청)")
+        self.assertEqual((o["zone"], o["urgency"], o["linked"]), ("미상", 1, {}))
+        code, r = self.post(f"/api/incidents/{o['id']}/classify", {"type": o["type"], "zone": "Z3", "urgency": 1})
+        self.assertEqual(code, 200, r)
+        self.assertTrue(self.staff_view(o["id"])["linked"].get("dispatch"))
         code, v = self.post("/api/volunteer/requests", {"text": "마당 토사 치워 주세요", "address": "장평동 주택가"})
         self.assertEqual(code, 200, v)
         self.assertEqual((v["tasks"][0]["zone"], v["tasks"][0]["address"]), ("미상", "장평동 주택가"))

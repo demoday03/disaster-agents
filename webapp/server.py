@@ -1287,8 +1287,11 @@ class Handler(BaseHTTPRequestHandler):
                     note = ("담당자 분류 수정: " + ", ".join(f"{k} {before[k]}→{after[k]}" for k in after if before[k] != after[k])
                             + (" · 이미 만든 배치·안내는 그대로이니 필요하면 해당 화면에서 다시 추천하세요" if o.get("linked") else ""))
                     o.update(after, label="담당자 수정", classified_by=s["username"])
-                    relink = o.get("state") == "보완 필요" and zone in zone_ids
-                    if relink:   # 담당자가 구역을 채워 주면 신고자 보완을 기다리지 않고 다음 에이전트로 넘긴다
+                    # 담당자가 구역을 채워 주면 다음 에이전트로 넘긴다: 신고자 보완을 기다리던 신고, 또는 위치를 글·GPS로만
+                    # 적어 구역을 몰라 아무 에이전트에도 넘어가지 못한 신고(긴급 신고의 배치 추천이 여기서 시작된다)
+                    relink = zone in zone_ids and (o.get("state") == "보완 필요"
+                                                   or (before["zone"] == "미상" and o.get("state") == "접수" and not o.get("linked")))
+                    if relink:
                         o["missing"] = [m for m in (o.get("missing") or []) if not m.startswith("위치")]
                         row = link_incident(row)   # 메모를 새로 쓰므로 수정 메모는 그 뒤에 붙인다
                     row["output"]["notes"] = list(row["output"].get("notes") or []) + [note]

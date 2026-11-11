@@ -17,12 +17,23 @@ h2{font-size:1.1rem;margin:0 0 12px}
 .role ul{margin:6px 0 0;padding-left:1.1em;color:var(--ink-2);font-size:.92rem}.role .go{margin-top:auto;padding-top:12px;color:var(--action);font-weight:700}
 .foot{color:var(--muted);font-size:.85rem;margin-top:22px;text-align:center}
 .ann{margin:0 0 20px;padding:12px 16px;border-radius:10px;border-left:6px solid var(--s-danger);background:#FDF0F1;font-weight:600;overflow-wrap:anywhere}.ann p{margin:4px 0}
-@media(max-width:720px){.roles{grid-template-columns:1fr}}
+.quick{display:grid;grid-template-columns:2fr 2fr 1fr 1fr;gap:10px;margin:0 0 20px}
+.quick a{display:flex;flex-direction:column;justify-content:center;gap:2px;min-height:84px;padding:12px 14px;border-radius:14px;text-decoration:none;font-size:1.6rem;line-height:1.1;color:#fff;box-shadow:0 2px 8px rgba(22,35,59,.12)}
+.quick b{font-size:1.08rem}.quick span{font-size:.8rem;opacity:.9}.quick .e{font-size:1.7rem;opacity:1;line-height:1.1}
+.quick .sos{background:var(--s-danger)}.quick .shel{background:var(--s-normal)}.quick .t119{background:#8E1622}.quick .t112{background:#2C3E63}
+.quick a:hover{filter:brightness(1.08)}
+@media(max-width:720px){.roles{grid-template-columns:1fr}.quick{grid-template-columns:1fr 1fr}}
 </style></head><body>
 <header class="top"><h1>재난 안전 AI 에이전트</h1><p>교육용 시연 사이트입니다. 실제 신고·출동으로 이어지지 않으니 실제 개인정보는 넣지 마세요.</p></header>
 <div class="band" id="stage" data-level="정상" role="status">지금 우리 지역 위기 단계: 확인 중</div>
 <main class="wrap">
-<p class="call">사람이 다치거나 갇혔다면 이 화면 대신 119·112에 바로 전화하세요.</p>
+<nav class="quick" aria-label="급할 때 바로가기">
+<a class="sos" href="/citizen#report"><span class="e" aria-hidden="true">🆘</span><b>바로 신고하기</b><span>눌러서 고르기만 하면 돼요</span></a>
+<a class="shel" href="/citizen#map"><span class="e" aria-hidden="true">🏫</span><b>대피소 찾기</b><span>남은 자리·통제 중인 길</span></a>
+<a class="t119" href="tel:119" aria-label="119에 전화하기"><span class="e" aria-hidden="true">📞</span><b>119</b><span>화재·구조·구급</span></a>
+<a class="t112" href="tel:112" aria-label="112에 전화하기"><span class="e" aria-hidden="true">📞</span><b>112</b><span>경찰</span></a>
+</nav>
+<p class="call">사람이 다치거나 갇혔다면 신고보다 119·112 전화가 먼저예요.</p>
 <div id="ann" class="ann" hidden role="alert"></div>
 <h2>누구로 들어갈까요?</h2>
 <div class="roles">

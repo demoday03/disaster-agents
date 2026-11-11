@@ -537,6 +537,47 @@
     });
   }
 
+  // ---------------------------------------------------------------- 새 긴급 신고·SOS 알림
+  // 담당자가 새로고침을 누르지 않아도 주민의 긴급 신고(긴급도 1)와 봉사자 SOS가 15초 안에 보이게 한다.
+  // 새로 들어오면 화면 맨 위 빨간 띠·탭 제목·짧은 소리로 알린다. 입력 중일 때는 목록을 다시 그리지 않는다
+  let seenUrgent = null, seenSos = null, alertCount = 0;
+  const TITLE = document.title;
+  const editing = () => !!document.activeElement?.closest?.('#incidents, #approvals, form') || !!document.querySelector('#incidents details.fix[open]');
+  function beep() {
+    try {
+      const a = new (window.AudioContext || window.webkitAudioContext)(), o = a.createOscillator(), g = a.createGain();
+      o.frequency.value = 880; g.gain.value = 0.15; o.connect(g); g.connect(a.destination); o.start();
+      setTimeout(() => { o.stop(); a.close(); }, 450);
+    } catch (e) { /* 소리를 못 내는 브라우저 */ }
+  }
+  function raiseAlert(lines) {
+    alertCount += lines.length;
+    const bar = $('urgentBar');
+    bar.hidden = false;
+    bar.innerHTML = `<span>🔴 <b>새 긴급 알림 ${alertCount}건</b> · ${lines.map(E).join(' · ')}</span>` +
+      '<button type="button" id="urgentGo">상황판에서 보기</button><button type="button" class="ok2" id="urgentOk">확인함</button>';
+    document.title = `🔴(${alertCount}) ${TITLE}`;
+    $('urgentGo').onclick = () => { go('overview'); window.scrollTo({top: 0}); };
+    $('urgentOk').onclick = () => { alertCount = 0; bar.hidden = true; document.title = TITLE; };
+    beep();
+  }
+  async function watch() {
+    try {
+      const [inc, vol, ap] = await Promise.all([api('/api/incidents'), api('/api/volunteer'), api('/api/approvals')]);
+      const urgent = inc.items.map(x => x.output).filter(o => o.urgency === 1 && o.state !== '오접수');
+      if (seenUrgent) {
+        const lines = [...urgent.filter(o => !seenUrgent.has(o.id)).map(o => `${o.type} ${o.id}: ${String(o.text || '').slice(0, 40)}`),
+                       ...vol.sos.filter(s => !seenSos.has(s.id)).map(s => `봉사자 SOS(${s.name || vn(s.volunteer)})`)];
+        if (lines.length) raiseAlert(lines);
+      }
+      seenUrgent = new Set(urgent.map(o => o.id));
+      seenSos = new Set(vol.sos.map(s => s.id));
+      $('approvalCount').textContent = ap.items.length;
+      $('approvalCount').hidden = false;
+      if (current === 'overview' && !editing()) { loadIncidents(); loadSituation(); }
+    } catch (e) { /* 다음 차례에 다시 */ }
+  }
+
   window.opsInit = async () => {
     bind();
     try { await loadMeta(); loadIncidents(); } catch (e) { /* 메타 정보 없이도 화면은 쓴다 */ }
@@ -546,6 +587,8 @@
     loadApprovals();
     refreshBand();
     setInterval(refreshBand, 15000);   // 다른 담당자가 단계를 확정해도 띠가 따라 바뀌게
+    watch();
+    setInterval(watch, 15000);         // 새 신고·SOS를 새로고침 없이
   };
   if (window.ADMIN_READY) window.opsInit();
 })();
