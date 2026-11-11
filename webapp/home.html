@@ -44,7 +44,7 @@ h2{font-size:1.1rem;margin:0 0 12px}
 <a class="role" href="/admin"><span class="ic" aria-hidden="true">🛡️</span><b>담당자</b><span>상황실 담당 공무원 (로그인 필요)</span>
 <ul><li>상황판 · 신고 목록</li><li>승인 대기열</li><li>배치 · 안내 · 센서</li></ul><span class="go">들어가기 →</span></a>
 </div>
-<p class="foot">위기 단계와 안내는 담당자가 확인한 것만 표시됩니다.</p>
+<p class="foot">위기 단계와 안내는 담당자가 확인한 것만 표시됩니다. · <a href="/battle">📊 사람 vs AI 신고 분류 대결</a></p>
 </main>
 <script>
 fetch('/api/public/status').then(r=>r.ok?r.json():Promise.reject()).then(d=>{const s=d.stage,el=document.getElementById('stage');

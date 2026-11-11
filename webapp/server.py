@@ -20,7 +20,7 @@ from common import scenario
 from agents import crosscheck, dispatch, intake, monitor, recovery, welfare, verify
 from coordinator import Coordinator
 from database import db as database
-from webapp import features, public_api, sensors, telegram_bot, weather
+from webapp import battle, features, public_api, sensors, telegram_bot, weather
 
 # 클라우드 모드(Render 등): 플랫폼이 HTTPS를 앞에서 처리하고 PORT를 정해 준다. 이때는 사이트 접속 코드가 필수다.
 CLOUD = os.getenv("WEBAPP_CLOUD") == "1" or os.getenv("RENDER") == "true"
@@ -1130,6 +1130,15 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, SENSORS.downlink())
         if path in ("/volunteer",):
             return self.send_html("volunteer.html")
+        if path == "/battle":   # 사람 vs AI 신고 분류 대결(시연·발표용)
+            return self.send_html("battle.html")
+        if path == "/api/public/battle":
+            return self.send_json(200, battle.questions())
+        if path == "/api/public/battle/history":
+            ai = database.get_record("battle_ai", battle._mode_key(LLM))
+            return self.send_json(200, {"history": battle.history(database),
+                                        "ai": {**battle.score({r["id"]: r["type"] for r in ai["rows"]}), "total_ms": ai["total_ms"],
+                                               "mode": ai["mode"]} if ai else None})
         if path.startswith("/api/public/") and path != "/api/public/status":
             return self.public_call("GET", path, {})
         if path == "/api/weather":   # 기상청 실제 강수·특보(참고 정보)와 지금 감시 에이전트가 쓰는 강우 단계
@@ -1276,6 +1285,11 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/api/public/"):
                 if not PUBLIC_LIMIT.allow(self.client_ip()):
                     return self.send_json(429, {"error": "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요"})
+                if path == "/api/public/battle":   # AI 분류(처음 한 번 Solar 20회)는 FEATURES 잠금 밖에서
+                    try:
+                        return self.send_json(201, battle.submit(database, LLM, data))
+                    except ValueError as e:
+                        return self.send_json(400, {"error": str(e)})
                 return self.public_call("POST", path, data)
             if path.startswith("/api/incidents/") and path.endswith("/classify"):   # 담당자: 분류 직접 수정(O3)
                 s = self.require_staff(check_csrf=True)

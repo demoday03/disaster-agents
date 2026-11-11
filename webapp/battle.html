@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>사람 vs AI 신고 분류 대결</title>
+<style>
+:root{--ink:#16233B;--ink-2:#3B4A63;--muted:#5A6880;--paper:#EEF2F7;--surface:#FFFFFF;--line:#D5DCE7;--line-soft:#E7ECF3;--action:#1F5FD1;--action-bg:#E8F0FD;--human:#7A3EC8;--human-bg:#F2EAFC;--ai:#1F5FD1;--ai-bg:#E8F0FD;--ok:#1E7A4F;--ok-bg:#E1F3EA;--bad:#A3182A;--bad-bg:#FBE3E5;font-family:Pretendard,"Pretendard Variable","Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",system-ui,sans-serif;font-size:16px;line-height:1.6;color:var(--ink);background:var(--paper)}
+*{box-sizing:border-box}body{margin:0}a{color:var(--action)}:focus-visible{outline:3px solid var(--action);outline-offset:2px;border-radius:6px}
+.top{background:var(--ink);color:#fff;padding:10px max(16px,calc((100vw - 900px)/2));display:flex;align-items:center;gap:12px}.top a{color:#C9D5E8;text-decoration:none;font-size:.92rem}.top h1{margin:0;font-size:1.05rem;font-weight:800}
+.wrap{max-width:900px;margin:18px auto;padding:0 16px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:22px;margin-bottom:14px}
+h2{margin:0 0 6px;font-size:1.35rem}.lead{color:var(--muted);margin:0 0 14px}.muted{color:var(--muted);font-size:.9rem}
+button{font:inherit;font-weight:700;background:var(--action);color:#fff;border:0;border-radius:10px;padding:12px 20px;min-height:48px;cursor:pointer}button:hover{filter:brightness(1.08)}button:disabled{opacity:.6;cursor:wait}button.sub{background:#E3E8F0;color:var(--ink)}
+input{font:inherit;padding:11px 12px;border:1px solid #BFC9D8;border-radius:10px;width:100%;max-width:280px}
+.vs{display:grid;grid-template-columns:1fr auto 1fr;gap:12px;align-items:stretch}
+.side{border-radius:14px;padding:16px;text-align:center}.side.h{background:var(--human-bg);color:var(--human)}.side.a{background:var(--ai-bg);color:var(--ai)}
+.side .who{font-weight:800}.side .big{font-size:2.4rem;font-weight:900;line-height:1.1;font-variant-numeric:tabular-nums;color:var(--ink)}.side .sub2{color:var(--ink-2);font-size:.92rem}
+.vsmark{align-self:center;font-weight:900;color:var(--muted);font-size:1.2rem}
+.bar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;font-weight:700}
+.timer{font-variant-numeric:tabular-nums;background:var(--human-bg);color:var(--human);border-radius:99px;padding:2px 12px}
+.prog{height:8px;background:var(--line-soft);border-radius:99px;overflow:hidden;margin-bottom:16px}.prog span{display:block;height:100%;background:var(--human);transition:width .2s}
+.report{font-size:1.3rem;font-weight:700;background:#F7F9FC;border:1px solid var(--line-soft);border-radius:12px;padding:18px;margin:0 0 16px;min-height:96px}
+.types{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.types button{background:#fff;color:var(--ink);border:1.5px solid #BFC9D8;text-align:left;display:flex;flex-direction:column;gap:2px;padding:10px 14px}
+.types button small{color:var(--muted);font-weight:500;font-size:.78rem;line-height:1.35}
+@media(hover:hover){.types button:hover{border-color:var(--human);background:var(--human-bg);filter:none}}
+.types button:active{border-color:var(--human);background:var(--human-bg)}
+.headline{font-size:1.15rem;font-weight:800;margin:14px 0 4px}
+.row1{padding:10px 0;border-top:1px solid var(--line-soft)}.row1:first-child{border-top:0}.row1 .t{font-weight:600}.row1 .m{font-size:.86rem;color:var(--ink-2);margin-top:2px}
+table{width:100%;border-collapse:collapse;font-size:.9rem}th,td{text-align:left;padding:7px 6px;border-top:1px solid var(--line-soft);vertical-align:top}th{color:var(--muted);font-weight:600}
+.ok{color:var(--ok);font-weight:700}.no{color:var(--bad);font-weight:700}
+.pill{display:inline-block;border-radius:99px;padding:0 8px;font-size:.8rem;font-weight:700}.pill.ok{background:var(--ok-bg)}.pill.no{background:var(--bad-bg)}
+.note{background:#FFF6EC;border-left:5px solid #E06A00;border-radius:8px;padding:10px 14px;margin-top:14px}
+[hidden]{display:none!important}
+@media(max-width:640px){.vs{grid-template-columns:1fr}.vsmark{display:none}.types{grid-template-columns:1fr}.report{font-size:1.12rem}.side .big{font-size:2rem}}
+</style></head><body>
+<header class="top"><a href="/">← 처음으로</a><h1>사람 vs AI 신고 분류 대결</h1></header>
+<main class="wrap">
+<section class="card" id="intro">
+<h2>신고 20건, 사람과 AI 중 누가 더 빠르고 정확할까요?</h2>
+<p class="lead">가상 재난 신고 20건을 읽고 유형(인명구조·침수 등)을 고르세요. 첫 신고가 보이는 순간부터 시간을 잽니다.
+같은 20건을 실제 서비스의 ② 접수 에이전트도 분류해, 정답과 비교한 정확도·시간을 나란히 보여 드려요.</p>
+<label class="muted" for="nick">별명 (선택, 기록표에 표시)</label><br><input id="nick" maxlength="20" placeholder="예: 민수">
+<p><button type="button" id="startBtn" disabled>불러오는 중…</button></p>
+<p class="muted" id="qnote"></p>
+<div id="pastBox"></div>
+</section>
+
+<section class="card" id="quiz" hidden>
+<div class="bar"><span id="count">1 / 20</span><span class="timer" id="timer">0.0초</span></div>
+<div class="prog"><span id="progBar" style="width:0"></span></div>
+<p class="report" id="reportText" aria-live="polite"></p>
+<div class="types" id="types"></div>
+<p><button type="button" class="sub" id="backBtn">← 이전 신고</button></p>
+</section>
+
+<section class="card" id="waiting" hidden><h2>채점 중…</h2><p class="lead">AI도 같은 20건을 분류하고 있어요. 처음 한 번은 최대 1분쯤 걸릴 수 있어요.</p></section>
+
+<section id="result" hidden>
+<div class="card">
+<h2>결과</h2>
+<div class="vs">
+<div class="side h"><div class="who">🙋 사람 <span id="hName"></span></div><div class="big" id="hAcc"></div><div class="sub2" id="hTime"></div><div class="sub2" id="hRescue"></div></div>
+<div class="vsmark">VS</div>
+<div class="side a"><div class="who">🤖 <span id="aMode">AI</span></div><div class="big" id="aAcc"></div><div class="sub2" id="aTime"></div><div class="sub2" id="aRescue"></div></div>
+</div>
+<p class="headline" id="headline"></p>
+<p class="muted" id="headline2"></p>
+<div class="note"><b>그래도 결정은 사람이 합니다.</b> AI가 분류한 신고는 담당자 상황판에 바로 올라가지만, 배치·물품·안내문은 담당자가 승인해야만 반영됩니다. AI는 빠르게 정리하고, 사람은 확인하고 책임지는 구조예요.</div>
+<p><button type="button" id="againBtn">다시 하기</button></p>
+</div>
+<div class="card"><h2 style="font-size:1.1rem">한 건씩 보기</h2><div id="rows" data-fold="6"></div></div>
+<div class="card"><h2 style="font-size:1.1rem">지금까지의 사람 기록</h2><p class="muted" id="histSum"></p><table><thead><tr><th>별명</th><th>정확도</th><th>시간</th><th>인명구조 놓침</th></tr></thead><tbody id="hist" data-fold="8"></tbody></table></div>
+</section>
+</main>
+<script src="/static/ui.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
+async function api(path,opt={}){const r=await fetch(path,{...opt,headers:{'Content-Type':'application/json'}});const d=await r.json().catch(()=>({error:'서버 응답을 읽을 수 없습니다'}));if(!r.ok)throw new Error(d.error||`HTTP ${r.status}`);return d}
+const sec=ms=>ms<1?'1ms 미만':ms>=60000?`${Math.floor(ms/60000)}분 ${Math.round(ms%60000/1000)}초`:ms>=1000?`${(ms/1000).toFixed(1)}초`:`${Math.round(ms)}ms`;
+let Q=null,idx=0,answers={},t0=0,tick=null;
+function show(id){['intro','quiz','waiting','result'].forEach(x=>$(x).hidden=x!==id);window.scrollTo({top:0})}
+function drawPast(h,ai){if(!h||!h.count){$('pastBox').innerHTML=ai?`<p class="muted">AI(${esc(ai.mode)}) 기록: ${ai.correct}/${ai.total} · ${esc(sec(ai.total_ms))}</p>`:'';return}
+ $('pastBox').innerHTML=`<p class="muted">지금까지 ${h.count}명 도전 · 사람 평균 정확도 ${Math.round(h.avg_accuracy*100)}% · 평균 ${esc(h.avg_seconds)}초${ai?` · AI ${ai.correct}/${ai.total}, ${esc(sec(ai.total_ms))}`:''}</p>`}
+async function init(){try{Q=await api('/api/public/battle');const p=await api('/api/public/battle/history');drawPast(p.history,p.ai);
+ $('qnote').textContent=Q.note;$('startBtn').disabled=false;$('startBtn').textContent=`시작하기 (${Q.items.length}건)`;
+ $('types').innerHTML=Q.types.map(t=>`<button type="button" data-t="${esc(t)}"><span>${esc(t)}</span><small>${esc((Q.guide[t]||'').slice(0,46))}${(Q.guide[t]||'').length>46?'…':''}</small></button>`).join('');
+ $('types').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>pick(b.dataset.t)))}catch(e){$('startBtn').textContent='불러오지 못했습니다: '+e.message}}
+function drawQ(){const it=Q.items[idx];$('count').textContent=`${idx+1} / ${Q.items.length}`;$('progBar').style.width=(100*idx/Q.items.length)+'%';$('reportText').textContent=it.text;$('backBtn').disabled=idx===0}
+function pick(t){answers[Q.items[idx].id]=t;if(idx<Q.items.length-1){idx++;drawQ()}else finish()}
+$('backBtn').addEventListener('click',()=>{if(idx>0){idx--;drawQ()}});
+$('startBtn').addEventListener('click',()=>{idx=0;answers={};show('quiz');drawQ();t0=performance.now();clearInterval(tick);tick=setInterval(()=>$('timer').textContent=((performance.now()-t0)/1000).toFixed(1)+'초',100)});
+async function finish(){clearInterval(tick);const elapsed=Math.round(performance.now()-t0);show('waiting');
+ try{const r=await api('/api/public/battle',{method:'POST',body:JSON.stringify({answers,elapsed_ms:elapsed,name:$('nick').value.trim()||'익명'})});drawResult(r)}
+ catch(e){show('intro');$('qnote').textContent='채점하지 못했습니다: '+e.message}}
+function drawResult(r){const h=r.human,a=r.ai;show('result');
+ $('hName').textContent=h.name&&h.name!=='익명'?`(${h.name})`:'';$('hAcc').textContent=`${h.correct} / ${h.total}`;$('hTime').textContent=`${sec(h.total_ms)} · 건당 ${sec(h.total_ms/h.total)}`;
+ $('hRescue').textContent=h.rescue_missed.length?`인명구조 ${h.rescue_missed.length}건 놓침`:`인명구조 ${h.rescue_total}건 모두 찾음`;
+ $('aMode').textContent=a.mode;$('aAcc').textContent=`${a.correct} / ${a.total}`;$('aTime').textContent=`${sec(a.total_ms)} · 건당 ${sec(a.total_ms/a.total)}`;
+ $('aRescue').textContent=a.rescue_missed.length?`인명구조 ${a.rescue_missed.length}건 놓침`:`인명구조 ${a.rescue_total}건 모두 찾음`;
+ const ratio=h.total_ms/Math.max(1,a.total_ms),diff=a.correct-h.correct;
+ $('headline').textContent=`접수 에이전트가 ${ratio>=1.5?(ratio>=1000?'1000배 넘게':Math.round(ratio)+'배')+' 빨랐고':ratio>=0.67?'비슷한 속도였고':'더 느렸고'}, 정확도는 ${diff>0?`에이전트가 ${diff}건 더 맞혔어요`:diff<0?`사람이 ${-diff}건 더 맞혔어요`:'같았어요'}.`;
+ $('headline2').textContent=`사람은 신고 한 건을 읽고 고르는 데 평균 ${sec(h.total_ms/h.total)}, 에이전트는 ${sec(a.total_ms/a.total)} 걸렸습니다. 재난 때 신고가 수십 건 몰리면 이 차이가 대응 시작 시간의 차이가 됩니다.`;
+ const mark=(v,g)=>v===g?`<span class="ok">✓</span> ${esc(v)}`:`<span class="no">✗</span> ${esc(v||'-')}`;
+ $('rows').innerHTML=r.rows.map(x=>`<div class="row1"><div class="t">${esc(x.text)}</div><div class="m">정답 <b>${esc(x.gold)}</b> · 🙋 ${mark(x.human,x.gold)} · 🤖 ${mark(x.ai,x.gold)}</div></div>`).join('');
+ const hs=r.history;$('histSum').textContent=hs.count?`${hs.count}명 · 평균 정확도 ${Math.round(hs.avg_accuracy*100)}% · 평균 ${hs.avg_seconds}초`:'';
+ $('hist').innerHTML=hs.runs.map(x=>`<tr><td>${esc(x.name)}</td><td>${x.correct}/${x.total}</td><td>${esc(sec(x.total_ms))}</td><td>${x.rescue_missed.length?`<span class="pill no">${x.rescue_missed.length}건</span>`:'<span class="pill ok">없음</span>'}</td></tr>`).join('')}
+$('againBtn').addEventListener('click',()=>{show('intro');api('/api/public/battle/history').then(p=>drawPast(p.history,p.ai)).catch(()=>{})});
+init();
+</script></body></html>

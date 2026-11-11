@@ -375,6 +375,26 @@ class TestPipeline(ServerBase):
         self.assertEqual(code, 200, v)
         self.assertEqual((v["tasks"][0]["zone"], v["tasks"][0]["address"]), ("미상", "장평동 주택가"))
 
+    def test_human_vs_ai_battle(self):
+        """사람 vs AI 분류 대결: 문제에는 정답이 없고, 채점은 서버가 한다. AI 결과는 한 번만 계산해 둔다."""
+        import json as _json
+        anon = Client(self.base)
+        _, q = anon.get("/api/public/battle")
+        self.assertEqual(len(q["items"]), 20)
+        self.assertNotIn("type", _json.dumps(q["items"]))                         # 정답이 화면으로 새지 않는다
+        gold = {r["id"]: r["type"] for r in _json.load(open("data/eval/intake_holdout.json", encoding="utf-8"))["reports"][:20]}
+        self.assertEqual(anon.post("/api/public/battle", {"answers": {"H01": "침수"}, "elapsed_ms": 5000})[0], 400)
+        code, r = anon.post("/api/public/battle", {"answers": gold, "elapsed_ms": 60000, "name": "정답이"})
+        self.assertEqual(code, 201, r)
+        self.assertEqual((r["human"]["correct"], r["human"]["rescue_missed"]), (20, []))
+        self.assertEqual(len(r["rows"]), 20)
+        self.assertTrue(0 <= r["ai"]["correct"] <= 20 and r["ai"]["mode"])
+        wrong = {k: "대민지원" for k in gold}
+        _, r2 = anon.post("/api/public/battle", {"answers": wrong, "elapsed_ms": 30000})
+        self.assertEqual(r2["ai"], r["ai"])                                      # AI 결과는 다시 계산하지 않는다
+        self.assertEqual(len(r2["human"]["rescue_missed"]), sum(v == "인명구조" for v in gold.values()))
+        self.assertEqual(anon.get("/api/public/battle/history")[1]["history"]["count"], 2)
+
     def test_volunteer_signup_knows_what_they_can_do(self):
         anon = Client(self.base)
         _, opt = anon.get("/api/public/volunteer-options")
