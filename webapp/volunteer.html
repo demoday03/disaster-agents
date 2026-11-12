@@ -201,7 +201,7 @@ $('openTasks').className=d.open_tasks.length?'':'muted';$('openTasks').innerHTML
 document.querySelectorAll('#myTasks details,#openTasks details').forEach(x=>{if(opened.has(x.dataset.tid))x.open=true});
 $('safety').innerHTML=['통제 중인 길에는 들어가지 않습니다','혼자 작업하지 말고 팀과 함께 움직입니다','물이 찬 곳에서는 전기 시설을 만지지 않습니다','어지럽거나 다치면 바로 SOS를 누릅니다'].map(s=>`<li>${esc(s)}</li>`).join('');
 $('needs').className=d.needed_items.length?'':'muted';$('needs').innerHTML=d.needed_items.length?d.needed_items.map(n=>`<div class="need"><b>${esc(n.item)}</b>${n.hours_left<1?'<span class="err" style="font-weight:800">지금 부족해요</span>':`<span>약 ${esc(n.hours_left)}시간 뒤 부족 예상</span>`}</div>`).join(''):'지금 부족이 예상되는 물품은 없습니다.';
-if(!$('gItem').options.length){$('gItem').innerHTML=Object.keys(d.catalog).map(i=>`<option>${esc(i)}</option>`).join('');units()}
+if(!$('gItem').options.length){$('gItem').innerHTML=Object.keys(d.catalog).sort((a,b)=>a.localeCompare(b,'ko')).map(i=>`<option>${esc(i)}</option>`).join('');units()}
 if(!$('gPlace').value)$('gPlace').value=v.address||'';
 $('myGifts').className=d.my_donations.length?'':'muted';$('myGifts').innerHTML=d.my_donations.length?d.my_donations.map(g=>`<div class="need"><span>${esc(g.item)} ${esc(g.qty)} <span class="muted">· ${esc(g.place)}</span></span><span>${esc(g.state)}</span></div>`).join(''):'아직 등록한 기부가 없습니다.';
 $('csvLink').href='/api/public/volunteers/'+encodeURIComponent(VID)+'/activity.csv';

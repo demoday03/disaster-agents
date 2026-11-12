@@ -80,7 +80,7 @@
     $('vHousehold').innerHTML = '<option value="">선택 안 함</option>' + hhOpts;
     const items = Object.keys(META.catalog);
     $('sItem').innerHTML = '<option value="">(메모에서 찾기)</option>' + options(items, i => `${i} (${META.catalog[i].category})`, i => i);
-    $('dnItem').innerHTML = options(items, i => `${i} (${META.catalog[i].category})`, i => i);
+    $('dnItem').innerHTML = options([...items].sort((a, b) => a.localeCompare(b, 'ko')), i => `${i} (${META.catalog[i].category})`, i => i);   // 기부 품목은 가나다순
     const volOpts = options(META.volunteers, v => `${v.name || v.id} · ${v.address || place(v.zone)} · ${v.mode}`, v => v.id);
     $('dnDonor').innerHTML = volOpts; $('sosVol').innerHTML = volOpts;
     // 피해 신고서의 위치는 고른 가구의 위치로 채운다(같은 내용을 두 번 입력하지 않게)
