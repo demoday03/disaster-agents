@@ -856,6 +856,7 @@ def reporter_change(iid, action, data):
         res = withdraw_pending(o, "신고자가 신고 내용을 고침")
         new = classify_incident(iid, text.strip(), o["ts"])
         no = new["output"]
+        no.update({k: o[k] for k in CARRY_FIELDS if k in o})
         no.update(owner_hash=o["owner_hash"], edits=o.get("edits", 0) + 1, supplements=o.get("supplements", 0), edited_at=time.time())
         new = database.update_incident(link_incident(new))
         database.log_audit("incident_edited_by_reporter", "incident", iid, {**res, "edits": no["edits"]})
@@ -863,6 +864,87 @@ def reporter_change(iid, action, data):
     if followup:
         start_followups(iid)
     return 200, public_row(new)
+
+
+CARRY_FIELDS = ("owner_hash", "channel", "edits", "supplements")   # 다시 분류해도 남겨 둘 신고 정보
+
+
+def submit_report(text, rate_key, channel=None):
+    """주민 신고 접수(웹 화면·텔레그램 공통). (상태 코드, 응답)을 돌려준다."""
+    if not isinstance(text, str) or not text.strip():
+        return 400, {"error": "신고 내용을 입력해 주세요"}
+    if len(text) > 2000:
+        return 400, {"error": "신고 내용은 2000자 이하여야 합니다"}
+    if not INCIDENT_LIMIT.allow(rate_key):
+        return 429, {"error": "짧은 시간에 신고가 너무 많습니다. 급한 상황이면 119·112에 바로 전화하세요"}
+    duplicate = database.find_duplicate_incident(text)
+    if duplicate:
+        return 200, {**public_row(duplicate), "duplicate": True}
+    rid = "R-" + uuid.uuid4().hex[:8].upper()
+    row = classify_incident(rid, text, time.time())
+    # 신고자만 고치거나 취소할 수 있게, 그 기기(텔레그램이면 그 대화방)에만 주는 비밀 값(서버에는 해시만 저장)
+    token = secrets.token_urlsafe(18)
+    row["output"]["owner_hash"] = hashlib.sha256(token.encode()).hexdigest()
+    if channel:
+        row["output"]["channel"] = channel   # 담당자 화면에 '텔레그램 신고'처럼 표시
+    # Persist only the classifier result (the intake agent applies its configured masking).
+    row = database.save_incident(row)
+    row = database.update_incident(link_incident(row))
+    start_followups(row["output"]["id"])
+    return 201, {**public_row(row), "edit_token": token}
+
+
+def supplement_incident(iid, extra, rate_key):
+    """신고자가 빠진 정보를 보완(접수번호로). 원문 뒤에 붙여 다시 분류한다."""
+    if not isinstance(extra, str) or not extra.strip() or len(extra) > 500:
+        return 400, {"error": "보완 내용은 1~500자로 입력해 주세요"}
+    if not INCIDENT_LIMIT.allow(rate_key):
+        return 429, {"error": "짧은 시간에 요청이 너무 많습니다. 급한 상황이면 119·112에 바로 전화하세요"}
+    with _incident_lock:
+        old = incident_output(iid)
+        if old is None:
+            return 404, {"error": "접수번호를 찾을 수 없습니다"}
+        o = old["output"]
+        if o.get("state") != "보완 필요":
+            return 409, {"error": "보완이 필요한 신고가 아닙니다"}
+        if o.get("supplements", 0) >= MAX_SUPPLEMENTS:
+            return 409, {"error": "보완은 3번까지 받습니다. 담당자가 확인할 예정이며, 급한 상황이면 119·112에 바로 전화하세요"}
+        # 원문 뒤에 붙이고 자르지 않는다(긴 원문이어도 보완 내용이 빠지지 않게, 최대 3번이라 길이는 제한됨)
+        text = f"{o['text']}\n[보완] {extra.strip()}"
+        row = classify_incident(o["id"], text, o["ts"], max_text=len(text))
+        out = row["output"]
+        out.update({k: o[k] for k in CARRY_FIELDS if k in o})   # 보완해도 신고자 취소·고치기 권한이 남게
+        zone_given = intake._zones(extra)
+        if len(zone_given) == 1:   # 보완에 적은 구역이 원문의 모호한 구역('2구역인지 3구역인지')보다 우선
+            out["zone"] = zone_given.pop()
+            out["missing"] = intake.missing_fields(out)
+        out["supplements"] = o.get("supplements", 0) + 1
+        row = link_incident(row)
+        database.log_audit("incident_supplemented", "incident", o["id"],
+                           {"still_missing": row["output"]["missing"]})
+        row = database.update_incident(row)
+        start_followups(o["id"])
+        return 200, public_row(row)
+
+
+def report_info(iid):
+    """텔레그램 봇이 신고자에게 알려 줄 처리 상황(접수번호 조회와 같은 범위만)."""
+    row = incident_output(iid)
+    if row is None:
+        return None
+    o, g = row["output"], public_guidance(iid)
+    return {"id": iid, "type": o.get("type"), "state": o.get("state"), "urgency": o.get("urgency"),
+            "missing": o.get("missing") or [], "cancelled": bool(o.get("cancelled_by_reporter")),
+            "steps": public_progress(o), "guidance": g["text"] if g else None}
+
+
+# 텔레그램 봇에서 신고·보완·취소·진행 상황 조회(웹 화면과 같은 함수, 속도 제한은 대화방별)
+TELEGRAM.hooks = {
+    "submit": lambda text, chat: submit_report(text, f"tg:{chat}", "텔레그램"),
+    "supplement": lambda iid, text, chat: supplement_incident(iid, text, f"tg:{chat}"),
+    "cancel": lambda iid, token: reporter_change(iid, "cancel", {"token": token}),
+    "info": report_info,
+}
 
 
 def public_progress(output):
@@ -1588,26 +1670,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(200, row)
 
             if path == "/api/incidents":
-                text = data.get("text")
-                if not isinstance(text, str) or not text.strip():
-                    return self.send_json(400, {"error": "신고 내용을 입력해 주세요"})
-                if len(text) > 2000:
-                    return self.send_json(400, {"error": "신고 내용은 2000자 이하여야 합니다"})
-                if not INCIDENT_LIMIT.allow(self.client_ip()):
-                    return self.send_json(429, {"error": "짧은 시간에 신고가 너무 많습니다. 급한 상황이면 119·112에 바로 전화하세요"})
-                duplicate = database.find_duplicate_incident(text)
-                if duplicate:
-                    return self.send_json(200, {**public_row(duplicate), "duplicate": True})
-                rid = "R-" + uuid.uuid4().hex[:8].upper()
-                row = classify_incident(rid, text, time.time())
-                # 신고자만 고치거나 취소할 수 있게, 그 기기에만 주는 비밀 값(서버에는 해시만 저장)
-                token = secrets.token_urlsafe(18)
-                row["output"]["owner_hash"] = hashlib.sha256(token.encode()).hexdigest()
-                # Persist only the classifier result (the intake agent applies its configured masking).
-                row = database.save_incident(row)
-                row = database.update_incident(link_incident(row))
-                start_followups(row["output"]["id"])
-                return self.send_json(201, {**public_row(row), "edit_token": token})
+                return self.send_json(*submit_report(data.get("text"), self.client_ip()))
             if path.startswith("/api/incidents/") and path.endswith(("/edit", "/cancel")):   # 신고자가 고치기·취소(이 기기의 비밀 값으로)
                 parts = path.strip("/").split("/")
                 if len(parts) != 4 or not parts[2] or len(parts[2]) > 40:
@@ -1619,35 +1682,7 @@ class Handler(BaseHTTPRequestHandler):
                 parts = path.strip("/").split("/")
                 if len(parts) != 4 or not parts[2] or len(parts[2]) > 40:
                     return self.send_json(404, {"error": "찾을 수 없는 경로입니다"})
-                extra = data.get("text")
-                if not isinstance(extra, str) or not extra.strip() or len(extra) > 500:
-                    return self.send_json(400, {"error": "보완 내용은 1~500자로 입력해 주세요"})
-                if not INCIDENT_LIMIT.allow(self.client_ip()):
-                    return self.send_json(429, {"error": "짧은 시간에 요청이 너무 많습니다. 급한 상황이면 119·112에 바로 전화하세요"})
-                with _incident_lock:
-                    old = incident_output(parts[2])
-                    if old is None:
-                        return self.send_json(404, {"error": "접수번호를 찾을 수 없습니다"})
-                    o = old["output"]
-                    if o.get("state") != "보완 필요":
-                        return self.send_json(409, {"error": "보완이 필요한 신고가 아닙니다"})
-                    if o.get("supplements", 0) >= MAX_SUPPLEMENTS:
-                        return self.send_json(409, {"error": "보완은 3번까지 받습니다. 담당자가 확인할 예정이며, 급한 상황이면 119·112에 바로 전화하세요"})
-                    # 원문 뒤에 붙이고 자르지 않는다(긴 원문이어도 보완 내용이 빠지지 않게, 최대 3번이라 길이는 제한됨)
-                    text = f"{o['text']}\n[보완] {extra.strip()}"
-                    row = classify_incident(o["id"], text, o["ts"], max_text=len(text))
-                    out = row["output"]
-                    zone_given = intake._zones(extra)
-                    if len(zone_given) == 1:   # 보완에 적은 구역이 원문의 모호한 구역('2구역인지 3구역인지')보다 우선
-                        out["zone"] = zone_given.pop()
-                        out["missing"] = intake.missing_fields(out)
-                    out["supplements"] = o.get("supplements", 0) + 1
-                    row = link_incident(row)
-                    database.log_audit("incident_supplemented", "incident", o["id"],
-                                       {"still_missing": row["output"]["missing"]})
-                    row = database.update_incident(row)
-                    start_followups(o["id"])
-                    return self.send_json(200, public_row(row))
+                return self.send_json(*supplement_incident(parts[2], data.get("text"), self.client_ip()))
             if path.startswith("/api/incidents/") and path.endswith("/approve-all"):   # 담당자: 이 신고의 대응안 한 번에 승인
                 s = self.require_staff(check_csrf=True)
                 if not s:
