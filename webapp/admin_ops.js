@@ -6,6 +6,7 @@
   const post = (path, body) => api(path, {method: 'POST', body: JSON.stringify(body || {})});
   const chip = (text, cls = '') => `<span class="chip ${cls}">${E(text)}</span>`;
   const fmtTime = ts => ts ? new Date(ts * 1000).toLocaleTimeString('ko-KR') : '';
+  const fmtDate = ts => ts ? new Date(ts * 1000).toLocaleString('ko-KR', {month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : '';
   const table = (heads, rows) => rows.length
     ? `<table class="tbl"><thead><tr>${heads.map(h => `<th>${E(h)}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`
     : '<div class="muted">항목이 없습니다.</div>';
@@ -45,11 +46,14 @@
         return `<div class="occ"><span class="nm"><b>${E(s.name)}</b> <span class="muted">${E(place(s.zone))} · ${E(s.type)}${s.amenities.length ? ' · ' + E(s.amenities.join(', ')) : ''}</span></span>` +
           `<span class="meter${s.capacity_left <= 0 ? ' full' : ''}" title="${pct}%"><span style="width:${Math.min(100, pct)}%"></span></span>` +
           `<span>${E(s.occupied)}명 입소 · 남은 자리 ${E(Math.max(0, s.capacity_left))}명</span>` +
-          [[1, '입소 +1'], [5, '+5'], [-1, '퇴소 −1']].map(([n, t]) => `<button type="button" class="${n < 0 ? 'quiet' : ''}" data-occ="${E(s.id)}" data-n="${n}">${t}</button>`).join('') + '</div>';
+          `<input type="number" class="occn" min="1" max="50" value="1" aria-label="${E(s.name)} 인원" data-occ-n="${E(s.id)}">명 ` +
+          `<button type="button" data-occ="${E(s.id)}" data-dir="1">입소</button><button type="button" class="quiet" data-occ="${E(s.id)}" data-dir="-1">퇴소</button></div>`;
       }).join('');
       $('shelterOps').querySelectorAll('button[data-occ]').forEach(b => b.addEventListener('click', async () => {
+        const n = Number($('shelterOps').querySelector(`input[data-occ-n="${CSS.escape(b.dataset.occ)}"]`).value);
+        if (!Number.isInteger(n) || n < 1 || n > 50) { alert('인원은 1~50명 사이 숫자로 적어 주세요.'); return; }
         b.disabled = true;
-        try { await post(`/api/shelters/${encodeURIComponent(b.dataset.occ)}/occupancy`, {delta: Number(b.dataset.n)}); loadShelterOps(); loadDispatch(); }
+        try { await post(`/api/shelters/${encodeURIComponent(b.dataset.occ)}/occupancy`, {delta: n * Number(b.dataset.dir)}); loadShelterOps(); loadDispatch(); }
         catch (err) { alert(err.message); b.disabled = false; }
       }));
     } catch (e) { showError('shelterOps', e); }
@@ -75,6 +79,7 @@
     VNAME = Object.fromEntries(META.volunteers.map(v => [v.id, v.name || v.id]));
     const zoneOpts = options(META.zones, z => place(z.id), z => z.id);
     document.querySelectorAll('select.zoneSel').forEach(sel => { sel.innerHTML = zoneOpts; });
+    $('ckTarget').innerHTML = '<option value="all">동의한 모든 가구</option>' + options(META.zones, z => `${place(z.id)} 가구만`, z => z.id);
     const hhOpts = options(META.households, h => `${h.id} · ${h.address || place(h.zone)} · ${h.floor}${h.factors.length ? ' · ' + h.factors.join('·') : ''}`, h => h.id);
     ['sHousehold', 'caseHousehold', 'rpHousehold'].forEach(id => { $(id).innerHTML = hhOpts; });
     $('vHousehold').innerHTML = '<option value="">선택 안 함</option>' + hhOpts;
@@ -124,11 +129,13 @@
     try {
       await loadMeta();   // 구역 고르기 목록
       const d = await api('/api/announcements');
-      $('annList').classList.toggle('muted', !d.items.length);
-      $('annList').innerHTML = d.items.length ? table(['올린 때', '대상', '받는 곳', '내용', ''], d.items.map(a =>
-        `<tr${a.active ? '' : ' class="muted"'}><td>${E(fmtTime(a.at))}</td><td>${E(d.audiences[a.audience] || a.audience)}</td><td>${E(a.zone === 'all' ? '전체' : place(a.zone))}</td>` +
+      const hide = $('annHideEnded').checked, rows = hide ? d.items.filter(a => a.active) : d.items, ended = d.items.length - d.items.filter(a => a.active).length;
+      $('annList').classList.toggle('muted', !rows.length);
+      $('annList').innerHTML = (rows.length ? table(['올린 때', '대상', '받는 곳', '내용', ''], rows.map(a =>
+        `<tr${a.active ? '' : ' class="muted"'}><td>${E(fmtDate(a.at))}</td><td>${E(d.audiences[a.audience] || a.audience)}</td><td>${E(a.zone === 'all' ? '전체' : place(a.zone))}</td>` +
         `<td>${a.urgent ? chip('긴급', 'bad') + ' ' : ''}${E(a.text)}<div class="muted">${E(a.by)} 올림${a.active ? '' : ` · ${E(a.ended_by || '')} 내림`}</div></td>` +
-        `<td>${a.active ? `<button type="button" class="quiet" data-ann-end="${E(a.id)}">내리기</button>` : '내림'}</td></tr>`)) : '아직 올린 공지가 없습니다.';
+        `<td>${a.active ? `<button type="button" class="quiet" data-ann-end="${E(a.id)}">내리기</button>` : '내림' + (a.ended_at ? '<div class="muted">' + E(fmtDate(a.ended_at)) + '</div>' : '')}</td></tr>`))
+        : (hide && ended ? '게시 중인 공지가 없습니다.' : '아직 올린 공지가 없습니다.')) + (hide && ended ? `<p class="muted">내린 공지 ${ended}건은 숨겼습니다.</p>` : '');
     } catch (e) { showError('annList', e); }
   }
 
@@ -254,9 +261,19 @@
     try {
       await loadMeta();
       const d = await api('/api/welfare/checks');
+      const hh = META.households, target = $('ckTarget').value, inTarget = h => target === 'all' || h.zone === target;
+      const ok = hh.filter(h => h.consent && inTarget(h)), vul = ok.filter(h => (h.factors || []).length);
+      $('ckSummary').innerHTML = `<b>안부 확인을 보낼 가구: ${ok.length}곳</b> (${E(target === 'all' ? '전체' : place(target))} · 안부 확인에 동의한 가구) · 취약 가구 ${vul.length}곳은 대기 시간의 절반이 지나면 먼저 격상됩니다.` +
+        `<br><span class="muted">주민이 직접 등록한 집 ${hh.filter(h => h.registered).length}곳 · 시연용 가구 ${hh.filter(h => !h.registered).length}곳 · 텔레그램과 연결한 주민은 휴대폰에서 '안전합니다' 버튼으로 답합니다. 자동 출동은 없습니다.</span>`;
+      $('ckHhSub').textContent = `${hh.length}곳`;
+      $('ckHhList').innerHTML = table(['가구', '위치', '집 형태', '취약 요인', '안부 동의'], hh.map(h =>
+        `<tr><td>${E(h.id)}${h.registered ? ' ' + chip('주민 등록') : ''}</td><td>${E(h.address || place(h.zone))}</td><td>${E(h.floor || '-')}</td><td>${E((h.factors || []).join(', ') || '-')}</td><td>${h.consent ? chip('동의', 'ok') : chip('안 함')}</td></tr>`));
+      const c = d.counts || {};
+      $('ckCounts').innerHTML = d.checks.length ? [['격상', 'bad'], ['대기', 'warn'], ['지연 응답', 'warn'], ['안전', 'ok']].map(([k, cls]) => chip(`${k} ${c[k] || 0}`, cls)).join('') : '';
+      if (!d.checks.length) $('checkList').innerHTML = '<p class="muted">아직 안부 확인을 시작하지 않았습니다. 위에서 대상과 시간을 고르고 시작하세요.</p>';
       if (d.escalated_now.length) $('checkResult').innerHTML = `<span class="err">방금 격상: ${E(d.escalated_now.join(', '))} (담당자 확인 필요, 자동 출동 없음)</span>`;
-      $('checkList').innerHTML = table(['가구', '위치', '취약 요인', '상태', '남은 시간', '처리'], d.checks.map(c =>
-        `<tr><td>${E(c.household)}</td><td>${E(hhPlace(c.household) || place(c.zone))}</td><td>${E(c.factors.join(', ') || '-')}</td><td>${chip(c.state, STATE_CLS[c.state] || '')}</td><td>${c.seconds_left != null ? E(Math.max(0, c.seconds_left)) + '초' : '-'}</td><td>${['대기', '격상'].includes(c.state) ? `<button data-hh="${E(c.household)}">안전 응답(노드 D 모의)</button>` : ''}</td></tr>`));
+      if (d.checks.length) $('checkList').innerHTML = table(['가구', '위치', '취약 요인', '상태', '남은 시간', '처리'], d.checks.map(c =>
+        `<tr><td>${E(c.household)}</td><td>${E(hhPlace(c.household) || place(c.zone))}</td><td>${E(c.factors.join(', ') || '-')}</td><td>${chip(c.state, STATE_CLS[c.state] || '')}</td><td>${c.seconds_left != null ? E(Math.max(0, c.seconds_left)) + '초' : '-'}</td><td>${['대기', '격상'].includes(c.state) ? `<button data-hh="${E(c.household)}">안전 확인 기록</button>` : ''}</td></tr>`));
       $('checkList').querySelectorAll('button[data-hh]').forEach(b => b.addEventListener('click', async () => {
         b.disabled = true;
         try { await post(`/api/welfare/checks/${encodeURIComponent(b.dataset.hh)}/respond`); loadChecks(); } catch (e) { alert(e.message); b.disabled = false; }
@@ -501,10 +518,12 @@
       e.preventDefault();
       try { await post('/api/recovery/surveys', {address: $('svAddress').value, damage_type: $('svDamage').value}); loadRecovery(); } catch (err) { alert(err.message); }
     });
+    $('ckTarget').addEventListener('change', loadChecks);
+    $('annHideEnded').addEventListener('change', loadAnnouncements);
     $('checkForm').addEventListener('submit', async e => {
       e.preventDefault();
       try {
-        const r = await post('/api/welfare/checks/start', {zone: 'all', timeout_s: Number($('ckTimeout').value)});
+        const r = await post('/api/welfare/checks/start', {zone: $('ckTarget').value, timeout_s: Number($('ckTimeout').value)});
         $('checkResult').textContent = `${r.started.length}가구에 안전 확인을 요청했습니다(모의).` + (r.skipped_no_consent.length ? ` 동의하지 않은 ${r.skipped_no_consent.join(', ')}는 제외했습니다.` : '');
         loadChecks();
       } catch (err) { $('checkResult').innerHTML = '<span class="err">오류: ' + E(err.message) + '</span>'; }

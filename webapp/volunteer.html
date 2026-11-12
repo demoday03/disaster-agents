@@ -45,6 +45,8 @@ details.acc.order{border-left:6px solid var(--action)}details.acc.order.prog{bor
 .ann{border-left:5px solid var(--action);background:#F5F8FC;border-radius:8px;padding:12px 14px;margin:8px 0;overflow-wrap:anywhere}.ann.urgent{border-left-color:var(--s-danger);background:#FDF0F1}
 .badge{display:inline-block;min-width:20px;padding:0 6px;margin-left:6px;border-radius:99px;background:var(--s-danger);color:#fff;font-size:.75rem;text-align:center;line-height:1.5}
 .acc>summary{flex-wrap:wrap;row-gap:0}
+.vlist{display:grid;gap:6px}.vlist label{margin:0;display:flex;gap:10px;align-items:flex-start;border:1.5px solid #BFC9D8;border-radius:12px;padding:10px 12px;cursor:pointer;background:#fff;font-weight:500}
+.vlist input{width:auto;margin:4px 0 0;accent-color:var(--action)}.vlist label:has(input:checked){border-color:var(--action);background:var(--action-bg)}.vlist small{display:block;color:var(--muted)}
 #editBody .q .n{display:none}#editBody .q{margin-top:14px}
 [hidden]{display:none!important}
 @media(max-width:760px){
@@ -91,7 +93,10 @@ details.acc.order{border-left:6px solid var(--action)}details.acc.order.prog{bor
 <button type="submit" class="big">로그인</button>
 <p class="err" id="loginErr" aria-live="assertive"></p>
 </form>
-<details class="acc" style="margin-top:18px"><summary>시연용 봉사자로 둘러보기 <span class="sum-sub">가입하지 않고 미리 만들어 둔 봉사자로</span></summary><div class="acc-body"><label for="vSel" style="margin-top:0">봉사자 고르기</label><select id="vSel"><option value="">고르기</option></select></div></details>
+<details class="acc" style="margin-top:18px"><summary>시연용 봉사자로 둘러보기 <span class="sum-sub">가입하지 않고 미리 만들어 둔 봉사자로</span></summary><div class="acc-body">
+<p class="muted" style="margin-top:0">한 명을 고르고 아래 버튼을 누르면 그 봉사자로 들어갑니다.</p>
+<div class="vlist" id="vList" role="radiogroup" aria-label="시연용 봉사자" data-fold="6"></div>
+<button type="button" class="big" id="vEnter" disabled>고른 봉사자로 들어가기</button></div></details>
 </section>
 </div>
 
@@ -179,7 +184,8 @@ $('joinForm').addEventListener('submit',async e=>{e.preventDefault();$('joinErr'
 if(!$('pSkills').querySelector('input:checked')){$('joinErr').textContent='도울 수 있는 일을 하나 이상 골라 주세요. 현장 작업이 어려우면 \'물품 기부만\'을 고르세요.';$('pSkills').scrollIntoView({block:'center'});return}const b=$('joinBtn');b.disabled=true;
 try{const r=await post('/api/public/volunteers',{name:$('jName').value.trim(),password:$('jPw').value,...readProfile()});await enter(r.id)}catch(err){$('joinErr').textContent=err.message}finally{b.disabled=false}});
 $('loginForm').addEventListener('submit',async e=>{e.preventDefault();$('loginErr').textContent='';try{const r=await post('/api/public/volunteer-login',{name:$('lName').value,password:$('lPw').value});await enter(r.id)}catch(err){$('loginErr').textContent=err.message}});
-$('vSel').addEventListener('change',()=>{if($('vSel').value)enter($('vSel').value)});
+$('vList').addEventListener('change',()=>{$('vEnter').disabled=!document.querySelector('input[name=vpick]:checked')});
+$('vEnter').addEventListener('click',()=>{const v=document.querySelector('input[name=vpick]:checked');if(v)enter(v.value)});
 async function enter(id){VID=id;store.set(id);$('jPw').value='';$('lPw').value='';await load();go('tasks')}
 $('logoutBtn').addEventListener('click',()=>{store.set('');location.replace(location.pathname)});   // 이 기기에서 나가기(다시 처음 화면으로)
 
@@ -215,7 +221,8 @@ $('sosBtn').addEventListener('click',()=>sos(null));
 $('giftForm').addEventListener('submit',async e=>{e.preventDefault();const days=$('gDays').value;try{const r=await post(`/api/public/volunteers/${encodeURIComponent(VID)}/donations`,{item:$('gItem').value,qty:Number($('gQty').value),unit:$('gUnit').value,condition:$('gCond').value,days_left:days===''?null:Number(days),address:$('gPlace').value.trim()});$('giftResult').hidden=false;$('giftResult').className='box ok';$('giftResult').textContent=`${r.item} ${r.qty} 기부 등록(${r.id}) · ${r.state}. 담당자가 검수하면 필요한 곳에 연결됩니다.`;load()}catch(err){$('giftResult').hidden=false;$('giftResult').className='box err';$('giftResult').textContent='등록하지 못했습니다: '+err.message}});
 
 (async()=>{await band();try{[OPT]=await Promise.all([api('/api/public/volunteer-options')]);fillProfile(null);
-const d=await api('/api/public/volunteers');$('vSel').innerHTML='<option value="">고르기</option>'+d.items.map(v=>`<option value="${esc(v.id)}">${esc(v.id)} · ${esc(v.place)} · ${esc(v.skills.join(', '))}</option>`).join('')}catch(e){$('joinErr').textContent='가입 화면을 불러오지 못했습니다: '+e.message}
+const d=await api('/api/public/volunteers'),lab=Object.fromEntries(OPT.skills.map(x=>[x.id,x.label]));
+$('vList').innerHTML=d.items.map(v=>`<label><input type="radio" name="vpick" value="${esc(v.id)}"><span><b>${esc(v.id)}</b> · ${esc(v.place)}<small>할 수 있는 일: ${esc(v.skills.map(x=>lab[x]||x).join(', ')||'-')} · 장비: ${esc(v.equipment.join(', ')||'없음')} · ${esc(MODE_TXT[v.mode]||v.mode)}</small></span></label>`).join('')}catch(e){$('joinErr').textContent='가입 화면을 불러오지 못했습니다: '+e.message}
 VID=store.get();if(VID)await load();go(location.hash.slice(1))})();
 setInterval(()=>{band();if(VID&&!document.activeElement?.closest?.('form'))load()},15000);
 </script></body></html>

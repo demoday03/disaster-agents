@@ -24,9 +24,10 @@ button.cooling{opacity:.6;cursor:progress}
 [data-urgentbar]:not([hidden]){display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap}
 [data-urgentbar] .ann-body{flex:1 1 220px;min-width:0}
 [data-urgentbar] .ann-body p{margin:4px 0 0}
-[data-urgentbar].ann-folded{padding-top:6px!important;padding-bottom:6px!important}
+[data-urgentbar].ann-folded{flex-wrap:nowrap}
+[data-urgentbar] .ann-line{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;font-size:1rem}
 .ann-tg{margin:0!important;background:#fff!important;color:#A3182A!important;border:1.5px solid #F0B7BE!important;border-radius:99px!important;min-height:36px!important;padding:4px 14px!important;font:inherit;font-size:.9rem!important;font-weight:700;cursor:pointer;white-space:nowrap}
-[data-urgentbar].ann-folded .ann-tg{flex:1;text-align:left;background:transparent!important;border-color:transparent!important;padding-left:0!important}
+
 @media(prefers-reduced-motion:reduce){details.acc>summary::after{transition:none}}`;
   const st = document.createElement('style');
   st.textContent = css;
@@ -142,14 +143,17 @@ button.cooling{opacity:.6;cursor:progress}
     el.classList.toggle('ann-folded', isFolded);
     const link = more ? ` <a href="${escH(more.href)}">${escH(more.label)}</a>` : '';
     el.innerHTML = isFolded
-      ? `<button type="button" class="ann-tg" data-nocool aria-expanded="false">📢 긴급 공지 ${urgent.length}건 · 펼치기 ▾</button>`
+      ? `<div class="ann-line" title="${escH(urgent[0].text)}">📢 긴급 공지${urgent.length > 1 ? ` ${urgent.length}건` : ''} · ${escH(urgent[0].text)}</div>` +
+        '<button type="button" class="ann-tg" data-nocool aria-expanded="false">펼치기 ▾</button>'
       : `<div class="ann-body">📢 긴급 공지${many ? urgent.slice(0, 3).map(a => `<p>${escH(a.text)}</p>`).join('')
           : ` · ${escH(urgent[0].text)}${urgent.length > 1 ? ` (외 ${urgent.length - 1}건)` : ''}`}${link}</div>` +
         '<button type="button" class="ann-tg" data-nocool aria-expanded="true">접기 ▴</button>';
-    el.querySelector('.ann-tg').addEventListener('click', () => {
+    const toggle = () => {
       setFolded(isFolded ? getFolded().filter(x => !ids.includes(x)) : [...new Set([...getFolded(), ...ids])]);
       urgentBar(el, urgent, more, many);
-    });
+    };
+    el.querySelector('.ann-tg').addEventListener('click', toggle);
+    el.querySelector('.ann-line')?.addEventListener('click', toggle);   // 접힌 줄을 눌러도 펼친다
   }
 
   function scan(root = document) {

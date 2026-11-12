@@ -1201,6 +1201,10 @@ class Handler(BaseHTTPRequestHandler):
             if not self.require_staff():
                 return
             return self.send_json(200, {"items": database.list_pending_approvals()})
+        if path == "/api/approvals/history":   # 담당자: 최근에 처리한 승인·거절(누가·왜·언제)
+            if not self.require_staff():
+                return
+            return self.send_json(200, {"items": database.list_resolved_approvals(30)})
         if path.startswith(FEATURE_PREFIXES):   # ①③⑤⑥⑦⑧ 현장 운영 기능(webapp/features.py)
             if not self.require_staff():
                 return

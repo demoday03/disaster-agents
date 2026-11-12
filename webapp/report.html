@@ -97,8 +97,8 @@ ul.prog{list-style:none;margin:10px 0 0;padding:0}ul.prog li{padding:8px 12px;bo
 <div class="box warn" id="pendingBox" hidden style="margin-top:0"><b>보내지 못한 신고가 있어요.</b><div id="pendingText" class="muted" style="margin:4px 0"></div><button type="button" id="pendingSend" style="margin:6px 8px 0 0">지금 다시 보내기</button><button type="button" class="sub" id="pendingDrop" style="margin:6px 0 0">지우기</button></div>
 <div id="myReports"></div>
 <form id="incidentForm">
-<p class="q"><span class="n">1</span>무슨 일인가요?</p>
-<div class="choices kind" id="kind" role="radiogroup" aria-label="무슨 일인가요"></div>
+<p class="q"><span class="n">1</span>무슨 일인가요? <span class="opt">(여러 개 골라도 돼요)</span></p>
+<div class="choices kind" id="kind" role="group" aria-label="무슨 일인가요(여러 개 고를 수 있어요)"></div>
 <div class="box bad" id="lifeWarn" hidden><b>사람이 위험하면 지금 119에 먼저 전화하세요.</b> 신고는 전화한 뒤에 보내도 됩니다.<br><a class="tel" href="tel:119" style="margin-top:8px">📞 119 전화하기</a></div>
 <p class="q"><span class="n">2</span>어디인가요?</p>
 <div class="choices" id="whereChoice" hidden><label><input type="radio" name="where" value="home" checked> <span id="whereHomeTxt">우리 집</span></label><label><input type="radio" name="where" value="other"> 다른 곳</label></div>
@@ -234,14 +234,17 @@ $('controls').className=d.control_zones.length?'':'muted';$('controls').innerHTM
 // ---- 신고 만들기: 고른 것을 한 문장으로 합쳐 보낸다(접수 에이전트가 알아듣는 말로)
 const KINDS=[['flood','🌊','물이 차요','물이 차고 있어요(침수)'],['slide','⛰️','흙·돌이 무너져요','흙·돌이 무너졌어요(산사태·토사)'],['life','🚑','사람이 다치거나 갇혔어요','사람이 갇혔거나 다쳤어요(구조 요청)'],
 ['power','💡','전기·물이 끊겼어요','전기나 물이 끊겼어요(정전·단수)'],['road','🚧','길이 막혔어요','길이 막혔어요(도로 통행 불가)'],['supply','📦','물품이 필요해요','물품이 필요해요'],['etc','✏️','그 밖의 일','']];
-$('kind').innerHTML=KINDS.map(([v,e,t])=>`<label><input type="radio" name="kind" value="${v}"><span class="e" aria-hidden="true">${e}</span><span>${esc(t)}</span></label>`).join('');
+$('kind').innerHTML=KINDS.map(([v,e,t])=>`<label><input type="checkbox" name="kind" value="${v}"><span class="e" aria-hidden="true">${e}</span><span>${esc(t)}</span></label>`).join('');
 const atHome=()=>!!HOME&&document.querySelector('input[name=where]:checked')?.value==='home';
 const where=()=>atHome()?HOME.household.address:$('rPlace').value.trim();
-function composed(){const k=KINDS.find(x=>x[0]===document.querySelector('input[name=kind]:checked')?.value);const z=where(),ppl=document.querySelector('input[name=ppl]:checked')?.value,v=[...$('vuln').querySelectorAll('input:checked')].map(c=>c.value),free=$('reportText').value.trim();
-const parts=[z?'위치: '+z:'',k&&k[3],ppl?(/명/.test(ppl)?ppl:ppl+'명'):'',v.length?v.join('·')+' 있음':''].filter(Boolean);
+// 여러 개를 고르면 사람에게 더 위험한 것부터 적는다(접수 에이전트도 더 급한 유형을 고른다)
+const KIND_ORDER=['life','flood','slide','power','road','supply','etc'];
+const checkedKinds=()=>[...document.querySelectorAll('input[name=kind]:checked')].map(c=>c.value).sort((a,b)=>KIND_ORDER.indexOf(a)-KIND_ORDER.indexOf(b));
+function composed(){const ks=checkedKinds().map(v=>KINDS.find(x=>x[0]===v)).filter(Boolean);const z=where(),ppl=document.querySelector('input[name=ppl]:checked')?.value,v=[...$('vuln').querySelectorAll('input:checked')].map(c=>c.value),free=$('reportText').value.trim();
+const parts=[z?'위치: '+z:'',...ks.map(k=>k[3]).filter(Boolean),ppl?(/명/.test(ppl)?ppl:ppl+'명'):'',v.length?v.join('·')+' 있음':''].filter(Boolean);
 const athome=atHome();
-let text=parts.join(' · ');if(free)text+=(text?'. ':'')+free;if(text&&athome)text+=` (우리 집 · ${HOME.household.floor} · 가구 ${HH})`;return {text,kind:k&&k[0],hasFree:!!free}}
-function updatePreview(){const c=composed();$('preview').innerHTML=c.text&&(c.kind||c.hasFree)?`<b>보낼 내용</b><br>${esc(c.text)}`:'위에서 고르면 보낼 내용이 여기에 보여요.';$('lifeWarn').hidden=c.kind!=='life';$('formErr').textContent=''}
+let text=parts.join(' · ');if(free)text+=(text?'. ':'')+free;if(text&&athome)text+=` (우리 집 · ${HOME.household.floor} · 가구 ${HH})`;return {text,kind:ks[0]?.[0],kinds:ks.map(k=>k[0]),hasFree:!!free}}
+function updatePreview(){const c=composed();$('preview').innerHTML=c.text&&(c.kind||c.hasFree)?`<b>보낼 내용</b><br>${esc(c.text)}`:'위에서 고르면 보낼 내용이 여기에 보여요.';$('lifeWarn').hidden=!c.kinds.includes('life');$('formErr').textContent=''}
 $('incidentForm').addEventListener('input',updatePreview);$('incidentForm').addEventListener('change',updatePreview);
 function syncWhere(){const home=HOME&&HOME.household;$('whereChoice').hidden=!home;if(home)$('whereHomeTxt').textContent=`우리 집 (${home.address})`;
 const athome=atHome();$('whereOther').hidden=!!athome;
@@ -252,7 +255,7 @@ $('vuln').addEventListener('change',()=>$('vuln').dataset.touched='1');
 document.querySelectorAll('input[name=where]').forEach(r=>r.addEventListener('change',syncWhere));
 $('incidentForm').addEventListener('submit',async e=>{e.preventDefault();const c=composed();
 if(!c.kind&&!c.hasFree){$('formErr').textContent='무슨 일인지 하나를 고르거나 내용을 적어 주세요.';$('kind').scrollIntoView({block:'center'});return}
-if(c.kind==='etc'&&!c.hasFree){$('formErr').textContent="'그 밖의 일'은 내용을 적어 주세요.";$('reportText').focus();return}
+if(c.kinds.length===1&&c.kinds[0]==='etc'&&!c.hasFree){$('formErr').textContent="'그 밖의 일'은 내용을 적어 주세요.";$('reportText').focus();return}
 if(!where()&&!c.hasFree){$('formErr').textContent='어디인지 적어 주세요. 정확한 주소가 아니어도 괜찮아요.';$('rPlace').focus();return}
 if(await sendReport(c.text)){$('incidentForm').reset();delete $('vuln').dataset.touched;store.set('draft','');$('gpsMsg').textContent='';syncWhere();stickyState()}});
 // 보내는 동안 버튼에 진행 상황을 보여 주고, 인터넷이 끊겨 못 보내면 이 기기에 보관해 두었다가 다시 보낸다
@@ -271,12 +274,12 @@ $('pendingDrop').addEventListener('click',()=>{store.set('pendingReport','');sho
 const netState=()=>{$('offBar').hidden=navigator.onLine;if(navigator.onLine&&store.get('pendingReport')){showPending();$('pendingBox').scrollIntoView({block:'nearest'})}};
 window.addEventListener('online',netState);window.addEventListener('offline',netState);
 // 쓰던 신고는 이 기기에 자동 저장(새로고침·잠깐 다른 앱으로 가도 남는다). 보내면 지운다
-function saveDraft(){const d={kind:document.querySelector('input[name=kind]:checked')?.value||'',where:document.querySelector('input[name=where]:checked')?.value||'',place:$('rPlace').value,
+function saveDraft(){const d={kinds:checkedKinds(),where:document.querySelector('input[name=where]:checked')?.value||'',place:$('rPlace').value,
  ppl:document.querySelector('input[name=ppl]:checked')?.value||'',vuln:[...$('vuln').querySelectorAll('input:checked')].map(c=>c.value),text:$('reportText').value};
- store.set('draft',d.kind||d.place||d.ppl||d.text?JSON.stringify(d):'')}
+ store.set('draft',d.kinds.length||d.place||d.ppl||d.text?JSON.stringify(d):'')}
 function restoreDraft(){let d;try{d=JSON.parse(store.get('draft')||'null')}catch(e){d=null}if(!d)return;
  const pick=(n,v)=>{const x=v&&document.querySelector(`input[name=${n}][value="${CSS.escape(v)}"]`);if(x)x.checked=true};
- pick('kind',d.kind);pick('where',d.where);pick('ppl',d.ppl);$('rPlace').value=d.place||'';$('reportText').value=d.text||'';
+ (d.kinds||(d.kind?[d.kind]:[])).forEach(v=>pick('kind',v));pick('where',d.where);pick('ppl',d.ppl);$('rPlace').value=d.place||'';$('reportText').value=d.text||'';
  if(d.vuln&&d.vuln.length){$('vuln').querySelectorAll('input').forEach(c=>c.checked=d.vuln.includes(c.value));$('vuln').dataset.touched='1'}
  syncWhere();$('formErr').textContent='쓰던 신고를 불러왔어요. 확인하고 보내 주세요.'}
 $('incidentForm').addEventListener('input',saveDraft);$('incidentForm').addEventListener('change',saveDraft);

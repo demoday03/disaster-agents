@@ -305,6 +305,15 @@ def list_pending_approvals() -> list[dict]:
              "created_at": r["created_at"]} for r in rows]
 
 
+def list_resolved_approvals(limit: int = 30) -> list[dict]:
+    """최근에 처리한(승인·거절) 항목. 승인 대기열 아래 '처리한 항목'에 보여 준다."""
+    with connect() as conn:
+        rows = conn.execute("""SELECT id, incident_id, kind, item_json, state, approver_name, reason, resolved_at FROM approvals
+            WHERE state IN ('approved','rejected') ORDER BY resolved_at DESC LIMIT ?""", (limit,)).fetchall()
+    return [{"id": r["id"], "incident_id": r["incident_id"], "kind": r["kind"], "item": json.loads(r["item_json"]),
+             "state": r["state"], "approver": r["approver_name"], "reason": r["reason"], "resolved_at": r["resolved_at"]} for r in rows]
+
+
 def get_approval(aid: str) -> dict | None:
     with connect() as conn:
         r = conn.execute("SELECT id, incident_id, kind, item_json, state FROM approvals WHERE id=?", (aid,)).fetchone()
