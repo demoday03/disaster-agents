@@ -2,6 +2,8 @@
 //  - data-fold="N" : 목록이 길면 앞의 N개만 보이고 나머지는 'M건 더 보기'로 펼친다(표는 tbody의 줄 단위).
 //  - data-sync="이름" : 같은 이름의 <select>는 한 곳에서 고르면 다른 곳도 같은 값이 된다(가구·신고·구역을 화면마다 다시 고르지 않게).
 //  - details.acc : 접고 펼치는 묶음(아코디언) 모양.
+//  - UI.urgentBar : 긴급 공지 띠. 접으면 한 줄('긴급 공지 N건 · 펼치기')만 남고, 새 긴급 공지가 오면 다시 펼친다.
+//  - 버튼 쿨타임 : 누른 버튼·보낸 양식은 1.5초 동안 다시 눌러도 무시한다(연타로 신고·승인·요청이 겹치지 않게).
 (function () {
   const css = `
 .fold-hide{display:none!important}
@@ -18,6 +20,14 @@ details.acc[open]>summary{border-bottom:1px solid #E7ECF3;margin-bottom:12px}
 details.desc{margin:0 0 10px;color:#5A6880;font-size:.9rem}
 details.desc>summary{cursor:pointer;font-weight:600;color:#3B4A63;display:inline-block;padding:2px 0}
 details.desc>p{margin:6px 0 0}
+button.cooling{opacity:.6;cursor:progress}
+[data-urgentbar]:not([hidden]){display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap}
+[data-urgentbar] .ann-body{flex:1 1 220px;min-width:0}
+[data-urgentbar] .ann-body p{margin:4px 0 0}
+[data-urgentbar].ann-folded{flex-wrap:nowrap}
+[data-urgentbar] .ann-line{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;font-size:1rem}
+.ann-tg{margin:0!important;background:#fff!important;color:#A3182A!important;border:1.5px solid #F0B7BE!important;border-radius:99px!important;min-height:36px!important;padding:4px 14px!important;font:inherit;font-size:.9rem!important;font-weight:700;cursor:pointer;white-space:nowrap}
+
 @media(prefers-reduced-motion:reduce){details.acc>summary::after{transition:none}}`;
   const st = document.createElement('style');
   st.textContent = css;
@@ -99,11 +109,58 @@ details.desc>p{margin:6px 0 0}
     }
   }).observe(document.documentElement, {childList: true, subtree: true});
 
+  // ---------------------------------------------------------------- 버튼 쿨타임(연타 방지)
+  // 화면 이동·접기·대결 답 고르기처럼 빨리 눌러도 되는 버튼은 뺀다(data-nocool로 뺄 수도 있다)
+  const COOL_MS = 1500;
+  const NO_COOL = '.menu button, #tabs button, .fold-more, #types button, .seg button, [data-nocool], [data-edit], [data-editclose]';
+  document.addEventListener('click', e => {
+    const b = e.target.closest && e.target.closest('button');
+    if (!b || b.matches(NO_COOL)) return;
+    if (b.dataset.cooling) { e.preventDefault(); e.stopImmediatePropagation(); return; }
+    b.dataset.cooling = '1';
+    b.classList.add('cooling');
+    setTimeout(() => { delete b.dataset.cooling; b.classList.remove('cooling'); }, COOL_MS);
+  }, true);
+  document.addEventListener('submit', e => {   // Enter 키로 보내는 경우까지
+    const f = e.target;
+    if (f.dataset.cooling) { e.preventDefault(); e.stopImmediatePropagation(); return; }
+    f.dataset.cooling = '1';
+    setTimeout(() => { delete f.dataset.cooling; }, COOL_MS);
+  }, true);
+
+  // ---------------------------------------------------------------- 긴급 공지 띠 접기
+  // 긴급 정보가 사라지지 않게 접어도 한 줄은 남긴다. 접은 공지 ID를 이 기기에 기억해, 새 긴급 공지가 오면 다시 펼친다
+  const FOLD_KEY = 'annFolded';
+  const getFolded = () => { try { return JSON.parse(localStorage.getItem(FOLD_KEY) || '[]'); } catch (e) { return []; } };
+  const setFolded = ids => { try { localStorage.setItem(FOLD_KEY, JSON.stringify(ids.slice(-50))); } catch (e) { /* 저장 불가 */ } };
+  const escH = t => String(t ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
+  // urgent: [{id, text}] (급한 순), more: {href, label} 또는 null, many: 펼쳤을 때 여러 건을 모두 보여 줄지
+  function urgentBar(el, urgent, more, many) {
+    el.dataset.urgentbar = '1';
+    el.hidden = !urgent.length;
+    if (!urgent.length) return;
+    const ids = urgent.map(a => a.id), folded = getFolded(), isFolded = ids.every(id => folded.includes(id));
+    el.classList.toggle('ann-folded', isFolded);
+    const link = more ? ` <a href="${escH(more.href)}">${escH(more.label)}</a>` : '';
+    el.innerHTML = isFolded
+      ? `<div class="ann-line" title="${escH(urgent[0].text)}">📢 긴급 공지${urgent.length > 1 ? ` ${urgent.length}건` : ''} · ${escH(urgent[0].text)}</div>` +
+        '<button type="button" class="ann-tg" data-nocool aria-expanded="false">펼치기 ▾</button>'
+      : `<div class="ann-body">📢 긴급 공지${many ? urgent.slice(0, 3).map(a => `<p>${escH(a.text)}</p>`).join('')
+          : ` · ${escH(urgent[0].text)}${urgent.length > 1 ? ` (외 ${urgent.length - 1}건)` : ''}`}${link}</div>` +
+        '<button type="button" class="ann-tg" data-nocool aria-expanded="true">접기 ▴</button>';
+    const toggle = () => {
+      setFolded(isFolded ? getFolded().filter(x => !ids.includes(x)) : [...new Set([...getFolded(), ...ids])]);
+      urgentBar(el, urgent, more, many);
+    };
+    el.querySelector('.ann-tg').addEventListener('click', toggle);
+    el.querySelector('.ann-line')?.addEventListener('click', toggle);   // 접힌 줄을 눌러도 펼친다
+  }
+
   function scan(root = document) {
     root.querySelectorAll('[data-fold]').forEach(watchFold);
     root.querySelectorAll('select[data-sync]').forEach(watchSync);
   }
-  window.UI = {scan, applyFold};
+  window.UI = {scan, applyFold, urgentBar};
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => scan());
   else scan();
 })();

@@ -3,7 +3,7 @@ Run from project root: python webapp/server.py
 This is a prototype, not a production or emergency-dispatch system.
 """
 from __future__ import annotations
-import hmac, json, os, ssl, sys, threading, time, traceback, uuid
+import hashlib, hmac, json, os, secrets, ssl, sys, threading, time, traceback, uuid
 from datetime import datetime
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -20,7 +20,7 @@ from common import scenario
 from agents import crosscheck, dispatch, intake, monitor, recovery, welfare, verify
 from coordinator import Coordinator
 from database import db as database
-from webapp import features, public_api, sensors, weather
+from webapp import battle, features, public_api, sensors, telegram_bot, weather
 
 # 클라우드 모드(Render 등): 플랫폼이 HTTPS를 앞에서 처리하고 PORT를 정해 준다. 이때는 사이트 접속 코드가 필수다.
 CLOUD = os.getenv("WEBAPP_CLOUD") == "1" or os.getenv("RENDER") == "true"
@@ -109,7 +109,8 @@ def record_login(username, ok):
 
 
 SITE_TOKEN = hmac.new(SITE_CODE.encode(), b"site-access-v1", "sha256").hexdigest() if SITE_CODE else ""
-GATE_FREE = {"/access", "/api/access", "/api/health", "/api/sensor/readings", "/api/sensor/downlink"}   # 게이트웨이는 자기 토큰으로 인증
+GATE_FREE = {"/access", "/api/access", "/api/health", "/api/sensor/readings", "/api/sensor/downlink",
+             "/api/telegram/webhook"}   # 게이트웨이·텔레그램은 자기 토큰으로 인증
 
 
 def site_cookie(max_age=30 * 24 * 3600):
@@ -455,7 +456,7 @@ def approve_one(current, s, reason):
 BULK_SKIP_KINDS = {"welfare_guidance_review"}   # 검증이 불확실한 안내문은 하나씩 보고 판단한다
 
 
-PUBLIC_HIDDEN = ("notes", "invalidated_by", "invalid_reason", "invalidated_at", "triage")
+PUBLIC_HIDDEN = ("notes", "invalidated_by", "invalid_reason", "invalidated_at", "triage", "owner_hash")
 
 
 def public_row(row):
@@ -619,7 +620,7 @@ def _epoch(ts):
 def ongoing_dispatch(output):
     """같은 구역·유형 신고에 이미 대기 중이거나 투입 중인 공공 인력 배치(같은 사건의 반복 신고로 중복 배치하지 않게).
     인명구조는 별건 누락을 막기 위해 묶지 않는다."""
-    if output["type"] == "인명구조":
+    if output["type"] == "인명구조" or output.get("zone") in (None, "미상"):   # 위치를 모르면 같은 사건인지 알 수 없다
         return None
     pending = [a for a in database.list_pending_approvals() if a["kind"] == "dispatch_public"]
     active = [a for a in database.list_dispatch_approvals() if a["kind"] == "dispatch_public"]
@@ -666,6 +667,8 @@ FEATURES = features.Features(database, SCENARIO, travel, DISPATCH_CFG, GUIDANCE_
 SENSORS = sensors.SensorHub(database)
 WEATHER = weather.WeatherFeed()   # 기상청 초단기실황·특보(참고 정보, 키 없으면 표시만 안 함)
 PUBLIC = public_api.PublicAPI(FEATURES, database, scenario_now)   # 시민·봉사자 화면(가상 코드 선택, 로그인 없음)
+TELEGRAM = telegram_bot.TelegramBot(database, PUBLIC, lambda: public_status())   # 주민 알림(TELEGRAM_BOT_TOKEN이 있을 때만)
+FEATURES.notify = TELEGRAM.event   # 위기 단계 확정·안부 확인 시작을 텔레그램으로
 
 
 def change_occupancy(sid, delta, by):
@@ -792,6 +795,177 @@ def generate_guidance(incident_id, level, flags, control_zones, hazard=None):
     return row
 
 
+REPORTER_EDITS_MAX = 3
+
+
+def _owner_ok(output, token):
+    h = output.get("owner_hash")
+    return bool(h) and isinstance(token, str) and bool(token) and hmac.compare_digest(h, hashlib.sha256(token.encode()).hexdigest())
+
+
+def withdraw_pending(output, reason):
+    """신고자가 고치거나 취소할 때: 이 신고의 대기 중 승인을 반려하고, 출고 전 물품 요청을 거둔다(실행된 조치는 건드리지 않음)."""
+    who = {"username": "신고자"}
+    rejected = []
+    for a in database.list_pending_approvals_for(output["id"]):
+        database.resolve_approval(a["id"], False, "신고자", reason, None)
+        with FEATURES.lock:
+            FEATURES.after_resolve(a, False, who)
+        rejected.append(a["id"])
+    with FEATURES.lock:
+        cancelled, in_transit = FEATURES.cancel_incident_supply(output["id"], "신고자", reason)
+    relinked = [i for aid in rejected for i in detach_dispatch(aid, output["id"], rebuild=True)]
+    return {"rejected_approvals": rejected, "cancelled_supply": cancelled, "supply_in_transit": in_transit, "relinked_incidents": relinked}
+
+
+def reporter_change(iid, action, data):
+    """신고자가 보낸 신고를 고치거나 취소한다. 신고할 때 그 기기에만 준 비밀 값이 있어야 한다.
+    - 고치기: 담당자가 아직 아무 조치도 승인하지 않았을 때만(대기 중 추천은 반려하고 새 내용으로 다시 연결). 3번까지.
+    - 취소: 언제든. 대기 중 승인은 반려하고, 이미 승인된 출동·이동 중인 물품은 담당자가 확인하도록 메모를 남긴다."""
+    token, followup = data.get("token"), False
+    with _incident_lock, _dispatch_lock:
+        row = incident_output(iid)
+        if row is None:
+            return 404, {"error": "접수번호를 찾을 수 없습니다"}
+        o = row["output"]
+        if not _owner_ok(o, token):
+            return 403, {"error": "이 기기에서 보낸 신고만 고치거나 취소할 수 있어요"}
+        if o.get("state") == INVALID:
+            return 409, {"error": "이미 취소됐거나 처리하지 않기로 한 신고예요"}
+        if action == "cancel":
+            active = [a["id"] for a in database.list_dispatch_approvals() if a["incident_id"] == iid]
+            res = withdraw_pending(o, "신고자가 신고를 취소함")
+            o.update(state=INVALID, invalid_reason="신고자가 취소함", invalidated_by="신고자", invalidated_at=time.time(),
+                     cancelled_by_reporter=True)
+            acting = bool(active or res["supply_in_transit"])
+            if acting:
+                o["notes"] = list(o.get("notes") or []) + [
+                    f"신고자가 취소함: 이미 승인된 출동 {', '.join(active) or '없음'} · 이동 중인 물품 "
+                    f"{', '.join(x['id'] for x in res['supply_in_transit']) or '없음'} → 담당자가 확인 후 해제하세요"]
+            database.update_incident(row, status="rejected")
+            database.log_audit("incident_cancelled_by_reporter", "incident", iid, {**res, "active_dispatch": active})
+            return 200, {"id": iid, "state": INVALID, "cancelled_by_reporter": True, "already_acting": acting}
+        text = data.get("text")
+        if not isinstance(text, str) or not text.strip() or len(text) > 2000:
+            return 400, {"error": "고칠 내용을 2000자 이하로 적어 주세요"}
+        if o.get("edits", 0) >= REPORTER_EDITS_MAX:
+            return 409, {"error": "신고는 3번까지 고칠 수 있어요. 더 알릴 내용은 119·112에 전화해 주세요"}
+        moving = [r for r in database.list_records("supply_request") if r.get("incident_id") == iid and r["state"] in ("배치", "이동")]
+        if database.incident_has_approved(iid) or moving:
+            return 409, {"error": "담당자가 이미 출동·출고를 승인해서 내용을 고칠 수 없어요. 더 알릴 내용은 119·112에 전화하거나 새로 신고해 주세요"}
+        res = withdraw_pending(o, "신고자가 신고 내용을 고침")
+        new = classify_incident(iid, text.strip(), o["ts"])
+        no = new["output"]
+        no.update({k: o[k] for k in CARRY_FIELDS if k in o})
+        no.update(owner_hash=o["owner_hash"], edits=o.get("edits", 0) + 1, supplements=o.get("supplements", 0), edited_at=time.time())
+        new = database.update_incident(link_incident(new))
+        database.log_audit("incident_edited_by_reporter", "incident", iid, {**res, "edits": no["edits"]})
+        followup = new["output"].get("state") == "접수"
+    if followup:
+        start_followups(iid)
+    return 200, public_row(new)
+
+
+CARRY_FIELDS = ("owner_hash", "channel", "edits", "supplements")   # 다시 분류해도 남겨 둘 신고 정보
+
+
+def submit_report(text, rate_key, channel=None):
+    """주민 신고 접수(웹 화면·텔레그램 공통). (상태 코드, 응답)을 돌려준다."""
+    if not isinstance(text, str) or not text.strip():
+        return 400, {"error": "신고 내용을 입력해 주세요"}
+    if len(text) > 2000:
+        return 400, {"error": "신고 내용은 2000자 이하여야 합니다"}
+    if not INCIDENT_LIMIT.allow(rate_key):
+        return 429, {"error": "짧은 시간에 신고가 너무 많습니다. 급한 상황이면 119·112에 바로 전화하세요"}
+    duplicate = database.find_duplicate_incident(text)
+    if duplicate:
+        return 200, {**public_row(duplicate), "duplicate": True}
+    rid = "R-" + uuid.uuid4().hex[:8].upper()
+    row = classify_incident(rid, text, time.time())
+    # 신고자만 고치거나 취소할 수 있게, 그 기기(텔레그램이면 그 대화방)에만 주는 비밀 값(서버에는 해시만 저장)
+    token = secrets.token_urlsafe(18)
+    row["output"]["owner_hash"] = hashlib.sha256(token.encode()).hexdigest()
+    if channel:
+        row["output"]["channel"] = channel   # 담당자 화면에 '텔레그램 신고'처럼 표시
+    # Persist only the classifier result (the intake agent applies its configured masking).
+    row = database.save_incident(row)
+    row = database.update_incident(link_incident(row))
+    start_followups(row["output"]["id"])
+    return 201, {**public_row(row), "edit_token": token}
+
+
+def supplement_incident(iid, extra, rate_key):
+    """신고자가 빠진 정보를 보완(접수번호로). 원문 뒤에 붙여 다시 분류한다."""
+    if not isinstance(extra, str) or not extra.strip() or len(extra) > 500:
+        return 400, {"error": "보완 내용은 1~500자로 입력해 주세요"}
+    if not INCIDENT_LIMIT.allow(rate_key):
+        return 429, {"error": "짧은 시간에 요청이 너무 많습니다. 급한 상황이면 119·112에 바로 전화하세요"}
+    with _incident_lock:
+        old = incident_output(iid)
+        if old is None:
+            return 404, {"error": "접수번호를 찾을 수 없습니다"}
+        o = old["output"]
+        if o.get("state") != "보완 필요":
+            return 409, {"error": "보완이 필요한 신고가 아닙니다"}
+        if o.get("supplements", 0) >= MAX_SUPPLEMENTS:
+            return 409, {"error": "보완은 3번까지 받습니다. 담당자가 확인할 예정이며, 급한 상황이면 119·112에 바로 전화하세요"}
+        # 원문 뒤에 붙이고 자르지 않는다(긴 원문이어도 보완 내용이 빠지지 않게, 최대 3번이라 길이는 제한됨)
+        text = f"{o['text']}\n[보완] {extra.strip()}"
+        row = classify_incident(o["id"], text, o["ts"], max_text=len(text))
+        out = row["output"]
+        out.update({k: o[k] for k in CARRY_FIELDS if k in o})   # 보완해도 신고자 취소·고치기 권한이 남게
+        zone_given = intake._zones(extra)
+        if len(zone_given) == 1:   # 보완에 적은 구역이 원문의 모호한 구역('2구역인지 3구역인지')보다 우선
+            out["zone"] = zone_given.pop()
+            out["missing"] = intake.missing_fields(out)
+        out["supplements"] = o.get("supplements", 0) + 1
+        row = link_incident(row)
+        database.log_audit("incident_supplemented", "incident", o["id"],
+                           {"still_missing": row["output"]["missing"]})
+        row = database.update_incident(row)
+        start_followups(o["id"])
+        return 200, public_row(row)
+
+
+def report_info(iid):
+    """텔레그램 봇이 신고자에게 알려 줄 처리 상황(접수번호 조회와 같은 범위만)."""
+    row = incident_output(iid)
+    if row is None:
+        return None
+    o, g = row["output"], public_guidance(iid)
+    return {"id": iid, "type": o.get("type"), "state": o.get("state"), "urgency": o.get("urgency"),
+            "missing": o.get("missing") or [], "cancelled": bool(o.get("cancelled_by_reporter")),
+            "steps": public_progress(o), "guidance": g["text"] if g else None}
+
+
+# 텔레그램 봇에서 신고·보완·취소·진행 상황 조회(웹 화면과 같은 함수, 속도 제한은 대화방별)
+TELEGRAM.hooks = {
+    "submit": lambda text, chat: submit_report(text, f"tg:{chat}", "텔레그램"),
+    "supplement": lambda iid, text, chat: supplement_incident(iid, text, f"tg:{chat}"),
+    "cancel": lambda iid, token: reporter_change(iid, "cancel", {"token": token}),
+    "info": report_info,
+}
+
+
+def public_progress(output):
+    """신고자에게 보여 줄 진행 상황(도움이 오고 있는지). 담당자 이름·승인 ID는 넣지 않는다."""
+    if output.get("state") == INVALID:
+        return []
+    steps, linked = [], output.get("linked") or {}
+    if output.get("classified_by"):
+        steps.append({"icon": "👤", "text": "담당자가 신고 내용을 확인했어요"})
+    states = [a["state"] for a in (database.get_approval(x) for x in linked.get("dispatch", []) if isinstance(x, str)) if a]
+    if "approved" in states:
+        steps.append({"icon": "🚒", "text": "대응 인력 출동이 승인됐어요", "done": True})
+    elif states:
+        steps.append({"icon": "🚒", "text": "대응 인력 출동을 담당자가 검토하고 있어요"})
+    if linked.get("supply"):
+        steps.append({"icon": "📦", "text": "물품 요청을 담당자가 검토하고 있어요"})
+    if linked.get("volunteer"):
+        steps.append({"icon": "🙋", "text": "봉사자를 찾고 있어요"})
+    return steps
+
+
 def public_guidance(incident_id):
     """접수 사이트에 내보낼 안내문. 검증 통과(grounded) + 담당자 승인 건만, 표시 직전에 조건을 다시 확인한다."""
     row = database.get_approved_guidance(incident_id)
@@ -831,6 +1005,7 @@ def post_announcement(data, by):
            "at": time.time(), "by": by, "active": True}
     database.put_record("announcement", aid, row)
     database.log_audit("announcement_posted", "announcement", aid, {"by": by, "audience": audience, "zone": zone, "urgent": urgent})
+    TELEGRAM.announcement(row)   # 주민 대상이면 텔레그램 구독자에게도
     return row
 
 
@@ -868,7 +1043,8 @@ def public_status():
                               for c in current_control_zones() if c.get("active")],
             "zones": {z["id"]: z["name"] for z in SCENARIO["zones"]},
             "zone_grid": [{k: z[k] for k in ("id", "name", "risk", "row", "col")} for z in SCENARIO["zones"]],
-            "weather": WEATHER.status()}
+            "weather": WEATHER.status(),
+            "telegram_bot": TELEGRAM.username if TELEGRAM.enabled and TELEGRAM.mode else None}   # 주민 화면의 '텔레그램으로 알림 받기'
 
 
 def read_json_body(handler, limit=MAX_BODY):
@@ -1082,7 +1258,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {"username": s["username"], "role": s["role"], "csrf_token": s["csrf"]})
         if path == "/api/health":
             return self.send_json(200, {"ok": True, "mode": MODE, "llm_enabled": LLM is not None,
-                "llm_calls": LLM.calls if LLM else 0, "llm_max_calls": LLM.max_calls if LLM else 0, "database": database.backend_label(), "database_ready": True, "prototype": True,
+                "llm_calls": LLM.calls if LLM else 0, "llm_max_calls": LLM.max_calls if LLM else 0, "database": database.backend_label(), "telegram": TELEGRAM.status(), "database_ready": True, "prototype": True,
                 "warning": "시뮬레이션/프로토타입입니다. 실제 출동·재난 경보 시스템이 아닙니다."})
         if path == "/api/agents":
             return self.send_json(200, {"items": agents_status()})
@@ -1101,11 +1277,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(404, {"error": "접수번호를 찾을 수 없습니다"})
             invalid = incident["result"].get("output", {}).get("state") == INVALID
             return self.send_json(200, {"id": incident_id, **incident, "result": public_row(incident["result"]),
-                                        "guidance": None if invalid else public_guidance(incident_id)})
+                                        "guidance": None if invalid else public_guidance(incident_id),
+                                        "progress": public_progress(incident["result"].get("output", {}))})
         if path == "/api/approvals":
             if not self.require_staff():
                 return
             return self.send_json(200, {"items": database.list_pending_approvals()})
+        if path == "/api/approvals/history":   # 담당자: 최근에 처리한 승인·거절(누가·왜·언제)
+            if not self.require_staff():
+                return
+            return self.send_json(200, {"items": database.list_resolved_approvals(30)})
         if path.startswith(FEATURE_PREFIXES):   # ①③⑤⑥⑦⑧ 현장 운영 기능(webapp/features.py)
             if not self.require_staff():
                 return
@@ -1125,6 +1306,15 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, SENSORS.downlink())
         if path in ("/volunteer",):
             return self.send_html("volunteer.html")
+        if path == "/battle":   # 사람 vs AI 신고 분류 대결(시연·발표용)
+            return self.send_html("battle.html")
+        if path == "/api/public/battle":
+            return self.send_json(200, battle.questions())
+        if path == "/api/public/battle/history":
+            ai = database.get_record("battle_ai", battle._mode_key(LLM))
+            return self.send_json(200, {"history": battle.history(database),
+                                        "ai": {**battle.score({r["id"]: r["type"] for r in ai["rows"]}), "total_ms": ai["total_ms"],
+                                               "mode": ai["mode"]} if ai else None})
         if path.startswith("/api/public/") and path != "/api/public/status":
             return self.public_call("GET", path, {})
         if path == "/api/weather":   # 기상청 실제 강수·특보(참고 정보)와 지금 감시 에이전트가 쓰는 강우 단계
@@ -1187,6 +1377,15 @@ class Handler(BaseHTTPRequestHandler):
                 database.log_audit("login", "user", user["username"], {"role": user["role"]})
                 return self.send_json(200, {"username": user["username"], "role": user["role"], "csrf_token": csrf},
                                       headers={"Set-Cookie": session_cookie(token, database.SESSION_TTL_S)})
+            if path == "/api/telegram/webhook":   # 텔레그램 웹훅: setWebhook 때 정한 비밀 값이 헤더에 있어야 한다
+                if not TELEGRAM.check_secret(self.headers.get("X-Telegram-Bot-Api-Secret-Token", "")):
+                    return self.send_json(403, {"error": "forbidden"})
+                try:
+                    with FEATURES.lock:
+                        TELEGRAM.handle(data)
+                except Exception as e:   # 이상한 업데이트 하나 때문에 텔레그램이 같은 요청을 계속 다시 보내지 않게 200
+                    print("telegram update error:", type(e).__name__, e)
+                return self.send_json(200, {"ok": True})
             if path == "/api/sensor/readings":   # 마이크로비트 게이트웨이(로그인 대신 게이트웨이 토큰)
                 if not self.require_gateway():
                     return
@@ -1262,6 +1461,11 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/api/public/"):
                 if not PUBLIC_LIMIT.allow(self.client_ip()):
                     return self.send_json(429, {"error": "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요"})
+                if path == "/api/public/battle":   # AI 분류(처음 한 번 Solar 20회)는 FEATURES 잠금 밖에서
+                    try:
+                        return self.send_json(201, battle.submit(database, LLM, data))
+                    except ValueError as e:
+                        return self.send_json(400, {"error": str(e)})
                 return self.public_call("POST", path, data)
             if path.startswith("/api/incidents/") and path.endswith("/classify"):   # 담당자: 분류 직접 수정(O3)
                 s = self.require_staff(check_csrf=True)
@@ -1287,8 +1491,11 @@ class Handler(BaseHTTPRequestHandler):
                     note = ("담당자 분류 수정: " + ", ".join(f"{k} {before[k]}→{after[k]}" for k in after if before[k] != after[k])
                             + (" · 이미 만든 배치·안내는 그대로이니 필요하면 해당 화면에서 다시 추천하세요" if o.get("linked") else ""))
                     o.update(after, label="담당자 수정", classified_by=s["username"])
-                    relink = o.get("state") == "보완 필요" and zone in zone_ids
-                    if relink:   # 담당자가 구역을 채워 주면 신고자 보완을 기다리지 않고 다음 에이전트로 넘긴다
+                    # 담당자가 구역을 채워 주면 다음 에이전트로 넘긴다: 신고자 보완을 기다리던 신고, 또는 위치를 글·GPS로만
+                    # 적어 구역을 몰라 아무 에이전트에도 넘어가지 못한 신고(긴급 신고의 배치 추천이 여기서 시작된다)
+                    relink = zone in zone_ids and (o.get("state") == "보완 필요"
+                                                   or (before["zone"] == "미상" and o.get("state") == "접수" and not o.get("linked")))
+                    if relink:
                         o["missing"] = [m for m in (o.get("missing") or []) if not m.startswith("위치")]
                         row = link_incident(row)   # 메모를 새로 쓰므로 수정 메모는 그 뒤에 붙인다
                     row["output"]["notes"] = list(row["output"].get("notes") or []) + [note]
@@ -1463,56 +1670,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(200, row)
 
             if path == "/api/incidents":
-                text = data.get("text")
-                if not isinstance(text, str) or not text.strip():
-                    return self.send_json(400, {"error": "신고 내용을 입력해 주세요"})
-                if len(text) > 2000:
-                    return self.send_json(400, {"error": "신고 내용은 2000자 이하여야 합니다"})
+                return self.send_json(*submit_report(data.get("text"), self.client_ip()))
+            if path.startswith("/api/incidents/") and path.endswith(("/edit", "/cancel")):   # 신고자가 고치기·취소(이 기기의 비밀 값으로)
+                parts = path.strip("/").split("/")
+                if len(parts) != 4 or not parts[2] or len(parts[2]) > 40:
+                    return self.send_json(404, {"error": "찾을 수 없는 경로입니다"})
                 if not INCIDENT_LIMIT.allow(self.client_ip()):
-                    return self.send_json(429, {"error": "짧은 시간에 신고가 너무 많습니다. 급한 상황이면 119·112에 바로 전화하세요"})
-                duplicate = database.find_duplicate_incident(text)
-                if duplicate:
-                    return self.send_json(200, {**public_row(duplicate), "duplicate": True})
-                rid = "R-" + uuid.uuid4().hex[:8].upper()
-                row = classify_incident(rid, text, time.time())
-                # Persist only the classifier result (the intake agent applies its configured masking).
-                row = database.save_incident(row)
-                row = database.update_incident(link_incident(row))
-                start_followups(row["output"]["id"])
-                return self.send_json(201, public_row(row))
+                    return self.send_json(429, {"error": "짧은 시간에 요청이 너무 많습니다. 급한 상황이면 119·112에 바로 전화하세요"})
+                return self.send_json(*reporter_change(parts[2], parts[3], data))
             if path.startswith("/api/incidents/") and path.endswith("/supplement"):   # 신고자가 빠진 정보 보완(접수번호로)
                 parts = path.strip("/").split("/")
                 if len(parts) != 4 or not parts[2] or len(parts[2]) > 40:
                     return self.send_json(404, {"error": "찾을 수 없는 경로입니다"})
-                extra = data.get("text")
-                if not isinstance(extra, str) or not extra.strip() or len(extra) > 500:
-                    return self.send_json(400, {"error": "보완 내용은 1~500자로 입력해 주세요"})
-                if not INCIDENT_LIMIT.allow(self.client_ip()):
-                    return self.send_json(429, {"error": "짧은 시간에 요청이 너무 많습니다. 급한 상황이면 119·112에 바로 전화하세요"})
-                with _incident_lock:
-                    old = incident_output(parts[2])
-                    if old is None:
-                        return self.send_json(404, {"error": "접수번호를 찾을 수 없습니다"})
-                    o = old["output"]
-                    if o.get("state") != "보완 필요":
-                        return self.send_json(409, {"error": "보완이 필요한 신고가 아닙니다"})
-                    if o.get("supplements", 0) >= MAX_SUPPLEMENTS:
-                        return self.send_json(409, {"error": "보완은 3번까지 받습니다. 담당자가 확인할 예정이며, 급한 상황이면 119·112에 바로 전화하세요"})
-                    # 원문 뒤에 붙이고 자르지 않는다(긴 원문이어도 보완 내용이 빠지지 않게, 최대 3번이라 길이는 제한됨)
-                    text = f"{o['text']}\n[보완] {extra.strip()}"
-                    row = classify_incident(o["id"], text, o["ts"], max_text=len(text))
-                    out = row["output"]
-                    zone_given = intake._zones(extra)
-                    if len(zone_given) == 1:   # 보완에 적은 구역이 원문의 모호한 구역('2구역인지 3구역인지')보다 우선
-                        out["zone"] = zone_given.pop()
-                        out["missing"] = intake.missing_fields(out)
-                    out["supplements"] = o.get("supplements", 0) + 1
-                    row = link_incident(row)
-                    database.log_audit("incident_supplemented", "incident", o["id"],
-                                       {"still_missing": row["output"]["missing"]})
-                    row = database.update_incident(row)
-                    start_followups(o["id"])
-                    return self.send_json(200, public_row(row))
+                return self.send_json(*supplement_incident(parts[2], data.get("text"), self.client_ip()))
             if path.startswith("/api/incidents/") and path.endswith("/approve-all"):   # 담당자: 이 신고의 대응안 한 번에 승인
                 s = self.require_staff(check_csrf=True)
                 if not s:
@@ -1712,6 +1882,9 @@ def main():
     print("Ctrl+C로 종료하세요. 실재난 경보/출동 용도로 사용하지 마세요.")
     if AUTO_FOLLOWUPS:   # 미리 넣은 시연 신고 등 아직 연결되지 않은 신고를 백그라운드로 처리(서버는 바로 응답)
         threading.Thread(target=link_pending_incidents, daemon=True).start()
+    TELEGRAM.start()   # 봇 이름 확인, 웹훅(공개 주소가 있을 때) 또는 폴링 시작
+    if TELEGRAM.enabled:
+        print(f"텔레그램 봇: {TELEGRAM.username or '연결 실패'} ({TELEGRAM.mode or TELEGRAM.error})")
     try: server.serve_forever()
     except KeyboardInterrupt: pass
     finally: server.server_close()

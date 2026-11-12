@@ -305,6 +305,15 @@ def list_pending_approvals() -> list[dict]:
              "created_at": r["created_at"]} for r in rows]
 
 
+def list_resolved_approvals(limit: int = 30) -> list[dict]:
+    """최근에 처리한(승인·거절) 항목. 승인 대기열 아래 '처리한 항목'에 보여 준다."""
+    with connect() as conn:
+        rows = conn.execute("""SELECT id, incident_id, kind, item_json, state, approver_name, reason, resolved_at FROM approvals
+            WHERE state IN ('approved','rejected') ORDER BY resolved_at DESC LIMIT ?""", (limit,)).fetchall()
+    return [{"id": r["id"], "incident_id": r["incident_id"], "kind": r["kind"], "item": json.loads(r["item_json"]),
+             "state": r["state"], "approver": r["approver_name"], "reason": r["reason"], "resolved_at": r["resolved_at"]} for r in rows]
+
+
 def get_approval(aid: str) -> dict | None:
     with connect() as conn:
         r = conn.execute("SELECT id, incident_id, kind, item_json, state FROM approvals WHERE id=?", (aid,)).fetchone()
@@ -319,6 +328,13 @@ def update_pending_approval_item(aid: str, item: dict) -> None:
                            (json.dumps(item, ensure_ascii=False, default=str), aid))
         if cur.rowcount != 1:
             raise ValueError(f"{aid}는 대기 중인 승인 항목이 아님")
+
+
+def incident_has_approved(incident_id: str) -> bool:
+    """이 신고에 담당자가 이미 승인한 조치(배치·출고·안내문 등)가 있는지(신고자 수정 가능 여부 판단)."""
+    with connect() as conn:
+        return conn.execute("SELECT COUNT(*) FROM approvals WHERE incident_id=? AND state='approved'",
+                            (incident_id,)).fetchone()[0] > 0
 
 
 def list_dispatch_approvals(states=("approved",), include_released=False) -> list[dict]:
@@ -393,6 +409,11 @@ def list_records(kind: str) -> list[dict]:
     with connect() as conn:
         rows = conn.execute("SELECT data_json FROM records WHERE kind=? ORDER BY created_at, id", (kind,)).fetchall()
     return [json.loads(r["data_json"]) for r in rows]
+
+
+def delete_record(kind: str, rid: str) -> bool:
+    with connect() as conn:
+        return conn.execute("DELETE FROM records WHERE kind=? AND id=?", (kind, rid)).rowcount > 0
 
 
 def count_records(kind: str) -> int:
