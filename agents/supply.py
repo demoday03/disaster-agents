@@ -283,10 +283,15 @@ def forecast(inventory, catalog, now):
     return sorted(rows, key=lambda r: (r["hours_left"], r["item"]))
 
 
+def when_short(hours):
+    """사람이 읽는 부족 시점: 1시간 안이면 '지금 부족', 그 밖은 '약 N시간 뒤 부족'('0시간 뒤'처럼 어색하게 쓰지 않게)."""
+    return "지금 부족" if hours < 1 else f"약 {hours}시간 뒤 부족"
+
+
 def shortage_notice(rows, client=None):
     short = [r for r in rows if r["shortage"]]
-    default = lambda: {"draft": "현재 부족이 예상되는 물품(급한 순): " +
-                       ", ".join(f"{r['item']}(약 {r['hours_left']}시간)" for r in short) +
+    default = lambda: {"draft": "부족하거나 곧 부족한 물품(급한 순): " +
+                       ", ".join(f"{r['item']}({when_short(r['hours_left'])})" for r in short) +
                        ". 전달 가능한 분은 담당자에게 문의해 주세요."}
     if not short:
         return AgentResult("supply", {"draft": None, "items": []})

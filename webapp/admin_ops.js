@@ -182,7 +182,7 @@
       }));
       const n = d.notice;
       $('supplyForecast').innerHTML = table(['품목', '가용 수량', '시간당 소비', '소진 예상', '근거'], d.forecast.map(f =>
-        `<tr><td>${E(f.item)}</td><td>${E(f.qty)}</td><td>${E(f.rate_per_h)}</td><td>${f.hours_left === Infinity ? '-' : E(f.hours_left) + '시간'} ${f.shortage ? chip('부족 예상', 'bad') : ''}</td><td>${E(f.rate_source)}</td></tr>`)) +
+        `<tr><td>${E(f.item)}</td><td>${E(f.qty)}</td><td>${E(f.rate_per_h)}</td><td>${f.hours_left === Infinity ? '-' : f.hours_left < 1 ? chip('지금 부족', 'bad') : E(f.hours_left) + '시간 뒤'} ${f.shortage && f.hours_left >= 1 ? chip('부족 예상', 'bad') : ''}</td><td>${E(f.rate_source)}</td></tr>`)) +
         (n.draft ? `<p><b>필요 물품 안내 초안</b> · 검증: ${chip(n.verification.verdict, n.verification.displayable ? 'ok' : 'warn')} ${n.verification.displayable ? '' : '<span class="muted">검증 통과 전이라 봉사자 화면에 내보내지 않습니다.</span>'}</p><div class="result">${E(n.draft)}</div>` : '<p class="muted">부족 예상 품목이 없어 안내 초안을 만들지 않았습니다.</p>');
       $('supplyStock').innerHTML = table(['ID', '장소', '품목', '수량', '예약', '유통기한'], d.stock.map(s =>
         `<tr><td>${E(s.id)}</td><td>${E(s.location_name)}</td><td>${E(s.item)} ${s.category === '의약품' ? chip('자동 배치 금지', 'bad') : ''}</td><td>${E(s.qty)}</td><td>${E(s.reserved || 0)}</td><td>${s.days_left == null ? '-' : s.days_left < 0 ? chip('기한 경과', 'bad') : E(s.days_left) + '일'}</td></tr>`));
@@ -288,7 +288,7 @@
     let items, d;
     try { [items, d] = await Promise.all([api('/api/approvals'), api('/api/dispatch')]); } catch (e) { return; }
     for (const a of items.items.filter(x => x.kind.startsWith('dispatch_'))) {
-      const card = document.querySelector(`#approvals button[data-resolve="yes"][data-id="${CSS.escape(a.id)}"]`)?.closest('.incident');
+      const card = document.querySelector(`#approvals .apcard[data-ap="${CSS.escape(a.id)}"] .apmore`);   // '자세히 · 다른 후보' 안에
       if (!card || card.querySelector('.dctl')) continue;
       const rec = a.item.recommendation, pool = [rec.top, ...(rec.alternatives || [])];
       const all = a.kind === 'dispatch_public'

@@ -9,42 +9,34 @@
 .band[data-level="주의"]{background:var(--s-caution);color:#2B2100}.band[data-level="경계"]{background:var(--s-alert)}.band[data-level="위험"]{background:var(--s-danger)}
 .wrap{max-width:880px;margin:0 auto;padding:22px 18px}
 .call{margin:0 0 20px;padding:12px 16px;border-radius:10px;background:#FBE3E5;color:var(--bad-ink);font-weight:700}
-h2{font-size:1.1rem;margin:0 0 12px}
-.roles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
-.role{display:flex;flex-direction:column;gap:6px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:22px 20px;text-decoration:none;transition:border-color .15s,box-shadow .15s}
-.role:hover{border-color:var(--action);box-shadow:0 2px 10px rgba(31,95,209,.12)}
-.role .ic{font-size:2rem;line-height:1}.role b{font-size:1.2rem}.role span{color:var(--muted);font-size:.93rem}
-.role ul{margin:6px 0 0;padding-left:1.1em;color:var(--ink-2);font-size:.92rem}.role .go{margin-top:auto;padding-top:12px;color:var(--action);font-weight:700}
 .foot{color:var(--muted);font-size:.85rem;margin-top:22px;text-align:center}
-.ann{margin:0 0 20px;padding:12px 16px;border-radius:10px;border-left:6px solid var(--s-danger);background:#FDF0F1;font-weight:600;overflow-wrap:anywhere}.ann p{margin:4px 0}
-.quick{display:grid;grid-template-columns:2fr 2fr 1fr 1fr;gap:10px;margin:0 0 20px}
-.quick a{display:flex;flex-direction:column;justify-content:center;gap:2px;min-height:84px;padding:12px 14px;border-radius:14px;text-decoration:none;font-size:1.6rem;line-height:1.1;color:#fff;box-shadow:0 2px 8px rgba(22,35,59,.12)}
-.quick b{font-size:1.08rem}.quick span{font-size:.8rem;opacity:.9}.quick .e{font-size:1.7rem;opacity:1;line-height:1.1}
-.quick .sos{background:var(--s-danger)}.quick .shel{background:var(--s-normal)}.quick .t119{background:#8E1622}.quick .t112{background:#2C3E63}
-.quick a:hover{filter:brightness(1.08)}
-@media(max-width:720px){.roles{grid-template-columns:1fr}.quick{grid-template-columns:1fr 1fr}}
+.ann{margin:0 0 16px;padding:12px 16px;border-radius:10px;border-left:6px solid var(--s-danger);background:#FDF0F1;font-weight:600;overflow-wrap:anywhere}.ann p{margin:4px 0}
+.btn{display:flex;align-items:center;gap:16px;border-radius:18px;text-decoration:none;color:#fff;box-shadow:0 3px 12px rgba(22,35,59,.16);margin:0 0 12px}
+.btn:hover{filter:brightness(1.08)}.btn .e{font-size:2.6rem;line-height:1}.btn b{display:block}.btn small{display:block;font-size:.95rem;opacity:.92;font-weight:500}
+.btn.sos{background:var(--s-danger);min-height:150px;padding:20px 26px}.btn.sos b{font-size:2.1rem;letter-spacing:-.02em}.btn.sos .e{font-size:3.4rem}
+.btn.home{background:var(--action);min-height:100px;padding:16px 24px}.btn.home b{font-size:1.5rem}
+.row3{display:grid;grid-template-columns:2fr 1fr 1fr;gap:10px;margin:0 0 16px}
+.row3 a{display:flex;flex-direction:column;justify-content:center;gap:2px;min-height:80px;padding:10px 14px;border-radius:14px;text-decoration:none;color:#fff;font-weight:800;font-size:1.05rem;line-height:1.2}
+.row3 a span{font-size:1.5rem}.row3 small{font-weight:500;font-size:.8rem;opacity:.9}
+.row3 .shel{background:var(--s-normal)}.row3 .t119{background:#8E1622}.row3 .t112{background:#2C3E63}.row3 a:hover{filter:brightness(1.08)}
+.others{display:flex;flex-wrap:wrap;justify-content:center;gap:8px 18px;margin-top:26px;padding-top:16px;border-top:1px solid var(--line);font-size:.9rem}
+.others a{color:var(--ink-2);text-decoration:none;padding:6px 4px}.others a:hover{color:var(--action);text-decoration:underline}
+@media(max-width:560px){.btn.sos{min-height:140px;padding:18px 20px}.btn.sos b{font-size:1.8rem}.btn.home b{font-size:1.3rem}}
 </style></head><body>
 <header class="top"><h1>재난 안전 AI 에이전트</h1><p>교육용 시연 사이트입니다. 실제 신고·출동으로 이어지지 않으니 실제 개인정보는 넣지 마세요.</p></header>
 <div class="band" id="stage" data-level="정상" role="status">지금 우리 지역 위기 단계: 확인 중</div>
 <main class="wrap">
-<nav class="quick" aria-label="급할 때 바로가기">
-<a class="sos" href="/citizen#report"><span class="e" aria-hidden="true">🆘</span><b>바로 신고하기</b><span>눌러서 고르기만 하면 돼요</span></a>
-<a class="shel" href="/citizen#map"><span class="e" aria-hidden="true">🏫</span><b>대피소 찾기</b><span>남은 자리·통제 중인 길</span></a>
-<a class="t119" href="tel:119" aria-label="119에 전화하기"><span class="e" aria-hidden="true">📞</span><b>119</b><span>화재·구조·구급</span></a>
-<a class="t112" href="tel:112" aria-label="112에 전화하기"><span class="e" aria-hidden="true">📞</span><b>112</b><span>경찰</span></a>
+<a class="btn sos" href="/citizen#report"><span class="e" aria-hidden="true">🆘</span><span><b>바로 신고하기</b><small>무슨 일인지 눌러서 고르기만 하면 돼요</small></span></a>
+<a class="btn home" href="/citizen"><span class="e" aria-hidden="true">🏠</span><span><b>주민 화면 들어가기</b><small>대피소 · 알림 · 우리 집 · 물품 요청</small></span></a>
+<nav class="row3" aria-label="급할 때 바로가기">
+<a class="shel" href="/citizen#map"><span aria-hidden="true">🏫</span>대피소 찾기<small>남은 자리·통제 중인 길</small></a>
+<a class="t119" href="tel:119" aria-label="119에 전화하기"><span aria-hidden="true">📞</span>119<small>구조·구급</small></a>
+<a class="t112" href="tel:112" aria-label="112에 전화하기"><span aria-hidden="true">📞</span>112<small>경찰</small></a>
 </nav>
 <p class="call">사람이 다치거나 갇혔다면 신고보다 119·112 전화가 먼저예요.</p>
 <div id="ann" class="ann" hidden role="alert"></div>
-<h2>누구로 들어갈까요?</h2>
-<div class="roles">
-<a class="role" href="/citizen"><span class="ic" aria-hidden="true">🏠</span><b>주민</b><span>피해를 입었거나 도움이 필요한 분</span>
-<ul><li>재난 신고하기</li><li>우리 집 맞춤 대비 안내</li><li>물품 요청 · 대피소 찾기</li></ul><span class="go">들어가기 →</span></a>
-<a class="role" href="/volunteer"><span class="ic" aria-hidden="true">🙋</span><b>봉사자</b><span>현장에서 돕는 자원봉사자</span>
-<ul><li>내 작업 확인</li><li>도착 · 완료 보고, SOS</li><li>물품 기부</li></ul><span class="go">들어가기 →</span></a>
-<a class="role" href="/admin"><span class="ic" aria-hidden="true">🛡️</span><b>담당자</b><span>상황실 담당 공무원 (로그인 필요)</span>
-<ul><li>상황판 · 신고 목록</li><li>승인 대기열</li><li>배치 · 안내 · 센서</li></ul><span class="go">들어가기 →</span></a>
-</div>
-<p class="foot">위기 단계와 안내는 담당자가 확인한 것만 표시됩니다. · <a href="/battle">📊 사람 vs AI 신고 분류 대결</a></p>
+<nav class="others" aria-label="다른 화면"><a href="/volunteer">🙋 봉사자로 참여하기</a><a href="/admin">🛡️ 담당자 로그인</a><a href="/battle">📊 사람 vs AI 신고 분류 대결</a></nav>
+<p class="foot">위기 단계와 안내는 담당자가 확인한 것만 표시됩니다.</p>
 </main>
 <script>
 fetch('/api/public/status').then(r=>r.ok?r.json():Promise.reject()).then(d=>{const s=d.stage,el=document.getElementById('stage');

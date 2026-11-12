@@ -64,7 +64,7 @@ details.acc.order{border-left:6px solid var(--action)}details.acc.order.prog{bor
 <!-- 로그인 전: 회원가입·로그인 -->
 <div class="solo" id="authWrap" hidden>
 <section class="view">
-<p class="hero">봉사자로 함께해 주세요</p><p class="lead">가입할 때 할 수 있는 일을 알려 주시면, 그 일에 맞는 작업을 바로 보여 드리고 담당자에게 추천합니다. 실명·전화번호는 받지 않아요.</p>
+<p class="hero">봉사자로 함께해 주세요</p><p class="lead">세 가지만 알려 주시면 돼요. 할 수 있는 일에 맞는 작업을 바로 보여 드리고 담당자에게 추천합니다. 실명·전화번호는 받지 않아요.</p>
 <div class="seg" role="tablist"><button type="button" role="tab" id="tabJoin" aria-selected="true">회원가입</button><button type="button" role="tab" id="tabLogin" aria-selected="false">로그인</button></div>
 <form id="joinForm" autocomplete="off">
 <p class="q"><span class="n">1</span>별명과 비밀번호</p>
@@ -72,14 +72,14 @@ details.acc.order{border-left:6px solid var(--action)}details.acc.order.prog{bor
 <div id="profileFields">
 <p class="q"><span class="n">2</span>어디에서 활동할 수 있나요?</p>
 <input id="pAddress" maxlength="80" required placeholder="예: 옥포동 일대 / 고현동 ○○아파트 근처" aria-label="활동할 곳">
-<p class="q"><span class="n">3</span>할 수 있는 일 <span class="opt">(모두 골라 주세요)</span></p>
+<p class="q"><span class="n">3</span>무엇을 도울 수 있나요? <span class="opt">(여러 개 골라도 돼요)</span></p>
 <div class="skills" id="pSkills"></div>
-<p class="q"><span class="n">4</span>가진 장비 <span class="opt">(있는 것만)</span></p>
+<div id="extraFields" hidden>
+<p class="q">가진 장비 <span class="opt">(있는 것만, 선택)</span></p>
 <div class="choices" id="pEquip"></div>
-<p class="q"><span class="n">5</span>한 번에 얼마나 도울 수 있나요?</p>
+<p class="q">한 번에 얼마나 도울 수 있나요? <span class="opt">(선택)</span></p>
 <div class="choices" id="pTime"></div>
-<p class="q"><span class="n">6</span>어떻게 참여할까요?</p>
-<div class="choices" id="pMode"></div>
+</div>
 <div class="preview none" id="pPreview" aria-live="polite">할 수 있는 일을 고르면 맡을 수 있는 작업을 여기에 보여 드려요.</div>
 </div>
 <button type="submit" class="big" id="joinBtn">가입하고 시작하기</button>
@@ -156,13 +156,17 @@ $('annCount').hidden=!list.length;$('annCount').textContent=list.length;
 $('annList').className=list.length?'':'muted';$('annList').innerHTML=list.length?list.map(a=>`<div class="ann${a.urgent?' urgent':''}"><div class="muted">${a.urgent?'<b class="err">긴급</b> · ':''}${esc(a.zone==='all'?'모든 봉사자':place(a.zone))} · ${esc(new Date(a.at*1000).toLocaleString('ko-KR'))}</div>${esc(a.text)}</div>`).join(''):'지금 게시 중인 공지가 없습니다.'}
 
 // ---- 회원가입·내 정보 고치기에 함께 쓰는 입력(활동할 곳·할 수 있는 일·장비·시간·참여 방식)
-function fillProfile(v){$('pAddress').value=v?.address||'';
-$('pSkills').innerHTML=OPT.skills.map(s=>`<label><input type="checkbox" value="${esc(s.id)}"${v&&v.skills.includes(s.id)?' checked':''}><span><b>${esc(s.label)}</b><small>맡을 수 있는 작업: ${esc(s.tasks.join(', ')||'-')}</small></span></label>`).join('');
+// 가입은 세 가지만(별명·비밀번호, 활동할 곳, 도울 수 있는 일). '물품 기부만'을 고르면 참여 방식이 기부가 된다. 장비·시간은 내 정보 고치기에서 선택
+function fillProfile(v){$('pAddress').value=v?.address||'';const donate=v&&v.mode==='기부';
+$('pSkills').innerHTML=OPT.skills.map(s=>`<label><input type="checkbox" value="${esc(s.id)}"${!donate&&v&&v.skills.includes(s.id)?' checked':''}><span><b>${esc(s.label)}</b><small>${esc(s.tasks.join(', ')||'-')}</small></span></label>`).join('')
+ +`<label><input type="checkbox" value="__donate"${donate?' checked':''}><span><b>🎁 물품 기부만</b><small>현장 작업 없이 필요한 물품을 기부해요</small></span></label>`;
+$('pSkills').querySelectorAll('input').forEach(c=>c.addEventListener('change',()=>{if(!c.checked)return;const d=c.value==='__donate';$('pSkills').querySelectorAll('input').forEach(o=>{if(o!==c&&(d||o.value==='__donate'))o.checked=false})}));
 $('pEquip').innerHTML=OPT.equipment.map(e=>`<label><input type="checkbox" value="${esc(e)}"${v&&v.equipment.includes(e)?' checked':''}> ${esc(e)}</label>`).join('');
 $('pTime').innerHTML=OPT.times.map(t=>`<label><input type="radio" name="ptime" value="${t.min}"${(v?v.available_min:120)===t.min?' checked':''}> ${esc(t.label)}</label>`).join('');
-$('pMode').innerHTML=OPT.modes.map(m=>`<label><input type="radio" name="pmode" value="${esc(m.id)}"${(v?v.mode:'둘 다')===m.id?' checked':''}> ${esc(m.label)}</label>`).join('');previewProfile()}
-function readProfile(){return {address:$('pAddress').value.trim(),skills:[...$('pSkills').querySelectorAll('input:checked')].map(c=>c.value),equipment:[...$('pEquip').querySelectorAll('input:checked')].map(c=>c.value),
-available_min:Number(document.querySelector('input[name=ptime]:checked')?.value||120),mode:document.querySelector('input[name=pmode]:checked')?.value||'둘 다'}}
+previewProfile()}
+function readProfile(){const picked=[...$('pSkills').querySelectorAll('input:checked')].map(c=>c.value),donate=picked.includes('__donate');
+ return {address:$('pAddress').value.trim(),skills:donate?[]:picked,equipment:[...$('pEquip').querySelectorAll('input:checked')].map(c=>c.value),
+ available_min:Number(document.querySelector('input[name=ptime]:checked')?.value||120),mode:donate?'기부':'둘 다'}}
 // 가입할 때 '내가 맡을 수 있는 작업'을 미리 보여 준다. 작업에 필요한 장비가 없으면 함께 알려 준다
 function previewProfile(){const p=readProfile(),box=$('pPreview');if(p.mode==='기부'){box.className='preview';box.innerHTML='<b>물품 기부로 참여해요.</b> 부족한 물품 목록을 보고 기부를 등록할 수 있어요.';return}
 const tasks=[...new Set(OPT.skills.filter(s=>p.skills.includes(s.id)).flatMap(s=>s.tasks))];
@@ -171,7 +175,8 @@ box.className='preview';box.innerHTML='<b>이런 작업을 맡을 수 있어요<
 document.addEventListener('change',e=>{if(e.target.closest('#profileFields'))previewProfile()});
 function tab(join){$('tabJoin').setAttribute('aria-selected',String(join));$('tabLogin').setAttribute('aria-selected',String(!join));$('joinForm').hidden=!join;$('loginForm').hidden=join}
 $('tabJoin').addEventListener('click',()=>tab(true));$('tabLogin').addEventListener('click',()=>tab(false));
-$('joinForm').addEventListener('submit',async e=>{e.preventDefault();$('joinErr').textContent='';const b=$('joinBtn');b.disabled=true;
+$('joinForm').addEventListener('submit',async e=>{e.preventDefault();$('joinErr').textContent='';
+if(!$('pSkills').querySelector('input:checked')){$('joinErr').textContent='도울 수 있는 일을 하나 이상 골라 주세요. 현장 작업이 어려우면 \'물품 기부만\'을 고르세요.';$('pSkills').scrollIntoView({block:'center'});return}const b=$('joinBtn');b.disabled=true;
 try{const r=await post('/api/public/volunteers',{name:$('jName').value.trim(),password:$('jPw').value,...readProfile()});await enter(r.id)}catch(err){$('joinErr').textContent=err.message}finally{b.disabled=false}});
 $('loginForm').addEventListener('submit',async e=>{e.preventDefault();$('loginErr').textContent='';try{const r=await post('/api/public/volunteer-login',{name:$('lName').value,password:$('lPw').value});await enter(r.id)}catch(err){$('loginErr').textContent=err.message}});
 $('vSel').addEventListener('change',()=>{if($('vSel').value)enter($('vSel').value)});
@@ -186,7 +191,7 @@ async function load(){if(!VID)return;try{const d=await api('/api/public/voluntee
 $('whoText').textContent=`${v.name} · ${v.place}${v.busy?' · 지금 투입 중':''}`;
 $('canDoBox').innerHTML=v.mode==='기부'?'물품 기부로 참여하고 있어요. 현장 작업도 하려면 \'내 정보\'에서 참여 방식을 바꿔 주세요.':`<b>내가 할 수 있는 일</b> <span class="chips">${d.can_do.map(t=>`<span class="can">${esc(t)}</span>`).join('')||'<span>아직 없음</span>'}</span>`;
 $('meInfo').innerHTML=`<dt>별명</dt><dd>${esc(v.name)}</dd><dt>활동할 곳</dt><dd>${esc(v.place)}</dd><dt>할 수 있는 일</dt><dd class="chips">${v.skills.map(s=>`<span>${esc(d.skill_labels[s]||s)}</span>`).join('')||'-'}</dd><dt>장비</dt><dd>${esc(v.equipment.join(', ')||'없음')}</dd><dt>시간</dt><dd>한 번에 ${esc(Math.round(v.available_min/60))}시간</dd><dt>참여</dt><dd>${esc(MODE_TXT[v.mode]||v.mode)}</dd>`;
-$('editAcc').hidden=!v.registered;if(v.registered&&!$('editBody').firstChild){$('editBody').append($('profileFields'));const sv=document.createElement('button');sv.type='submit';sv.id='saveProfile';sv.textContent='고친 내용 저장하기';const msg=document.createElement('p');msg.className='muted';msg.id='saveMsg';const f=document.createElement('form');f.id='editForm';f.append($('profileFields'),sv,msg);$('editBody').append(f);
+$('editAcc').hidden=!v.registered;if(v.registered&&!$('editBody').firstChild){$('editBody').append($('profileFields'));const sv=document.createElement('button');sv.type='submit';sv.id='saveProfile';sv.textContent='고친 내용 저장하기';const msg=document.createElement('p');msg.className='muted';msg.id='saveMsg';const f=document.createElement('form');f.id='editForm';f.append($('profileFields'),sv,msg);$('editBody').append(f);$('extraFields').hidden=false;
  f.addEventListener('submit',async e=>{e.preventDefault();try{await post(`/api/public/volunteers/${encodeURIComponent(VID)}/update`,readProfile());$('saveMsg').textContent='저장했습니다.';load()}catch(err){$('saveMsg').textContent='저장하지 못했습니다: '+err.message}})}
 if(v.registered&&!$('editAcc').open)fillProfile(v);
 const opened=new Set([...document.querySelectorAll('#myTasks details[open],#openTasks details[open]')].map(x=>x.dataset.tid));
@@ -195,7 +200,7 @@ $('myTasks').className=d.my_tasks.length?'':'muted';$('myTasks').innerHTML=d.my_
 $('openTasks').className=d.open_tasks.length?'':'muted';$('openTasks').innerHTML=d.open_tasks.length?d.open_tasks.map(t=>order(t,false)).join(''):'지금 내가 할 수 있는 일에 맞는 대기 작업이 없습니다.';
 document.querySelectorAll('#myTasks details,#openTasks details').forEach(x=>{if(opened.has(x.dataset.tid))x.open=true});
 $('safety').innerHTML=['통제 중인 길에는 들어가지 않습니다','혼자 작업하지 말고 팀과 함께 움직입니다','물이 찬 곳에서는 전기 시설을 만지지 않습니다','어지럽거나 다치면 바로 SOS를 누릅니다'].map(s=>`<li>${esc(s)}</li>`).join('');
-$('needs').className=d.needed_items.length?'':'muted';$('needs').innerHTML=d.needed_items.length?d.needed_items.map(n=>`<div class="need"><b>${esc(n.item)}</b><span>약 ${esc(n.hours_left)}시간 뒤 부족 예상</span></div>`).join(''):'지금 부족이 예상되는 물품은 없습니다.';
+$('needs').className=d.needed_items.length?'':'muted';$('needs').innerHTML=d.needed_items.length?d.needed_items.map(n=>`<div class="need"><b>${esc(n.item)}</b>${n.hours_left<1?'<span class="err" style="font-weight:800">지금 부족해요</span>':`<span>약 ${esc(n.hours_left)}시간 뒤 부족 예상</span>`}</div>`).join(''):'지금 부족이 예상되는 물품은 없습니다.';
 if(!$('gItem').options.length){$('gItem').innerHTML=Object.keys(d.catalog).map(i=>`<option>${esc(i)}</option>`).join('');units()}
 if(!$('gPlace').value)$('gPlace').value=v.address||'';
 $('myGifts').className=d.my_donations.length?'':'muted';$('myGifts').innerHTML=d.my_donations.length?d.my_donations.map(g=>`<div class="need"><span>${esc(g.item)} ${esc(g.qty)} <span class="muted">· ${esc(g.place)}</span></span><span>${esc(g.state)}</span></div>`).join(''):'아직 등록한 기부가 없습니다.';

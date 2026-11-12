@@ -3,7 +3,7 @@ Run from project root: python webapp/server.py
 This is a prototype, not a production or emergency-dispatch system.
 """
 from __future__ import annotations
-import hmac, json, os, ssl, sys, threading, time, traceback, uuid
+import hashlib, hmac, json, os, secrets, ssl, sys, threading, time, traceback, uuid
 from datetime import datetime
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -456,7 +456,7 @@ def approve_one(current, s, reason):
 BULK_SKIP_KINDS = {"welfare_guidance_review"}   # 검증이 불확실한 안내문은 하나씩 보고 판단한다
 
 
-PUBLIC_HIDDEN = ("notes", "invalidated_by", "invalid_reason", "invalidated_at", "triage")
+PUBLIC_HIDDEN = ("notes", "invalidated_by", "invalid_reason", "invalidated_at", "triage", "owner_hash")
 
 
 def public_row(row):
@@ -793,6 +793,76 @@ def generate_guidance(incident_id, level, flags, control_zones, hazard=None):
         row["output"] = public
     row["incident_id"] = incident_id
     return row
+
+
+REPORTER_EDITS_MAX = 3
+
+
+def _owner_ok(output, token):
+    h = output.get("owner_hash")
+    return bool(h) and isinstance(token, str) and bool(token) and hmac.compare_digest(h, hashlib.sha256(token.encode()).hexdigest())
+
+
+def withdraw_pending(output, reason):
+    """신고자가 고치거나 취소할 때: 이 신고의 대기 중 승인을 반려하고, 출고 전 물품 요청을 거둔다(실행된 조치는 건드리지 않음)."""
+    who = {"username": "신고자"}
+    rejected = []
+    for a in database.list_pending_approvals_for(output["id"]):
+        database.resolve_approval(a["id"], False, "신고자", reason, None)
+        with FEATURES.lock:
+            FEATURES.after_resolve(a, False, who)
+        rejected.append(a["id"])
+    with FEATURES.lock:
+        cancelled, in_transit = FEATURES.cancel_incident_supply(output["id"], "신고자", reason)
+    relinked = [i for aid in rejected for i in detach_dispatch(aid, output["id"], rebuild=True)]
+    return {"rejected_approvals": rejected, "cancelled_supply": cancelled, "supply_in_transit": in_transit, "relinked_incidents": relinked}
+
+
+def reporter_change(iid, action, data):
+    """신고자가 보낸 신고를 고치거나 취소한다. 신고할 때 그 기기에만 준 비밀 값이 있어야 한다.
+    - 고치기: 담당자가 아직 아무 조치도 승인하지 않았을 때만(대기 중 추천은 반려하고 새 내용으로 다시 연결). 3번까지.
+    - 취소: 언제든. 대기 중 승인은 반려하고, 이미 승인된 출동·이동 중인 물품은 담당자가 확인하도록 메모를 남긴다."""
+    token, followup = data.get("token"), False
+    with _incident_lock, _dispatch_lock:
+        row = incident_output(iid)
+        if row is None:
+            return 404, {"error": "접수번호를 찾을 수 없습니다"}
+        o = row["output"]
+        if not _owner_ok(o, token):
+            return 403, {"error": "이 기기에서 보낸 신고만 고치거나 취소할 수 있어요"}
+        if o.get("state") == INVALID:
+            return 409, {"error": "이미 취소됐거나 처리하지 않기로 한 신고예요"}
+        if action == "cancel":
+            active = [a["id"] for a in database.list_dispatch_approvals() if a["incident_id"] == iid]
+            res = withdraw_pending(o, "신고자가 신고를 취소함")
+            o.update(state=INVALID, invalid_reason="신고자가 취소함", invalidated_by="신고자", invalidated_at=time.time(),
+                     cancelled_by_reporter=True)
+            acting = bool(active or res["supply_in_transit"])
+            if acting:
+                o["notes"] = list(o.get("notes") or []) + [
+                    f"신고자가 취소함: 이미 승인된 출동 {', '.join(active) or '없음'} · 이동 중인 물품 "
+                    f"{', '.join(x['id'] for x in res['supply_in_transit']) or '없음'} → 담당자가 확인 후 해제하세요"]
+            database.update_incident(row, status="rejected")
+            database.log_audit("incident_cancelled_by_reporter", "incident", iid, {**res, "active_dispatch": active})
+            return 200, {"id": iid, "state": INVALID, "cancelled_by_reporter": True, "already_acting": acting}
+        text = data.get("text")
+        if not isinstance(text, str) or not text.strip() or len(text) > 2000:
+            return 400, {"error": "고칠 내용을 2000자 이하로 적어 주세요"}
+        if o.get("edits", 0) >= REPORTER_EDITS_MAX:
+            return 409, {"error": "신고는 3번까지 고칠 수 있어요. 더 알릴 내용은 119·112에 전화해 주세요"}
+        moving = [r for r in database.list_records("supply_request") if r.get("incident_id") == iid and r["state"] in ("배치", "이동")]
+        if database.incident_has_approved(iid) or moving:
+            return 409, {"error": "담당자가 이미 출동·출고를 승인해서 내용을 고칠 수 없어요. 더 알릴 내용은 119·112에 전화하거나 새로 신고해 주세요"}
+        res = withdraw_pending(o, "신고자가 신고 내용을 고침")
+        new = classify_incident(iid, text.strip(), o["ts"])
+        no = new["output"]
+        no.update(owner_hash=o["owner_hash"], edits=o.get("edits", 0) + 1, supplements=o.get("supplements", 0), edited_at=time.time())
+        new = database.update_incident(link_incident(new))
+        database.log_audit("incident_edited_by_reporter", "incident", iid, {**res, "edits": no["edits"]})
+        followup = new["output"].get("state") == "접수"
+    if followup:
+        start_followups(iid)
+    return 200, public_row(new)
 
 
 def public_progress(output):
@@ -1526,11 +1596,21 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(200, {**public_row(duplicate), "duplicate": True})
                 rid = "R-" + uuid.uuid4().hex[:8].upper()
                 row = classify_incident(rid, text, time.time())
+                # 신고자만 고치거나 취소할 수 있게, 그 기기에만 주는 비밀 값(서버에는 해시만 저장)
+                token = secrets.token_urlsafe(18)
+                row["output"]["owner_hash"] = hashlib.sha256(token.encode()).hexdigest()
                 # Persist only the classifier result (the intake agent applies its configured masking).
                 row = database.save_incident(row)
                 row = database.update_incident(link_incident(row))
                 start_followups(row["output"]["id"])
-                return self.send_json(201, public_row(row))
+                return self.send_json(201, {**public_row(row), "edit_token": token})
+            if path.startswith("/api/incidents/") and path.endswith(("/edit", "/cancel")):   # 신고자가 고치기·취소(이 기기의 비밀 값으로)
+                parts = path.strip("/").split("/")
+                if len(parts) != 4 or not parts[2] or len(parts[2]) > 40:
+                    return self.send_json(404, {"error": "찾을 수 없는 경로입니다"})
+                if not INCIDENT_LIMIT.allow(self.client_ip()):
+                    return self.send_json(429, {"error": "짧은 시간에 요청이 너무 많습니다. 급한 상황이면 119·112에 바로 전화하세요"})
+                return self.send_json(*reporter_change(parts[2], parts[3], data))
             if path.startswith("/api/incidents/") and path.endswith("/supplement"):   # 신고자가 빠진 정보 보완(접수번호로)
                 parts = path.strip("/").split("/")
                 if len(parts) != 4 or not parts[2] or len(parts[2]) > 40:

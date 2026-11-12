@@ -60,6 +60,7 @@ body.has-sticky main{padding-bottom:84px}
 .gpsrow{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px}.gpsrow button{margin:0;min-height:44px;padding:8px 14px}
 a.tgbtn{display:inline-flex;align-items:center;gap:6px;margin-top:8px;background:#229ED9;color:#fff;text-decoration:none;font-weight:800;border-radius:10px;padding:10px 16px;min-height:46px}
 ul.prog{list-style:none;margin:10px 0 0;padding:0}ul.prog li{padding:8px 12px;border-radius:8px;background:#F5F8FC;margin:4px 0;font-weight:600}ul.prog li.done{background:var(--ok-bg);color:var(--ok-ink)}
+.mineacts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.mineacts button{margin:0;min-height:44px;padding:8px 14px}button.danger{color:var(--bad-ink)}
 .sec-h{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
 [hidden]{display:none!important}
 @media(max-width:760px){
@@ -258,7 +259,7 @@ if(await sendReport(c.text)){$('incidentForm').reset();delete $('vuln').dataset.
 // 보내는 동안 버튼에 진행 상황을 보여 주고, 인터넷이 끊겨 못 보내면 이 기기에 보관해 두었다가 다시 보낸다
 async function sendReport(text){const b=$('submitIncident'),sb=$('stickyBtn');const label=t=>{b.textContent=t;sb.textContent=t};
 b.disabled=sb.disabled=true;label('보내는 중…');const slow=setTimeout(()=>label('조금만 기다려 주세요… (연결이 느려요)'),4000);
-try{const r=await api('/api/incidents',{method:'POST',body:JSON.stringify({text})});const o=r.output;addReceipt(o.id);store.set('pendingReport','');showPending();
+try{const r=await api('/api/incidents',{method:'POST',body:JSON.stringify({text})});const o=r.output;addReceipt(o.id);saveToken(o.id,r.edit_token);store.set('pendingReport','');showPending();
  await drawMyReports(o.id,r.duplicate);$('myReports').scrollIntoView({block:'start',behavior:'smooth'});return true}
 catch(err){const offline=err instanceof TypeError||!navigator.onLine;
  if(offline){store.set('pendingReport',text);showPending();$('pendingBox').scrollIntoView({block:'center',behavior:'smooth'})}
@@ -296,16 +297,21 @@ $('stickyBtn').addEventListener('click',()=>$('incidentForm').requestSubmit());
 
 // ---- 내 신고: 보낸 신고의 처리 상황을 같은 화면에서 계속 보여 준다(접수번호를 다시 입력하지 않게)
 const receipts=()=>store.get('receipts').split(',').filter(Boolean);
+// 신고할 때 받은 비밀 값(이 기기에서만 고치기·취소 가능)
+const tokens=()=>{try{return JSON.parse(store.get('rtokens')||'{}')}catch(e){return {}}};
+function saveToken(id,t){if(!t)return;const m=tokens();m[id]=t;const keep=Object.fromEntries(Object.entries(m).slice(-10));store.set('rtokens',JSON.stringify(keep))}
 function addReceipt(id){const xs=[id,...receipts().filter(x=>x!==id)].slice(0,5);store.set('receipts',xs.join(','));store.set('lastReceipt',id)}
 const writtenPlace=t=>((String(t||'').match(/위치\s*[:：]\s*([^·\n(]+)/)||[])[1]||'').trim();
 const STATE_TXT={'접수':'접수되어 담당자가 확인하고 있어요','보완 필요':'정보가 더 필요해요','오접수':'담당자 확인 결과 처리하지 않기로 했어요'};
-async function card(id,dup,open){try{const r=await api('/api/incidents/'+encodeURIComponent(id));const o=r.result?.output||{},need=o.state==='보완 필요',going=(r.progress||[]).some(p=>p.done);
-return `<details class="acc" data-rid="${esc(id)}"${open||need?' open':''}><summary><span style="white-space:nowrap">${need?'⚠️':'📨'} 내 신고</span><span class="sum-sub">${esc(id)} · ${esc(o.type||'확인 중')} · ${esc(need?'정보가 더 필요해요':o.state==='오접수'?'처리 안 함':going?'출동 승인됨':'접수됨')}</span></summary><div class="acc-body">
+async function card(id,dup,open){try{const r=await api('/api/incidents/'+encodeURIComponent(id));const o=r.result?.output||{},need=o.state==='보완 필요',going=(r.progress||[]).some(p=>p.done),cancelled=!!o.cancelled_by_reporter,mine=!!tokens()[id]&&o.state!=='오접수';
+return `<details class="acc" data-rid="${esc(id)}"${open||need?' open':''}><summary><span style="white-space:nowrap">${need?'⚠️':'📨'} 내 신고</span><span class="sum-sub">${esc(id)} · ${esc(o.type||'확인 중')} · ${esc(cancelled?'취소함':need?'정보가 더 필요해요':o.state==='오접수'?'처리 안 함':going?'출동 승인됨':'접수됨')}</span></summary><div class="acc-body">
 ${dup?'<div class="box warn" style="margin-top:0">같은 내용이 이미 접수되어 있어 그 신고에 합쳤어요.</div>':''}
 <div class="muted">접수번호 <span class="muted">(처리 상황을 볼 때 필요해요)</span></div><div class="receipt">${esc(id)}</div>
-<dl class="dl" style="margin-top:8px"><dt>처리 상황</dt><dd>${esc(going?'담당자가 대응 인력 출동을 승인했어요':STATE_TXT[o.state]||o.state||'접수')}</dd><dt>신고 종류</dt><dd>${esc(o.type||'확인 중')}</dd><dt>위치</dt><dd>${esc(writtenPlace(o.text)||(o.zone&&o.zone!=='미상'?place(o.zone):'아직 모름'))}</dd><dt>접수 시각</dt><dd>${esc(fmt(r.created_at))}</dd></dl>
+<dl class="dl" style="margin-top:8px"><dt>처리 상황</dt><dd>${esc(cancelled?'신고를 취소했어요':going?'담당자가 대응 인력 출동을 승인했어요':STATE_TXT[o.state]||o.state||'접수')}</dd><dt>신고 종류</dt><dd>${esc(o.type||'확인 중')}</dd><dt>위치</dt><dd>${esc(writtenPlace(o.text)||(o.zone&&o.zone!=='미상'?place(o.zone):'아직 모름'))}</dd><dt>접수 시각</dt><dd>${esc(fmt(r.created_at))}</dd></dl>
 ${(r.progress||[]).length?`<ul class="prog">${r.progress.map(p=>`<li class="${p.done?'done':''}">${esc(p.icon)} ${esc(p.text)}</li>`).join('')}</ul>`:''}
 ${need?`<div class="box bad"><b>처리에 필요한 정보가 빠졌어요: ${esc((o.missing||[]).join(', '))}</b><form class="supForm" data-id="${esc(id)}"><label for="sup-${esc(id)}">빠진 내용을 적어 주세요</label><input id="sup-${esc(id)}" maxlength="500" required placeholder="예: 옥포동 ○○마트 앞이에요 / 생수 10병이 필요해요"><button type="submit">보내기</button></form><div class="muted supRes" aria-live="polite"></div></div>`:''}
+${mine?`<div class="mineacts"><button type="button" class="sub" data-edit="${esc(id)}">✏️ 내용 고치기</button><button type="button" class="sub danger" data-cancel="${esc(id)}">신고 취소</button></div>
+<form class="editForm" data-id="${esc(id)}" hidden><label for="ed-${esc(id)}">고친 내용</label><textarea id="ed-${esc(id)}" maxlength="2000" required>${esc(o.text||'')}</textarea><button type="submit">고친 내용 보내기</button><button type="button" class="sub" data-editclose="1">그만두기</button><p class="muted edRes" aria-live="polite"></p></form>`:''}
 ${r.guidance?`<h3>담당자 안내</h3><div class="notice">${esc(r.guidance.text)}<details><summary class="muted">근거 보기</summary><div class="muted">출처: ${esc(r.guidance.source||'')}<br>${esc(r.guidance.evidence||'')}</div></details></div>`:'<p class="muted">아직 담당자 안내가 없습니다. 급하면 119·112에 바로 전화하세요.</p>'}
 </div></details>`}catch(e){if(/찾을 수 없/.test(e.message)){store.set('receipts',receipts().filter(x=>x!==id).join(','));return ''}return `<div class="box bad">${esc(id)} 조회하지 못했습니다: ${esc(e.message)}</div>`}}
 async function drawMyReports(openId,dup){const ids=[...new Set([...(openId?[openId]:[]),...receipts()])].slice(0,5);
@@ -315,6 +321,17 @@ const html=(await Promise.all(ids.map(id=>card(id,id===openId&&dup,opened.has(id
 $('myReports').innerHTML=html?`<div data-fold="2">${html}</div>`:'';UI.scan($('myReports'));
 $('myReports').querySelectorAll('.supForm').forEach(f=>f.addEventListener('submit',async e=>{e.preventDefault();const id=f.dataset.id,inp=f.querySelector('input');
 try{await api('/api/incidents/'+encodeURIComponent(id)+'/supplement',{method:'POST',body:JSON.stringify({text:inp.value})});inp.value='';inp.blur();f.nextElementSibling.textContent='보내 주셔서 고맙습니다. 반영했어요.';setTimeout(()=>drawMyReports(id),600)}catch(err){f.nextElementSibling.textContent='보내지 못했습니다: '+err.message}}))}
+// 내 신고 고치기·취소(이 기기에서 보낸 신고만)
+$('myReports').addEventListener('click',async e=>{const ed=e.target.closest('[data-edit]'),ca=e.target.closest('[data-cancel]'),cl=e.target.closest('[data-editclose]');
+ if(ed){const f=$('myReports').querySelector(`.editForm[data-id="${CSS.escape(ed.dataset.edit)}"]`);f.hidden=false;f.querySelector('textarea').focus()}
+ if(cl){cl.closest('form').hidden=true}
+ if(ca){const id=ca.dataset.cancel;if(!confirm('이 신고를 취소할까요?\n잘못 보냈거나 이미 해결됐을 때만 취소해 주세요. 위험하면 119·112에 바로 전화하세요.'))return;
+  try{const r=await api('/api/incidents/'+encodeURIComponent(id)+'/cancel',{method:'POST',body:JSON.stringify({token:tokens()[id]})});
+   alert(r.already_acting?'신고를 취소했어요. 이미 출동이 승인돼 있어 담당자에게 취소를 알렸어요.':'신고를 취소했어요.');drawMyReports(id)}catch(err){alert('취소하지 못했어요: '+err.message)}}});
+$('myReports').addEventListener('submit',async e=>{const f=e.target.closest('.editForm');if(!f)return;e.preventDefault();const id=f.dataset.id;
+ try{await api('/api/incidents/'+encodeURIComponent(id)+'/edit',{method:'POST',body:JSON.stringify({token:tokens()[id],text:f.querySelector('textarea').value})});
+  f.querySelector('.edRes').textContent='고친 내용으로 다시 접수했어요.';document.activeElement?.blur();setTimeout(()=>drawMyReports(id),400)}
+ catch(err){f.querySelector('.edRes').textContent='고치지 못했어요: '+err.message}});
 $('statusForm').addEventListener('submit',async e=>{e.preventDefault();const id=$('receiptId').value.trim();if(!id)return;try{await api('/api/incidents/'+encodeURIComponent(id));addReceipt(id);$('receiptId').value='';$('lookupAcc').open=false;await drawMyReports(id);$('myReports').scrollIntoView({block:'start'})}catch(err){alert('조회하지 못했습니다: '+err.message)}});
 
 // ---- 우리 집(코드·우선순위는 보여 주지 않는다)

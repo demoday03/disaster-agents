@@ -2,6 +2,7 @@
 //  - data-fold="N" : 목록이 길면 앞의 N개만 보이고 나머지는 'M건 더 보기'로 펼친다(표는 tbody의 줄 단위).
 //  - data-sync="이름" : 같은 이름의 <select>는 한 곳에서 고르면 다른 곳도 같은 값이 된다(가구·신고·구역을 화면마다 다시 고르지 않게).
 //  - details.acc : 접고 펼치는 묶음(아코디언) 모양.
+//  - 버튼 쿨타임 : 누른 버튼·보낸 양식은 1.5초 동안 다시 눌러도 무시한다(연타로 신고·승인·요청이 겹치지 않게).
 (function () {
   const css = `
 .fold-hide{display:none!important}
@@ -18,6 +19,7 @@ details.acc[open]>summary{border-bottom:1px solid #E7ECF3;margin-bottom:12px}
 details.desc{margin:0 0 10px;color:#5A6880;font-size:.9rem}
 details.desc>summary{cursor:pointer;font-weight:600;color:#3B4A63;display:inline-block;padding:2px 0}
 details.desc>p{margin:6px 0 0}
+button.cooling{opacity:.6;cursor:progress}
 @media(prefers-reduced-motion:reduce){details.acc>summary::after{transition:none}}`;
   const st = document.createElement('style');
   st.textContent = css;
@@ -98,6 +100,25 @@ details.desc>p{margin:6px 0 0}
       ds.forEach(d => { if (d.dataset.key in OPEN) d.open = OPEN[d.dataset.key]; });
     }
   }).observe(document.documentElement, {childList: true, subtree: true});
+
+  // ---------------------------------------------------------------- 버튼 쿨타임(연타 방지)
+  // 화면 이동·접기·대결 답 고르기처럼 빨리 눌러도 되는 버튼은 뺀다(data-nocool로 뺄 수도 있다)
+  const COOL_MS = 1500;
+  const NO_COOL = '.menu button, #tabs button, .fold-more, #types button, .seg button, [data-nocool], [data-edit], [data-editclose]';
+  document.addEventListener('click', e => {
+    const b = e.target.closest && e.target.closest('button');
+    if (!b || b.matches(NO_COOL)) return;
+    if (b.dataset.cooling) { e.preventDefault(); e.stopImmediatePropagation(); return; }
+    b.dataset.cooling = '1';
+    b.classList.add('cooling');
+    setTimeout(() => { delete b.dataset.cooling; b.classList.remove('cooling'); }, COOL_MS);
+  }, true);
+  document.addEventListener('submit', e => {   // Enter 키로 보내는 경우까지
+    const f = e.target;
+    if (f.dataset.cooling) { e.preventDefault(); e.stopImmediatePropagation(); return; }
+    f.dataset.cooling = '1';
+    setTimeout(() => { delete f.dataset.cooling; }, COOL_MS);
+  }, true);
 
   function scan(root = document) {
     root.querySelectorAll('[data-fold]').forEach(watchFold);

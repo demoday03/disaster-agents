@@ -321,6 +321,13 @@ def update_pending_approval_item(aid: str, item: dict) -> None:
             raise ValueError(f"{aid}는 대기 중인 승인 항목이 아님")
 
 
+def incident_has_approved(incident_id: str) -> bool:
+    """이 신고에 담당자가 이미 승인한 조치(배치·출고·안내문 등)가 있는지(신고자 수정 가능 여부 판단)."""
+    with connect() as conn:
+        return conn.execute("SELECT COUNT(*) FROM approvals WHERE incident_id=? AND state='approved'",
+                            (incident_id,)).fetchone()[0] > 0
+
+
 def list_dispatch_approvals(states=("approved",), include_released=False) -> list[dict]:
     """배치(dispatch_*) 승인 항목. 기본은 승인되고 아직 해제되지 않은 것(현재 투입 중)."""
     with connect() as conn:

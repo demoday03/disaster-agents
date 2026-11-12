@@ -731,7 +731,7 @@ class Features:
         fc = supply.forecast(inv, self.catalog, now)
         notice = supply.shortage_notice(fc, client=self.llm).output
         if notice["draft"]:   # 필요 물품 안내 초안은 ⑦ 검증을 통과해야 봉사자 화면에 낼 수 있다
-            evidence = "\n".join(f"{r['item']} 약 {r['hours_left']}시간" for r in notice["items"])
+            evidence = "\n".join(f"{r['item']} {supply.when_short(r['hours_left'])}" for r in notice["items"])
             notice["verification"] = self._verdict(notice["draft"], evidence)
         stock = [{**s, "location_name": self.locations[s["location"]]["name"],
                   "reserved": inv.reserved_qty(s["id"])} for s in inv.stock.values()]

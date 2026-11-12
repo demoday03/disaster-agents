@@ -320,7 +320,7 @@ class TestPipeline(ServerBase):
         self.assertEqual(anon.post(f"/api/public/households/{hid}/safe", {})[1]["state"], "안전")
 
     def test_home_menu_and_role_pages(self):
-        for path, text in (("/", "누구로 들어갈까요"), ("/citizen", "재난 신고하기"), ("/report", "신고 접수"), ("/volunteer", "도움이 필요한 작업")):
+        for path, text in (("/", "바로 신고하기"), ("/citizen", "재난 신고하기"), ("/report", "신고 접수"), ("/volunteer", "도움이 필요한 작업")):
             with urllib.request.urlopen(self.base + path, timeout=2) as r:
                 self.assertIn(text.encode(), r.read(), path)
 
@@ -380,6 +380,30 @@ class TestPipeline(ServerBase):
         code, v = self.post("/api/volunteer/requests", {"text": "마당 토사 치워 주세요", "address": "장평동 주택가"})
         self.assertEqual(code, 200, v)
         self.assertEqual((v["tasks"][0]["zone"], v["tasks"][0]["address"]), ("미상", "장평동 주택가"))
+
+    def test_reporter_can_edit_and_cancel(self):
+        """신고자는 그 기기에 받은 비밀 값으로만 고치기·취소. 담당자가 조치를 승인한 뒤에는 고칠 수 없다."""
+        anon = Client(self.base)
+        code, d = anon.post("/api/incidents", {"text": "위치: 옥포동 시장 앞 · 물이 차고 있어요(침수) (수정 시험)"})
+        self.assertEqual(code, 201, d)
+        iid, token = d["output"]["id"], d["edit_token"]
+        self.assertNotIn("owner_hash", d["output"])
+        self.assertNotIn("owner_hash", str(anon.get(f"/api/incidents/{iid}")[1]))
+        self.assertEqual(anon.post(f"/api/incidents/{iid}/edit", {"token": "틀린값", "text": "x"})[0], 403)
+        pend_before = [a["id"] for a in self.pending(iid)]
+        code, e = anon.post(f"/api/incidents/{iid}/edit", {"token": token, "text": "위치: 옥포동 시장 앞 · 사람이 갇혔거나 다쳤어요(구조 요청) (수정 시험)"})
+        self.assertEqual(code, 200, e)
+        self.assertEqual((e["output"]["type"], e["output"]["urgency"], e["output"]["edits"]), ("인명구조", 1, 1))
+        self.assertFalse(set(pend_before) & {a["id"] for a in self.pending(iid)})          # 예전 추천은 반려되고 새로 연결
+        [aid] = e["output"]["linked"]["dispatch"]
+        self.assertEqual(self.post(f"/api/approvals/{aid}/resolve", {"approved": True, "reason": "출동"})[0], 200)
+        self.assertEqual(anon.post(f"/api/incidents/{iid}/edit", {"token": token, "text": "다시 고침"})[0], 409)   # 승인 뒤에는 못 고침
+        code, c = anon.post(f"/api/incidents/{iid}/cancel", {"token": token})
+        self.assertEqual((code, c["already_acting"]), (200, True))                          # 출동 중이면 담당자에게 알림
+        view = anon.get(f"/api/incidents/{iid}")[1]["result"]["output"]
+        self.assertEqual((view["state"], view["cancelled_by_reporter"]), ("오접수", True))
+        self.assertIn("신고자가 취소함", self.staff_view(iid)["notes"][-1])
+        self.assertEqual(anon.post(f"/api/incidents/{iid}/cancel", {"token": token})[0], 409)
 
     def test_human_vs_ai_battle(self):
         """사람 vs AI 분류 대결: 문제에는 정답이 없고, 채점은 서버가 한다. AI 결과는 한 번만 계산해 둔다."""
