@@ -151,7 +151,7 @@ document.addEventListener('click',e=>{const a=e.target.closest('a[href^="#"]');i
 async function band(){try{const d=await api('/api/public/status'),s=d.stage;PUB=d;const lv=s.confirmed&&['주의','경계','위험'].includes(s.level)?s.level:'정상';$('band').dataset.level=lv;$('bandLevel').textContent=lv+(s.confirmed&&s.hazards.length?' · '+s.hazards.join(', '):'');drawAnn(d)}catch(e){}}
 const place=z=>{const n=PUB&&PUB.zones[z];return n?(n.match(/\(([^)]+)\)/)||[,n])[1]:'모든 곳'};
 function drawAnn(d){const list=(d.announcements||[]).filter(a=>a.audience!=='citizen').sort((a,b)=>b.urgent-a.urgent||b.at-a.at),urgent=list.filter(a=>a.urgent);
-$('annBar').hidden=!urgent.length;if(urgent.length)$('annBar').innerHTML=`📢 긴급 공지 · ${esc(urgent[0].text)}${urgent.length>1?` (외 ${urgent.length-1}건)`:''}${VID?'<a href="#notices">공지 모두 보기</a>':''}`;
+UI.urgentBar($('annBar'),urgent,VID?{href:'#notices',label:'공지 모두 보기'}:null);
 $('annCount').hidden=!list.length;$('annCount').textContent=list.length;
 $('annList').className=list.length?'':'muted';$('annList').innerHTML=list.length?list.map(a=>`<div class="ann${a.urgent?' urgent':''}"><div class="muted">${a.urgent?'<b class="err">긴급</b> · ':''}${esc(a.zone==='all'?'모든 봉사자':place(a.zone))} · ${esc(new Date(a.at*1000).toLocaleString('ko-KR'))}</div>${esc(a.text)}</div>`).join(''):'지금 게시 중인 공지가 없습니다.'}
 

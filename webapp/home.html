@@ -38,10 +38,11 @@
 <nav class="others" aria-label="다른 화면"><a href="/volunteer">🙋 봉사자로 참여하기</a><a href="/admin">🛡️ 담당자 로그인</a><a href="/battle">📊 사람 vs AI 신고 분류 대결</a></nav>
 <p class="foot">위기 단계와 안내는 담당자가 확인한 것만 표시됩니다.</p>
 </main>
+<script src="/static/ui.js"></script>
 <script>
 fetch('/api/public/status').then(r=>r.ok?r.json():Promise.reject()).then(d=>{const s=d.stage,el=document.getElementById('stage');
 const lv=s.confirmed&&['주의','경계','위험'].includes(s.level)?s.level:'정상';el.dataset.level=lv;
 el.textContent='지금 우리 지역 위기 단계: '+lv+(s.confirmed&&s.hazards.length?' · '+s.hazards.join(', '):'')+(s.confirmed?'':' (담당자가 확정한 위험 없음)');
 const urgent=(d.announcements||[]).filter(a=>a.urgent&&a.audience==='all'),box=document.getElementById('ann');   // 모두에게 보내는 긴급 공지만
-box.hidden=!urgent.length;box.innerHTML='📢 긴급 공지'+urgent.slice(0,3).map(a=>'<p>'+a.text.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c])+'</p>').join('')}).catch(()=>{document.getElementById('stage').textContent='위기 단계를 불러오지 못했습니다'});
+UI.urgentBar(box,urgent,{href:'/citizen#news',label:'알림 모두 보기'},true)}).catch(()=>{document.getElementById('stage').textContent='위기 단계를 불러오지 못했습니다'});
 </script></body></html>

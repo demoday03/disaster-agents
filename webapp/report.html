@@ -212,8 +212,7 @@ function goForm(){go('report',{keepScroll:true});$('incidentForm').scrollIntoVie
 
 // ---- 알림: 주민 대상(모두·주민) 공지 중 전체 구역이거나 우리 구역인 것 + 담당자가 승인한 안내
 function annList(){const mine=HOME&&HOME.household.zone;return (PUB.announcements||[]).filter(a=>a.audience!=='volunteer'&&(a.zone==='all'||!mine||a.zone===mine)).sort((a,b)=>b.urgent-a.urgent||b.at-a.at)}
-function drawAnn(){if(!PUB)return;const list=annList(),urgent=list.filter(a=>a.urgent);$('annBar').hidden=!urgent.length;
-if(urgent.length)$('annBar').innerHTML=`📢 긴급 공지 · ${esc(urgent[0].text)}${urgent.length>1?` (외 ${urgent.length-1}건)`:''}<a href="#news">알림 모두 보기</a>`;
+function drawAnn(){if(!PUB)return;const list=annList(),urgent=list.filter(a=>a.urgent);UI.urgentBar($('annBar'),urgent,{href:'#news',label:'알림 모두 보기'});
 $('annCount').hidden=!list.length;$('annCount').textContent=list.length;if(location.hash==='#news')drawNews()}
 // 텔레그램 알림: 우리 집을 저장했으면 그 집과 연결되는 링크(안부 확인에 텔레그램 버튼으로 답할 수 있다)
 function tgLink(){if(!PUB||!PUB.telegram_bot)return null;const reg=HOME&&HOME.household.registered;return `https://t.me/${encodeURIComponent(PUB.telegram_bot)}${reg?'?start='+encodeURIComponent(HH):''}`}
