@@ -743,7 +743,7 @@ def apply_field_event(ev):
 
 def ingest_sensor_batch(data):
     """게이트웨이 묶음: 측정값 판정 + 새 현장 신호를 웹 기능에 반영해 결과를 신호에 붙인다."""
-    res = SENSORS.ingest(data.get("readings"), data.get("rain_stage"), data.get("events"))
+    res = SENSORS.ingest(data.get("readings"), data.get("rain_stage"), data.get("events"), data.get("link"))
     for ev in res["events"]:
         try:
             outcome = apply_field_event(ev)

@@ -332,7 +332,7 @@
   }
 
   // ---------------------------------------------------------------- ⑦ 검증
-  // 외부 모듈이 보내는 센서 이름 → 화면 이름·단위(모르는 이름은 그대로 보여 준다)
+  // 노드가 보내는 센서 이름 → 화면 이름·단위(모르는 이름은 그대로 보여 준다)
   const EXT_LABEL = {temp: ['온도', '℃'], temperature: ['온도', '℃'], t: ['온도', '℃'], hum: ['습도', '%'], humidity: ['습도', '%'], h: ['습도', '%'],
     gas: ['가스', ''], co2: ['이산화탄소', 'ppm'], co: ['일산화탄소', 'ppm'], smoke: ['연기', ''], flame: ['불꽃', ''], dust: ['미세먼지', '㎍/㎥'],
     pm25: ['초미세먼지', '㎍/㎥'], pm10: ['미세먼지', '㎍/㎥'], light: ['밝기', ''], lux: ['밝기', 'lx'], water: ['수위', ''], level: ['수위', ''],
@@ -352,7 +352,9 @@
       const age = s => s == null ? '-' : `${s}초 전`;
       const ev = d.last_eval, o = ev && ev.output;
       if (ev && ev.approval_id && ev.approval_id !== lastSensorApproval) { lastSensorApproval = ev.approval_id; loadApprovals(); }   // 대기열 숫자 갱신
+      const via = d.link === '블루투스' ? '🔵 외부 블루투스 모듈' : d.link === 'USB' ? 'USB 케이블' : d.link === '가상' ? '가상 센서(시험)' : null;
       $('sensorLive').innerHTML =
+        (via ? `<div class="sensor-path">경로: 노드 A·B(·C·D·E) ─무선─▶ <b>G 마이크로비트</b> ─${E(via)}─▶ 노트북 게이트웨이 ─▶ 서버 ${chip('G 연결: ' + via, d.last_batch_age_s != null && d.last_batch_age_s <= 30 ? 'ok' : 'bad')}</div>` : '') +
         `<div>노드: ${d.nodes.map(n => chip(`${n.node} ${n.online ? '연결' : '끊김'} · ${age(n.last_seen_age_s)}`, n.online ? 'ok' : 'bad')).join(' ')}` +
         ` · 받은 값 ${E(d.received)}개${d.rejected ? ` · 버린 값 ${E(d.rejected)}개` : ''} · 강우 단계 ${E(d.rain_stage)}</div>` +
         table(['센서', '최근 값', '임계값', '받은 때'], d.sensors.map(s =>
@@ -362,15 +364,15 @@
              (o.false_alarm_log.length ? `<div class="muted">${E(o.false_alarm_log.join(' / '))}</div>` : '')
            : '<div class="muted">아직 받은 값이 없습니다. 게이트웨이를 실행하세요.</div>') +
         (d.calibrated ? '' : '<div class="muted">임계값 보정 전(임시값)</div>') +
-        // G 노드 외부 모듈(블루투스): 감시 설정에 없는 센서 값. 판정에는 쓰지 않고 표시만
-        `<h3 style="margin:14px 0 4px">🔵 G 노드 외부 모듈 (블루투스)${(d.extra || []).length ? ' ' + chip(`${d.extra.length}개 센서`, 'ok') : ''}</h3>` +
+        // C·D·E 노드의 온도·조도처럼 감시 설정에 없는 센서 값. 판정에는 쓰지 않고 표시만(값이 있을 때만 보인다)
+        ((d.extra || []).length ? `<h3 style="margin:14px 0 4px">그 밖의 노드 센서 값 ${chip(`${d.extra.length}개`, 'ok')}</h3>` : '') +
         ((d.extra || []).length
           ? table(['노드', '센서', '최근 값', '받은 때', '상태'], d.extra.map(x => {
               const [name, unit] = extLabel(x.sensor);
               return `<tr><td>${E(x.node)}</td><td>${E(name)}${name !== x.sensor ? ` <span class="muted">(${E(x.sensor)})</span>` : ''}</td>` +
                 `<td><b>${E(x.value)}</b>${unit ? ' ' + E(unit) : ''}</td><td>${E(age(x.age_s))}</td><td>${chip(x.online ? '수신 중' : '끊김', x.online ? 'ok' : 'bad')}</td></tr>`;
-            })) + '<div class="muted">외부 모듈 값은 임계값이 없어 위기 단계 판정에는 쓰지 않고 표시만 합니다.</div>'
-          : '<div class="muted">아직 받은 값이 없습니다. 블루투스 모듈을 노트북과 페어링하고 게이트웨이를 <code>--bt-port COM5</code>처럼 실행하세요(기기 없이 시험: <code>--bt-simulate</code>).</div>') +
+            })) + '<div class="muted">감시 설정(임계값)에 없는 센서라 위기 단계 판정에는 쓰지 않고 표시만 합니다.</div>'
+          : '') +
         `<h3 style="margin:14px 0 4px">현장 버튼 신호${d.open_urgent ? ' ' + chip(`확인 안 한 급한 신호 ${d.open_urgent}건`, 'bad') : ''}</h3>` +
         table(['받은 때', '노드', '신호', '웹 반영', ''], d.events.map(x =>
           `<tr><td>${E(fmtTime(x.ts))}</td><td>${E(x.node)}</td><td>${x.urgent ? chip(x.label, x.open ? 'bad' : '') : E(x.label)}</td>` +
