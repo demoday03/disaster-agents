@@ -63,6 +63,28 @@ ul.prog{list-style:none;margin:10px 0 0;padding:0}ul.prog li{padding:8px 12px;bo
 .mineacts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.mineacts button{margin:0;min-height:44px;padding:8px 14px}button.danger{color:var(--bad-ink)}
 .sec-h{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
 [hidden]{display:none!important}
+/* 로그인 전(가구 코드) 화면 */
+body.locked .layout,body.locked #stickySend,body.locked #checkBar{display:none!important}
+.gate{max-width:880px;margin:16px auto 0;padding:0 18px;display:flex;flex-direction:column;gap:14px}
+.gate.urgent #gSos{order:-1}
+.gate .view{margin:0}
+.gate h2{margin-top:0}
+#gSos{border:2px solid #F0B7BE;background:#FFF7F8}
+.gacts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}.gacts>*{margin:0!important;flex:1 1 180px}
+.gacts a.tel{justify-content:center;font-size:1.1rem;min-height:52px}
+#hhCode{font-size:1.25rem;letter-spacing:.06em;font-weight:700;text-transform:uppercase}
+.vlist{display:grid;gap:6px}
+.vlist label{margin:0;display:flex;gap:10px;align-items:flex-start;border:1.5px solid #BFC9D8;border-radius:12px;padding:10px 12px;cursor:pointer;background:#fff;font-weight:500}
+.vlist input{width:auto;margin:4px 0 0;accent-color:var(--action)}
+.vlist label:has(input:checked){border-color:var(--action);background:var(--action-bg)}
+.vlist small{display:block;color:var(--muted)}
+.codebox{border:2px dashed var(--action);background:var(--action-bg);border-radius:14px;padding:16px;margin-top:14px;text-align:center}
+.code{font-size:1.6rem;font-weight:800;letter-spacing:.08em;color:var(--ink);font-variant-numeric:tabular-nums}
+.codeline{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px}.codeline .code{font-size:1.15rem}.codeline button{margin:0;min-height:38px;padding:6px 12px}
+.guestbar{max-width:880px;margin:12px auto 0;padding:10px 16px;border-radius:10px;background:var(--warn-bg);color:var(--warn-ink);font-weight:600;display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
+.guestbar button{margin:0;min-height:40px;padding:6px 14px}
+body.guest .menu button[data-view="news"],body.guest .menu button[data-view="home"]{display:none}
+body:not(.guest) #menuLogin{display:none}
 @media(max-width:760px){
  body{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
  .top h1{font-size:.98rem}.tel{padding:6px 10px}
@@ -82,12 +104,35 @@ ul.prog{list-style:none;margin:10px 0 0;padding:0}ul.prog li{padding:8px 12px;bo
 <div class="annbar" id="annBar" hidden role="alert"></div>
 <div class="checkbar" id="checkBar" hidden role="alert"><span id="checkText">담당자가 우리 집이 안전한지 묻고 있습니다.</span><button type="button" id="safeBtn">안전합니다</button></div>
 <div class="todo" id="todo" hidden></div>
+<!-- 로그인: 가구 코드를 넣으면 들어간다. 급하면 로그인 없이 신고·대피소만 -->
+<div class="gate" id="gate" hidden>
+<section class="view" id="gLogin">
+<h2>🔑 주민 로그인</h2>
+<p class="lead">우리 집 <b>가구 코드</b>를 넣으면 들어갈 수 있어요. 한 번 들어오면 이 기기에서는 다시 넣지 않아도 돼요.</p>
+<form id="loginForm" novalidate><label for="hhCode">가구 코드</label>
+<input id="hhCode" maxlength="24" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="예: H-3F9A1C2B7D">
+<button type="submit" class="big" id="loginBtn">들어가기</button><p class="err" id="loginErr" aria-live="assertive"></p></form>
+<details class="acc" id="gNew"><summary>🏠 처음이에요 · 우리 집 등록하고 가구 코드 받기</summary><div class="acc-body" id="gNewBody"></div></details>
+<details class="acc" id="gDemo"><summary>시연용 가구로 들어가기 <span class="sum-sub">미리 만들어 둔 가상 가구</span></summary><div class="acc-body">
+<p class="muted" style="margin-top:0">한 가구를 고르고 아래 버튼을 누르면 그 가구로 들어갑니다.</p>
+<div class="vlist" id="gDemoList" role="radiogroup" aria-label="시연용 가구" data-fold="6"></div>
+<button type="button" class="big" id="gDemoEnter" disabled>고른 가구로 들어가기</button></div></details>
+</section>
+<section class="view" id="gSos">
+<h2>🆘 지금 위험한가요?</h2>
+<p style="margin:0">사람이 다치거나 갇혔다면 <b>119·112에 먼저 전화</b>하세요. 급하면 로그인하지 않고 신고하거나 대피소를 볼 수 있어요.</p>
+<div class="gacts"><a class="tel" href="tel:119" aria-label="119에 전화하기">📞 119 구조·구급</a><a class="tel b" href="tel:112" aria-label="112에 전화하기">📞 112 경찰</a></div>
+<div class="gacts"><button type="button" class="big" id="guestReport">🆘 로그인 없이 신고하기</button><button type="button" class="sub" id="guestMap">🏫 대피소 보기</button></div>
+</section>
+</div>
+<div class="guestbar" id="guestBar" hidden><span>로그인하지 않고 신고·대피소만 쓰는 중이에요.</span><button type="button" class="sub" data-login>🔑 가구 코드로 로그인</button></div>
 <div class="layout">
 <nav class="menu" aria-label="주민 메뉴">
 <button type="button" data-view="report"><span class="ic" aria-hidden="true">🆘</span>신고</button>
 <button type="button" data-view="map"><span class="ic" aria-hidden="true">🏫</span>대피소</button>
 <button type="button" data-view="news"><span class="ic" aria-hidden="true">📢</span>알림<span class="badge" id="annCount" hidden></span></button>
 <button type="button" data-view="home"><span class="ic" aria-hidden="true">🏠</span>우리 집</button>
+<button type="button" id="menuLogin" data-login><span class="ic" aria-hidden="true">🔑</span>로그인</button>
 <p class="call">다치거나 갇혔다면 119·112에 바로 전화하세요</p>
 </nav>
 <main>
@@ -134,10 +179,11 @@ ul.prog{list-style:none;margin:10px 0 0;padding:0}ul.prog li{padding:8px 12px;bo
 
 <!-- 우리 집: 한 번만 입력하면 신고·대비·물품·안전 확인에 함께 쓴다 -->
 <section class="view" data-view="home" hidden>
-<h2>우리 집</h2><p class="lead">한 번만 알려 주시면 신고·대비 안내·물품 요청·안전 확인에 함께 쓰입니다. 이 기기에만 기억됩니다.</p>
+<h2>우리 집</h2><p class="lead">신고·대비 안내·물품 요청·안전 확인에 함께 쓰입니다. 가족 휴대폰에서도 같은 가구 코드로 들어올 수 있어요.</p>
 <div id="homeSummary" class="box ok" hidden></div>
 <div id="tgHome" class="box" hidden></div>
-<details class="acc" id="accHome" open><summary>🏠 우리 집 정보 <span class="sum-sub" id="homeSumSub"></span></summary><div class="acc-body">
+<details class="acc" id="accHome" open><summary>🏠 우리 집 정보 <span class="sum-sub" id="homeSumSub"></span></summary><div class="acc-body" id="homeFormHome">
+<div id="homeFormBox">
 <form id="homeForm">
 <label for="hAddress">우리 집 위치</label><input id="hAddress" maxlength="80" required autocomplete="street-address" placeholder="예: 옥포동 ○○아파트 101동"><p class="muted" style="margin:6px 0 0">동·건물 이름 정도면 충분해요. 담당자가 물품을 보내거나 안전을 확인할 때만 씁니다.</p>
 <label>집 형태</label><div class="choices" id="hFloor"><label><input type="radio" name="floor" value="반지하" required> 반지하</label><label><input type="radio" name="floor" value="1층"> 1층</label><label><input type="radio" name="floor" value="2층 이상"> 2층 이상</label></div>
@@ -147,6 +193,7 @@ ul.prog{list-style:none;margin:10px 0 0;padding:0}ul.prog li{padding:8px 12px;bo
 <label class="agree"><input type="checkbox" id="hConsent" checked> 재난 때 담당자가 우리 집이 안전한지 물어보는 것에 동의합니다.</label>
 <button type="submit" id="homeSave">저장하기</button></form>
 <div id="homeResult" class="muted" aria-live="polite"></div>
+</div>
 </div></details>
 <div class="hasHome" hidden>
 <details class="acc" id="accPrep" open><summary>⚠️ 우리 집 대비 안내</summary><div class="acc-body"><ul class="tips" id="tips" data-fold="3"></ul><p><b>가장 가까운 대피소</b><br><span id="nearShelter" class="muted"></span></p><p><b>안전 확인</b><br><span id="checkState" class="muted"></span></p></div></details>
@@ -160,6 +207,7 @@ ul.prog{list-style:none;margin:10px 0 0;padding:0}ul.prog li{padding:8px 12px;bo
 </div></details>
 </div>
 <p class="needhome muted" hidden>우리 집 정보를 저장하면 대비 안내와 물품 요청이 열립니다.</p>
+<button type="button" class="sub" id="logoutBtn" style="margin-top:18px">🔑 로그아웃 (다른 가구 코드로 들어가기)</button>
 </section>
 </main></div>
 <div class="stickysend" id="stickySend" hidden><button type="button" class="big" id="stickyBtn">🆘 신고 보내기</button></div>
@@ -175,17 +223,21 @@ const store={get(k){try{return localStorage.getItem(k)||''}catch(e){return ''}},
 // ---- 메뉴: 4개(신고·대피소·알림·우리 집). 예전 주소(#status, #shelters 등)도 알맞은 메뉴로 연다
 const VIEWS=['report','map','news','home'];
 const OLD={status:'report',prepare:'home',supply:'home',notices:'news',shelters:'map',situation:'map'};
+// 로그인(가구 코드)해야 들어간다. 로그인 없이(급할 때)는 신고·대피소만
+const allowed=v=>!!HH||(GUEST&&(v==='report'||v==='map'));
 function go(v,opts={}){const sub=v;v=OLD[v]||v;if(!VIEWS.includes(v))v='report';
-document.querySelectorAll('section.view').forEach(s=>s.hidden=s.dataset.view!==v);
+if(!allowed(v))return showGate(v);   // 로그인 없이 쓰는 중에 우리 집·알림을 누르면 로그인 화면
+unlockView();
+document.querySelectorAll('section.view[data-view]').forEach(s=>s.hidden=s.dataset.view!==v);
 document.querySelectorAll('.menu button').forEach(b=>b.dataset.view===v?b.setAttribute('aria-current','page'):b.removeAttribute('aria-current'));
 if(sub==='supply')$('accSupply').open=true;if(sub==='status')$('lookupAcc').open=true;
 if(location.hash!=='#'+v)history.replaceState(null,'','#'+v);ON_SHOW[v]&&ON_SHOW[v]();if(!opts.keepScroll)window.scrollTo({top:0});if(window.stickyState)stickyState()}
-document.querySelectorAll('.menu button').forEach(b=>b.addEventListener('click',()=>go(b.dataset.view)));
+document.querySelectorAll('.menu button[data-view]').forEach(b=>b.addEventListener('click',()=>go(b.dataset.view)));
 window.addEventListener('hashchange',()=>go(location.hash.slice(1)));
 document.addEventListener('click',e=>{const a=e.target.closest('a[href^="#"]');if(a&&a.getAttribute('href').length>1){e.preventDefault();go(a.getAttribute('href').slice(1))}});
 
 // ---- 공개 상황(위기 단계·대피소·안내). 연결이 끊기면 마지막으로 받은 시각을 보여 준다
-let PUB=null,HOME=null,HH=new URLSearchParams(location.search).get('hh')||store.get('hh'),LAST_OK=null;
+let PUB=null,HOME=null,HH=new URLSearchParams(location.search).get('hh')||store.get('hh'),LAST_OK=null,GUEST=false,WANT='report';
 const LEVEL=()=>{if(!PUB)return '정상';const s=PUB.stage;return s.confirmed&&['주의','경계','위험'].includes(s.level)?s.level:'정상'};
 async function loadPub(){try{PUB=await api('/api/public/status');LAST_OK=new Date();const s=PUB.stage,lv=LEVEL();
 $('stageBox').dataset.level=lv;$('stageBox').innerHTML=`<span>지금 우리 지역 위기 단계: ${esc(lv)}${s.confirmed&&s.hazards.length?' · '+esc(s.hazards.join(', ')):''}</span><span class="meta">${s.confirmed?'담당자가 '+esc(fmt(s.at*1000))+'에 확정':'담당자가 확정한 위험 없음'}${PUB.weather&&PUB.weather.available&&PUB.weather.rain?' · 1시간 강수 '+esc(PUB.weather.rain.mm_per_h)+'mm':''}</span>`;
@@ -243,7 +295,7 @@ const checkedKinds=()=>[...document.querySelectorAll('input[name=kind]:checked')
 function composed(){const ks=checkedKinds().map(v=>KINDS.find(x=>x[0]===v)).filter(Boolean);const z=where(),ppl=document.querySelector('input[name=ppl]:checked')?.value,v=[...$('vuln').querySelectorAll('input:checked')].map(c=>c.value),free=$('reportText').value.trim();
 const parts=[z?'위치: '+z:'',...ks.map(k=>k[3]).filter(Boolean),ppl?(/명/.test(ppl)?ppl:ppl+'명'):'',v.length?v.join('·')+' 있음':''].filter(Boolean);
 const athome=atHome();
-let text=parts.join(' · ');if(free)text+=(text?'. ':'')+free;if(text&&athome)text+=` (우리 집 · ${HOME.household.floor} · 가구 ${HH})`;return {text,kind:ks[0]?.[0],kinds:ks.map(k=>k[0]),hasFree:!!free}}
+let text=parts.join(' · ');if(free)text+=(text?'. ':'')+free;if(text&&athome)text+=` (우리 집 · ${HOME.household.floor})`;return {text,kind:ks[0]?.[0],kinds:ks.map(k=>k[0]),hasFree:!!free}}
 function updatePreview(){const c=composed();$('preview').innerHTML=c.text&&(c.kind||c.hasFree)?`<b>보낼 내용</b><br>${esc(c.text)}`:'위에서 고르면 보낼 내용이 여기에 보여요.';$('lifeWarn').hidden=!c.kinds.includes('life');$('formErr').textContent=''}
 $('incidentForm').addEventListener('input',updatePreview);$('incidentForm').addEventListener('change',updatePreview);
 function syncWhere(){const home=HOME&&HOME.household;$('whereChoice').hidden=!home;if(home)$('whereHomeTxt').textContent=`우리 집 (${home.address})`;
@@ -261,7 +313,7 @@ if(await sendReport(c.text)){$('incidentForm').reset();delete $('vuln').dataset.
 // 보내는 동안 버튼에 진행 상황을 보여 주고, 인터넷이 끊겨 못 보내면 이 기기에 보관해 두었다가 다시 보낸다
 async function sendReport(text){const b=$('submitIncident'),sb=$('stickyBtn');const label=t=>{b.textContent=t;sb.textContent=t};
 b.disabled=sb.disabled=true;label('보내는 중…');const slow=setTimeout(()=>label('조금만 기다려 주세요… (연결이 느려요)'),4000);
-try{const r=await api('/api/incidents',{method:'POST',body:JSON.stringify({text})});const o=r.output;addReceipt(o.id);saveToken(o.id,r.edit_token);store.set('pendingReport','');showPending();
+try{const r=await api('/api/incidents',{method:'POST',body:JSON.stringify({text,...(HH?{household:HH}:{})})});const o=r.output;addReceipt(o.id);saveToken(o.id,r.edit_token);store.set('pendingReport','');showPending();
  await drawMyReports(o.id,r.duplicate);$('myReports').scrollIntoView({block:'start',behavior:'smooth'});return true}
 catch(err){const offline=err instanceof TypeError||!navigator.onLine;
  if(offline){store.set('pendingReport',text);showPending();$('pendingBox').scrollIntoView({block:'center',behavior:'smooth'})}
@@ -344,21 +396,27 @@ $('homeForm').addEventListener('submit',async e=>{e.preventDefault();const floor
 if(!$('hAddress').value.trim()){$('homeResult').textContent='우리 집 위치를 적어 주세요.';$('hAddress').focus();return}
 const body={address:$('hAddress').value.trim(),floor:floor&&floor.value,members:Number($('hMembers').value),consent:$('hConsent').checked,people_factors:[...$('hPeople').querySelectorAll('input:checked')].map(c=>c.value).filter(Boolean)};
 $('homeSave').disabled=true;try{const editing=HOME&&HOME.household.registered;const r=await api(editing?`/api/public/households/${encodeURIComponent(HH)}/update`:'/api/public/households',{method:'POST',body:JSON.stringify(body)});
-HH=r.id;store.set('hh',HH);$('homeResult').textContent='저장했습니다. 이제 신고할 때 위치를 다시 적지 않아도 되고, 대비 안내와 물품 요청을 쓸 수 있어요.';await loadHome();$('accHome').open=false;$('accPrep').open=true}catch(err){$('homeResult').textContent='저장하지 못했습니다: '+err.message}finally{$('homeSave').disabled=false}});
+HH=r.id;store.set('hh',HH);
+if(!editing){$('homeForm').hidden=true;$('homeResult').innerHTML=`<div class="codebox"><div class="muted">우리 집 가구 코드</div><div class="code">${esc(HH)}</div><p class="muted">다음에 들어올 때와 가족 휴대폰에서 이 코드를 넣어요. 적어 두거나 사진으로 남겨 두세요.</p><button type="button" class="big" id="enterNew">이 코드로 들어가기</button></div>`;
+ await loadHome();$('enterNew').addEventListener('click',()=>{$('homeResult').textContent='';$('homeForm').hidden=false;enterAs(WANT==='report'?'home':WANT)});return}
+$('homeResult').textContent='저장했습니다. 이제 신고할 때 위치를 다시 적지 않아도 되고, 대비 안내와 물품 요청을 쓸 수 있어요.';await loadHome();$('accHome').open=false;$('accPrep').open=true}catch(err){$('homeResult').textContent='저장하지 못했습니다: '+err.message}finally{$('homeSave').disabled=false}});
 function fillHomeForm(h){$('hAddress').value=h.address||'';const f=$('homeForm').querySelector(`input[name=floor][value="${h.floor}"]`);if(f)f.checked=true;
 $('hPeople').querySelectorAll('input:not(#hNone)').forEach(c=>c.checked=h.factors.includes(c.value));$('hNone').checked=!h.factors.some(x=>PEOPLE_TXT[x]);$('hMembers').value=h.members;$('hConsent').checked=!!h.consent}
 function homeText(h){const ppl=h.factors.filter(x=>PEOPLE_TXT[x]).map(x=>PEOPLE_TXT[x]);return `${esc(h.address)} · ${esc(h.floor)} · ${esc(h.members)}명${ppl.length?' · '+esc(ppl.join(', ')):''}`}
 let homeFilled=false;
 async function loadHome(){if(!HH){HOME=null;showHomeParts();return}
-try{HOME=await api('/api/public/households/'+encodeURIComponent(HH))}catch(e){HOME=null;if(/찾을 수 없/.test(e.message)){HH='';store.set('hh','')}}
+try{HOME=await api('/api/public/households/'+encodeURIComponent(HH))}catch(e){HOME=null;if(/찾을 수 없/.test(e.message)){HH='';store.set('hh','');
+ $('loginErr').textContent='이 기기에 저장된 가구 코드를 찾을 수 없어요. 가구 코드를 다시 넣어 주세요.';showHomeParts();return go(location.hash.slice(1))}}
 showHomeParts()}
 const STEPS=['검토','승인','배치','이동','완료'];
 function showHomeParts(){const has=!!HOME;drawAnn();drawTodo();syncWhere();document.querySelectorAll('.needhome').forEach(x=>x.hidden=has);document.querySelectorAll('.hasHome').forEach(x=>x.hidden=!has);
-$('homeSummary').hidden=!has;$('homeSave').textContent=has&&HOME.household.registered?'고친 내용 저장하기':'저장하기';
+$('homeSummary').hidden=!has;$('homeSave').textContent=!HH?'등록하고 가구 코드 받기':has&&HOME.household.registered?'고친 내용 저장하기':'저장하기';
 const c=has&&HOME.check,asking=c&&(c.state==='대기'||c.state==='격상');$('checkBar').hidden=!asking;
 if(asking)$('checkText').textContent=c.state==='격상'?'응답이 늦어 담당자가 우선 확인 대상으로 보고 있어요. 안전하면 지금 눌러 주세요.':`담당자가 우리 집이 안전한지 묻고 있습니다 (${Math.max(0,c.seconds_left)}초 안에 응답).`;
 drawTg();if(!has){$('homeSumSub').textContent='아직 입력하지 않았어요';$('accHome').open=true;return}
-const h=HOME.household;$('homeSummary').innerHTML=`<b>우리 집</b> · ${homeText(h)}`+(h.registered?'':'<br><span class="muted">시연용 가구입니다.</span>');$('homeSumSub').textContent=h.registered?'고칠 때만 펼치세요':'';
+const h=HOME.household;$('homeSummary').innerHTML=`<b>우리 집</b> · ${homeText(h)}`+(h.registered?'':'<br><span class="muted">시연용 가구입니다.</span>')+
+ `<div class="codeline"><span class="muted">가구 코드</span><b class="code">${esc(h.id)}</b><button type="button" class="sub" data-nocool id="copyCode">복사</button></div>`;
+$('copyCode').addEventListener('click',()=>{navigator.clipboard?.writeText(h.id).then(()=>{$('copyCode').textContent='복사했어요'},()=>{});});$('homeSumSub').textContent=h.registered?'고칠 때만 펼치세요':'';
 if(!homeFilled&&document.activeElement?.closest?.('#homeForm')==null){fillHomeForm(h);homeFilled=true;$('accHome').open=false}
 $('tips').innerHTML=HOME.risks.map(r=>`<li>${esc(r)}</li>`).join('');$('nearShelter').textContent=HOME.nearest_shelter?`${HOME.nearest_shelter.name} (${HOME.nearest_shelter.place}) · 남은 자리는 '대피소' 메뉴에서 확인하세요`:'정보 없음';
 $('checkState').textContent=!c?'지금 담당자가 안전을 묻고 있지 않습니다. 물어보면 화면 위에 버튼이 나타나요.':asking?'담당자가 묻고 있어요. 화면 위의 \'안전합니다\'를 눌러 주세요.':'안전하다고 알렸습니다.';
@@ -375,6 +433,36 @@ has_infant:f.includes('영유아'),has_elderly:f.includes('고령'),has_mobility
 $('needForm').querySelectorAll('.choices input').forEach(c=>{body[c.value]=c.checked});
 try{const r=await api('/api/public/supply',{method:'POST',body:JSON.stringify(body)});$('needResult').className='box ok';$('needResult').hidden=false;$('needResult').textContent=r.requests.map(x=>`${x.item} ${x.qty} 요청을 받았어요. 담당자가 확인하고 있어요.`).join('\n');loadHome()}
 catch(err){$('needResult').className='box bad';$('needResult').hidden=false;$('needResult').textContent='요청하지 못했습니다: '+err.message}});
+
+// ---- 로그인(가구 코드)
+function showGate(want,opts={}){WANT=want||'report';document.body.classList.add('locked');document.body.classList.remove('guest');$('gate').hidden=false;$('guestBar').hidden=true;
+ const h=OLD[location.hash.slice(1)]||location.hash.slice(1);   // 첫 화면의 '바로 신고하기'(#report)·'대피소 찾기'(#map)로 왔거나 위기 단계면 '로그인 없이'를 먼저
+ $('gate').classList.toggle('urgent',!opts.login&&(h==='report'||h==='map'||LEVEL()!=='정상'));
+ if($('homeFormBox').parentElement!==$('gNewBody'))$('gNewBody').appendChild($('homeFormBox'));
+ if(location.hash)history.replaceState(null,'',location.pathname+location.search);drawDemo();window.scrollTo({top:0})}
+function unlockView(){if(!document.body.classList.contains('locked')&&$('gate').hidden){$('guestBar').hidden=!GUEST||!!HH;return}
+ document.body.classList.remove('locked');$('gate').hidden=true;document.body.classList.toggle('guest',GUEST&&!HH);$('guestBar').hidden=!GUEST||!!HH;
+ if($('homeFormBox').parentElement!==$('homeFormHome'))$('homeFormHome').appendChild($('homeFormBox'))}
+async function enterAs(v){GUEST=false;document.body.classList.remove('guest');$('loginErr').textContent='';await loadHome();go(v||'report');
+ if(v==='report'||!v)drawMyReports()}
+$('loginForm').addEventListener('submit',async e=>{e.preventDefault();const code=$('hhCode').value.trim();
+ if(!code){$('loginErr').textContent='가구 코드를 넣어 주세요.';$('hhCode').focus();return}
+ $('loginBtn').disabled=true;$('loginBtn').textContent='확인하는 중…';
+ try{const r=await api('/api/public/household-login',{method:'POST',body:JSON.stringify({code})});HH=r.id;store.set('hh',HH);$('hhCode').value='';homeFilled=false;await enterAs(WANT)}
+ catch(err){$('loginErr').textContent=err instanceof TypeError?'인터넷 연결을 확인해 주세요. 급하면 119·112에 바로 전화하세요.':err.message}
+ finally{$('loginBtn').disabled=false;$('loginBtn').textContent='들어가기'}});
+let demoDrawn=false;
+async function drawDemo(){if(demoDrawn)return;try{const d=await api('/api/public/households');demoDrawn=true;
+ $('gDemoList').innerHTML=d.items.map(h=>`<label><input type="radio" name="demoHh" value="${esc(h.id)}"><span><b>${esc(h.id)}</b> · ${esc(place(h.zone))}<small>${esc(h.floor)} · ${esc(h.members)}명${h.factors.filter(f=>f!=='반지하').length?' · '+esc(h.factors.filter(f=>f!=='반지하').join(', ')):''}</small></span></label>`).join('');UI.scan($('gate'))}catch(e){}}
+$('gDemoList').addEventListener('change',()=>{$('gDemoEnter').disabled=!$('gDemoList').querySelector('input:checked')});
+$('gDemoEnter').addEventListener('click',async()=>{const v=$('gDemoList').querySelector('input:checked')?.value;if(!v)return;
+ try{const r=await api('/api/public/household-login',{method:'POST',body:JSON.stringify({code:v})});HH=r.id;store.set('hh',HH);homeFilled=false;await enterAs(WANT)}catch(err){$('loginErr').textContent=err.message}});
+$('guestReport').addEventListener('click',()=>{GUEST=true;goForm()});
+$('guestMap').addEventListener('click',()=>{GUEST=true;go('map')});
+document.addEventListener('click',e=>{if(e.target.closest('[data-login]'))showGate(location.hash.slice(1)||'report',{login:true})});
+$('logoutBtn').addEventListener('click',()=>{if(!confirm('로그아웃할까요?\n이 기기에 저장된 가구 코드와 내 신고 기록을 지워요. 다시 들어오려면 가구 코드가 필요해요.'))return;
+ ['hh','receipts','rtokens','lastReceipt','draft'].forEach(k=>store.set(k,''));HH='';HOME=null;GUEST=false;homeFilled=false;
+ $('homeForm').reset();$('homeResult').textContent='';$('myReports').innerHTML='';showHomeParts();showGate('report')});
 
 const ON_SHOW={map:drawMap,news:drawNews,report:()=>drawMyReports()};
 const qid=new URLSearchParams(location.search).get('id');if(qid)addReceipt(qid);
