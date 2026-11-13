@@ -332,6 +332,14 @@
   }
 
   // ---------------------------------------------------------------- ⑦ 검증
+  // 외부 모듈이 보내는 센서 이름 → 화면 이름·단위(모르는 이름은 그대로 보여 준다)
+  const EXT_LABEL = {temp: ['온도', '℃'], temperature: ['온도', '℃'], t: ['온도', '℃'], hum: ['습도', '%'], humidity: ['습도', '%'], h: ['습도', '%'],
+    gas: ['가스', ''], co2: ['이산화탄소', 'ppm'], co: ['일산화탄소', 'ppm'], smoke: ['연기', ''], flame: ['불꽃', ''], dust: ['미세먼지', '㎍/㎥'],
+    pm25: ['초미세먼지', '㎍/㎥'], pm10: ['미세먼지', '㎍/㎥'], light: ['밝기', ''], lux: ['밝기', 'lx'], water: ['수위', ''], level: ['수위', ''],
+    dist: ['거리', 'cm'], distance: ['거리', 'cm'], rain: ['강우', ''], wind: ['풍속', 'm/s'], pressure: ['기압', 'hPa'], press: ['기압', 'hPa'],
+    sound: ['소리', ''], vibration: ['진동', ''], tilt: ['기울기', ''], soil: ['토양 수분', ''], battery: ['배터리', '%']};
+  const extLabel = s => EXT_LABEL[String(s).toLowerCase()] || [s, ''];
+
   async function loadSensorLive() {
     try {
       const d = await api('/api/sensor/status');
@@ -354,6 +362,15 @@
              (o.false_alarm_log.length ? `<div class="muted">${E(o.false_alarm_log.join(' / '))}</div>` : '')
            : '<div class="muted">아직 받은 값이 없습니다. 게이트웨이를 실행하세요.</div>') +
         (d.calibrated ? '' : '<div class="muted">임계값 보정 전(임시값)</div>') +
+        // G 노드 외부 모듈(블루투스): 감시 설정에 없는 센서 값. 판정에는 쓰지 않고 표시만
+        `<h3 style="margin:14px 0 4px">🔵 G 노드 외부 모듈 (블루투스)${(d.extra || []).length ? ' ' + chip(`${d.extra.length}개 센서`, 'ok') : ''}</h3>` +
+        ((d.extra || []).length
+          ? table(['노드', '센서', '최근 값', '받은 때', '상태'], d.extra.map(x => {
+              const [name, unit] = extLabel(x.sensor);
+              return `<tr><td>${E(x.node)}</td><td>${E(name)}${name !== x.sensor ? ` <span class="muted">(${E(x.sensor)})</span>` : ''}</td>` +
+                `<td><b>${E(x.value)}</b>${unit ? ' ' + E(unit) : ''}</td><td>${E(age(x.age_s))}</td><td>${chip(x.online ? '수신 중' : '끊김', x.online ? 'ok' : 'bad')}</td></tr>`;
+            })) + '<div class="muted">외부 모듈 값은 임계값이 없어 위기 단계 판정에는 쓰지 않고 표시만 합니다.</div>'
+          : '<div class="muted">아직 받은 값이 없습니다. 블루투스 모듈을 노트북과 페어링하고 게이트웨이를 <code>--bt-port COM5</code>처럼 실행하세요(기기 없이 시험: <code>--bt-simulate</code>).</div>') +
         `<h3 style="margin:14px 0 4px">현장 버튼 신호${d.open_urgent ? ' ' + chip(`확인 안 한 급한 신호 ${d.open_urgent}건`, 'bad') : ''}</h3>` +
         table(['받은 때', '노드', '신호', '웹 반영', ''], d.events.map(x =>
           `<tr><td>${E(fmtTime(x.ts))}</td><td>${E(x.node)}</td><td>${x.urgent ? chip(x.label, x.open ? 'bad' : '') : E(x.label)}</td>` +
