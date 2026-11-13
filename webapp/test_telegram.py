@@ -162,9 +162,9 @@ class TestTelegramBot(ServerBase):
         _, h = anon.post("/api/public/households", {"address": "옥포동 시장 뒤 주택", "floor": "반지하", "members": 2})
         # 메뉴 '🏠 우리 집 연결' → 입력창(답장)에 코드 → 연결. 틀린 코드는 안내만
         self.update(self.msg(666, "/code H-0000000000"), secret)
-        self.sent_to(666, lambda p: "가구 코드를 찾을 수 없어요" in p["text"], "틀린 코드")
+        self.sent_to(666, lambda p: "우리 집 번호를 찾을 수 없어요" in p["text"], "틀린 코드")
         self.update(self.msg(666, "🏠 우리 집 연결"), secret)
-        ask = self.sent_to(666, lambda p: "가구 코드를 아래 입력창" in p["text"], "코드 묻기")
+        ask = self.sent_to(666, lambda p: "우리 집 번호(예: H-3F9A1C2B7D)를 아래 입력창" in p["text"], "코드 묻기")
         self.assertTrue(ask["reply_markup"]["force_reply"])
         self.update(self.msg(666, h["id"][2:].lower()), secret)                                   # 소문자·H- 빠뜨려도
         self.sent_to(666, lambda p: "옥포동 시장 뒤 주택" in p["text"] and "연결했어요" in p["text"], "연결 완료")

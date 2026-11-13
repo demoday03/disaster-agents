@@ -993,7 +993,7 @@ def report_info(iid):
 def tg_household_login(code, chat):
     """텔레그램에서 가구 코드 연결(/code). 주민 화면 로그인과 같은 확인·같은 시도 횟수 제한(대화방별)."""
     if not HH_LOGIN_LIMIT.allow(f"tg:{chat}"):
-        return 429, {"error": "가구 코드 시도가 너무 많아요. 10분 뒤 다시 해 주세요"}
+        return 429, {"error": "우리 집 번호를 너무 여러 번 넣었어요. 10분 뒤 다시 해 주세요"}
     try:
         return 200, PUBLIC.login_household({"code": code})
     except ValueError as e:
@@ -1527,7 +1527,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not PUBLIC_LIMIT.allow(self.client_ip()):
                     return self.send_json(429, {"error": "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요"})
                 if path == "/api/public/household-login" and not HH_LOGIN_LIMIT.allow(self.client_ip()):
-                    return self.send_json(429, {"error": "로그인 시도가 너무 많아요. 10분 뒤 다시 해 주세요. 급하면 로그인 없이 신고하거나 119·112에 전화하세요"})
+                    return self.send_json(429, {"error": "우리 집 번호를 너무 여러 번 넣었어요. 10분 뒤 다시 해 주세요. 급하면 등록 없이 신고하거나 119·112에 전화하세요"})
                 if path == "/api/public/battle":   # AI 분류(처음 한 번 Solar 20회)는 FEATURES 잠금 밖에서
                     try:
                         return self.send_json(201, battle.submit(database, LLM, data))

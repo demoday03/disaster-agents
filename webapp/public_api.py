@@ -3,7 +3,7 @@
 로그인 대신 가구·봉사자 코드로 구분하는 시연 방식이다. 실명·전화번호는 받지 않는다.
 - 위치는 구역을 고르지 않고 글(주소·건물 이름)로 쓴다. 배치 계산에 쓰는 관리 구역은 글에서 추정하고(common/places.py),
   추정하지 못하면 '미상'으로 두어 담당자가 확인한다. 화면에는 구역 번호를 보여 주지 않는다.
-- 주민 화면은 가구 코드로 로그인한다. 처음이면 '우리 집'(위치·주거 형태·함께 사는 분)을 한 번 적고 가구 코드를 받는다.
+- 주민 화면은 우리 집 번호(가구 코드)로 들어간다. 처음이면 '우리 집'(위치·주거 형태·함께 사는 분)을 한 번 적고 가구 코드를 받는다.
   코드는 그 기기에 기억되고, 가족 휴대폰에서도 같은 코드로 들어온다. 우선순위(취약 가구 여부)는 서버 안에서만 쓰고
   주민 화면에는 보여 주지 않는다. 급할 때는 로그인 없이 신고·대피소 보기만 할 수 있다(화면 쪽).
 - 봉사자는 회원가입(별명·비밀번호·활동할 곳·할 수 있는 일·장비·가능한 시간)을 한다. 할 수 있는 일을 미리 받아 두어
@@ -89,11 +89,11 @@ class PublicAPI:
         """주민 화면 로그인: 가구 코드가 있으면 그 가구로 들어간다(실명·비밀번호 없이 코드만, 시연 방식)."""
         code = data.get("code")
         if not isinstance(code, str) or not code.strip() or len(code) > 40:
-            raise ValueError("가구 코드를 넣어 주세요")
+            raise ValueError("우리 집 번호를 넣어 주세요")
         hid = self.normalize_code(code)
         h = self.f.households.get(hid)
         if h is None:
-            raise ValueError("가구 코드를 찾을 수 없어요. 코드를 다시 확인해 주세요")
+            raise ValueError("우리 집 번호를 찾을 수 없어요. 번호를 다시 확인하거나 새로 등록해 주세요")
         return {"id": hid, "registered": bool(h.get("registered"))}
 
     def update_household(self, hid, data):

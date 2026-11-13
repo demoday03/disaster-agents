@@ -29,7 +29,7 @@ HELP = ("이 봇은 재난 안전 AI 에이전트(교육용 시연)입니다. �
         "· 🆘 신고하기 (/report) : 버튼으로 고르고 입력창에 적으면 신고가 접수돼요\n"
         "· 📍 지금 상황 (/status) : 위기 단계·공지·대피소\n"
         "· 📋 내 신고 (/my) : 보낸 신고의 처리 상황\n"
-        "· 🏠 우리 집 연결 (/code 가구코드) : 신고하면 담당자가 우리 집을 바로 알아요\n"
+        "· 🏠 우리 집 연결 (/code 우리집번호) : 신고하면 담당자가 우리 집을 바로 알아요\n"
         "· /stop : 알림 그만 받기\n"
         "한 번에 보내려면 이렇게 적어 보내도 돼요:\n위치: 옥포동 시장 앞 · 물이 무릎까지 찼어요 · 2명 고립\n"
         "사람이 다치거나 갇혔다면 119·112에 바로 전화하세요.")
@@ -39,7 +39,7 @@ MENU = {"keyboard": [[{"text": "🆘 신고하기"}], [{"text": "📍 지금 상
                      [{"text": "🏠 우리 집 연결"}, {"text": "❓ 도움말"}]],
         "resize_keyboard": True, "is_persistent": True, "input_field_placeholder": "급하면 🆘 신고하기를 누르세요"}
 COMMANDS = [{"command": "report", "description": "🆘 신고하기"}, {"command": "status", "description": "지금 위기 단계·공지·대피소"},
-            {"command": "my", "description": "내 신고 처리 상황"}, {"command": "code", "description": "🏠 가구 코드로 우리 집 연결"},
+            {"command": "my", "description": "내 신고 처리 상황"}, {"command": "code", "description": "🏠 우리 집 번호로 연결"},
             {"command": "unlink", "description": "우리 집 연결 끊기"}, {"command": "cancel", "description": "쓰던 신고 그만두기"},
             {"command": "start", "description": "알림 받기·메뉴 열기"}, {"command": "stop", "description": "알림 그만 받기"}]
 REPORT_WORDS = {"🆘 신고하기", "/report", "/신고", "신고", "신고하기"}
@@ -257,7 +257,7 @@ class TelegramBot:
         now = f"지금 연결된 우리 집: {self.home_place(h)} ({hid})\n다른 코드로 바꾸려면 " if h else ""
         with self.flock:
             self.flows[chat] = {"id": secrets.token_hex(3), "step": "code", "at": time.time()}
-        self.send(chat, "🏠 우리 집 연결\n" + (now or "") + "주민 화면 '우리 집'에 있는 가구 코드를 아래 입력창에 적어 보내 주세요.\n"
+        self.send(chat, "🏠 우리 집 연결\n" + (now or "") + "주민 화면 '🏠 우리 집'에 있는 우리 집 번호(예: H-3F9A1C2B7D)를 아래 입력창에 적어 보내 주세요.\n"
                         "연결하면 신고할 때 담당자가 우리 집을 바로 알고, 안부 확인에도 버튼으로 답할 수 있어요."
                         + ("\n연결을 끊으려면 /unlink" if h else ""),
                   markup={"force_reply": True, "input_field_placeholder": "예: H-3F9A1C2B7D"})
@@ -267,7 +267,7 @@ class TelegramBot:
             return
         status, res = self.hooks["login"](code, chat)
         if status >= 400:
-            return self.send(chat, f"⚠️ {res.get('error', '가구 코드를 확인하지 못했어요')}\n다시 하려면 🏠 우리 집 연결을 누르세요.", markup=MENU)
+            return self.send(chat, f"⚠️ {res.get('error', '우리 집 번호를 확인하지 못했어요')}\n다시 하려면 🏠 우리 집 연결을 누르세요.", markup=MENU)
         sub = self.db.get_record("tg_sub", str(chat)) or {"chat_id": chat, "since": time.time()}   # 연결하면 알림도 받는다
         sub["household"] = res["id"]
         self.db.put_record("tg_sub", str(chat), sub)
