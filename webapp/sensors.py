@@ -6,8 +6,9 @@
 - 현장 버튼 신호(E 메시지: SOS·체크인·입소 등)는 최근 것만 메모리에 두고 감사 기록에 남긴다. 단계를 바꾸지 않는다.
   급한 신호(SOS 등)는 담당자가 '확인'을 누를 때까지 열려 있다.
 - 내려보내기(downlink): 담당자가 확정한 단계와 안부 확인 요청을 게이트웨이에 알려 현장 마이크로비트로 방송하게 한다.
-- 외부 모듈(G 노드 블루투스 센서 등)처럼 감시 설정(config/monitor.json)에 없는 센서 값도 받아 담당자 화면에 보여 준다.
+- C·D·E 노드의 온도·조도처럼 감시 설정(config/monitor.json)에 없는 센서 값도 받아 담당자 화면에 보여 준다.
   임계값이 없으므로 단계 판정에는 쓰지 않는다(표시만).
+- G와 노트북을 잇는 방법(USB 또는 외부 블루투스 모듈)을 게이트웨이가 알려 주면 담당자 화면에 경로로 보여 준다.
 """
 import itertools, math, threading, time
 from collections import deque
@@ -27,6 +28,7 @@ EVENT_LABELS = {"SOS": "SOS 요청", "IN": "봉사자 도착 체크인", "DONE":
                 "SAFE": "가구 안전 확인 응답", "NEED": "가구 급한 물품 요청",
                 "DARK": "가구 정전(어두워짐)", "LIGHT": "가구 전기 돌아옴"}
 URGENT_EVENTS = {"SOS", "NEED", "HEAT", "DARK"}
+LINKS = ("USB", "블루투스", "가상")   # G ↔ 노트북 연결 방법
 
 
 class SensorHub:
@@ -34,7 +36,7 @@ class SensorHub:
         self.db, self.cfg, self.clock = db, cfg or monitor.load_config(), clock
         self.buffer, self.lock = deque(maxlen=MAX_BUFFER), threading.Lock()
         self.last_eval, self.last_seen, self.received, self.rejected = None, {}, 0, 0
-        self.rain_stage, self.last_batch_at = 0, None
+        self.rain_stage, self.last_batch_at, self.link = 0, None, None
         self.events, self.event_seen, self.event_ids = deque(maxlen=MAX_EVENTS), {}, itertools.count(1)
 
     def _clean(self, r, now):
@@ -50,7 +52,7 @@ class SensorHub:
             return None   # 시계가 크게 틀렸거나 이미 오래된 값
         return {"node": node, "sensor": sensor, "ts": min(float(ts), now), "value": float(value)}
 
-    def ingest(self, readings, rain_stage=None, events=None):
+    def ingest(self, readings, rain_stage=None, events=None, link=None):
         """측정값 묶음(과 현장 신호)을 받아 다시 판정한다. 결과 dict(판정 + 승인 요청 ID + 새 현장 신호)를 돌려준다."""
         if not isinstance(readings, list) or len(readings) > MAX_BATCH:
             raise ValueError(f"readings는 최대 {MAX_BATCH}개 항목의 배열이어야 합니다")
@@ -59,9 +61,13 @@ class SensorHub:
         if rain_stage is not None and (isinstance(rain_stage, bool) or not isinstance(rain_stage, int)
                                        or not 0 <= rain_stage <= 4):
             raise ValueError("rain_stage는 0~4 정수여야 합니다")
+        if link is not None and link not in LINKS:
+            raise ValueError(f"link는 {LINKS} 중 하나여야 합니다")
         with self.lock:
             now = self.clock()
             accepted = 0
+            if link is not None:
+                self.link = link
             for r in readings:
                 row = self._clean(r, now)
                 if row is None:
@@ -169,6 +175,10 @@ class SensorHub:
     def thresholds(self):
         return {k: v["threshold"] for k, v in self.cfg["sensors"].items()}
 
+    def cautions(self):
+        """주의 기준이 있는 센서(수심 센서)의 주의 기준."""
+        return {k: v["caution"] for k, v in self.cfg["sensors"].items() if "caution" in v}
+
     def status(self):
         with self.lock:
             now = self.clock()
@@ -179,8 +189,9 @@ class SensorHub:
                     latest[k] = r
             sensors = [{"key": k, "value": latest[k]["value"] if k in latest else None,
                         "age_s": round(now - latest[k]["ts"], 1) if k in latest else None,
-                        "threshold": v["threshold"],
-                        "over": k in latest and latest[k]["value"] > v["threshold"]}
+                        "threshold": v["threshold"], "caution": v.get("caution"),
+                        "over": k in latest and latest[k]["value"] > v["threshold"],
+                        "over_caution": k in latest and "caution" in v and latest[k]["value"] > v["caution"]}
                        for k, v in self.cfg["sensors"].items()]
             extra = sorted(({"key": k, "node": r["node"], "sensor": r["sensor"], "value": r["value"],
                              "age_s": round(now - r["ts"], 1), "online": now - r["ts"] <= self.cfg["stale_sec"]}
@@ -192,6 +203,6 @@ class SensorHub:
             events = [dict(e) for e in reversed(self.events)]
             return {"sensors": sensors, "extra": extra, "nodes": nodes, "last_eval": self.last_eval, "received": self.received,
                     "events": events[:30] + [e for e in events[30:] if e["open"]], "open_urgent": sum(e["open"] for e in events),
-                    "rejected": self.rejected, "rain_stage": self.rain_stage,
+                    "rejected": self.rejected, "rain_stage": self.rain_stage, "link": self.link,
                     "last_batch_age_s": round(now - self.last_batch_at, 1) if self.last_batch_at else None,
                     "calibrated": self.cfg.get("calibrated", False)}

@@ -1,5 +1,7 @@
 """① 감시 에이전트 (규칙 기반, LLM은 근거 요약에만 선택적으로 사용).
-- 침수: 서로 다른 높이의 수위 센서 둘이 함께 임계 초과 + 연속 N회 → 확정 후보
+- 침수: 노드 A의 수심 센서 1개. 위험 기준(threshold)을 연속 N회 넘으면 확정 후보,
+  주의 기준(caution)만 연속 N회 넘으면 '보류'(주의, 지켜봄). 한 번 튀는 값은 무시
+  (센서 키가 여러 개인 규칙은 예전처럼 모두 함께 넘어야 후보, 하나만 넘으면 보류)
 - 사면: 기울기와 진동이 짧은 시간 안에 함께 반응 → 확정 후보
 - 단독 반응은 '보류', 일시 튐은 '정상'(로그만). 단계 확정은 담당자.
 """
@@ -45,6 +47,7 @@ class Monitor:
             if not samples or now - samples[-1]["ts"] > cfg["stale_sec"]: stale_sensors.append(key)
 
         def thr(k): return cfg["sensors"][k]["threshold"]
+        def label_of(k): return f"{cfg['sensors'][k]['label']}({k})" if cfg["sensors"][k].get("label") else k
         def usable(k): return k.split(".")[0] not in faults and k not in stale_sensors
         def recent(k): return [x for x in by.get(k, []) if now - win <= x["ts"] <= now]
         def sustained(k):
@@ -52,6 +55,9 @@ class Monitor:
             return usable(k) and len(samples) >= n and all(x["value"] > thr(k) for x in samples[-n:])
         def spiked(k): return usable(k) and any(x["value"] > thr(k) for x in recent(k))
         def in_window(k): return usable(k) and any(x["value"] > thr(k) for x in recent(k))
+        def over_n(k, t):
+            samples = recent(k)
+            return usable(k) and len(samples) >= n and all(x["value"] > t for x in samples[-n:])
 
         hazards, matched, log, hold = [], [], [], bool(stale_sensors)
         for sensor in stale_sensors:
@@ -68,6 +74,11 @@ class Monitor:
                 log.append(f"{label}: {hits[0]} 단독 반응 → 보류(오탐 가능)")
             elif any(spiked(k) for k in keys):
                 log.append(f"{label}: 일시 튐 → 무시")
+        # 주의 기준(caution)이 있는 센서(수심): 위험 기준은 못 넘었지만 주의 기준을 연속으로 넘으면 지켜본다
+        cautions = [k for k, s in cfg["sensors"].items() if "caution" in s and k not in matched and over_n(k, s["caution"])]
+        for k in cautions:
+            hold = True
+            log.append(f"{label_of(k)}: 주의 기준({cfg['sensors'][k]['caution']:g}) 넘음 · 위험 기준({thr(k):g}) 아래 → 지켜봄")
         for node in faults:
             log.append(f"노드 {node} 응답 끊김 → 센서 이상, 수동 입력 허용")
 
@@ -80,20 +91,22 @@ class Monitor:
         else:
             status, level = "정상", "정상"
 
-        summary, ai_used, reason = self._summary(status, hazards, matched, level)
+        summary, ai_used, reason = self._summary(status, hazards, [label_of(k) for k in matched], level, [label_of(k) for k in cautions])
         return AgentResult(
             agent="monitor",
             output={"status": status, "level": level, "hazards": hazards,
-                    "matched_sensors": matched, "false_alarm_log": log,
+                    "matched_sensors": matched, "caution_sensors": cautions, "false_alarm_log": log,
                     "sensor_faults": faults, "stale_sensors": stale_sensors,
                     "summary": summary, "calibrated": cfg.get("calibrated", False)},
             ai_used=ai_used, fallback_reason=reason,
             needs_approval=(status == "확정후보"),  # 단계 확정은 담당자
             evidence=matched)
 
-    def _summary(self, status, hazards, matched, level):
-        default = (f"{'·'.join(hazards)} 신호가 {', '.join(matched)}에서 함께 확인되어 "
+    def _summary(self, status, hazards, matched, level, cautions=()):
+        default = (f"{'·'.join(hazards)} 신호가 {', '.join(matched)}에서 {'함께' if len(matched) > 1 else '연속으로'} 확인되어 "
                    f"'{level}' 단계를 제안합니다." if hazards else
+                   f"{', '.join(cautions)} 값이 주의 기준을 넘었지만 위험 기준 아래라 확정하지 않고 지켜봅니다."
+                   if status == "보류" and cautions else
                    {"보류": "단독 반응만 있어 확정하지 않고 지켜봅니다.",
                     "정상": "임계 초과 신호가 없습니다."}[status])
         if status != "확정후보" or self.summarizer is None:

@@ -92,8 +92,7 @@ class ServerBase(unittest.TestCase):
         rows = []
         for i in range(3):
             t = now - 2 + i
-            rows += [{'node': 'A', 'sensor': 'water_low', 'ts': t, 'value': 600},
-                     {'node': 'A', 'sensor': 'water_high', 'ts': t, 'value': 600},
+            rows += [{'node': 'A', 'sensor': 'depth', 'ts': t, 'value': 600},
                      {'node': 'B', 'sensor': 'tilt', 'ts': t, 'value': 0},
                      {'node': 'B', 'sensor': 'vibration', 'ts': t, 'value': 10}]
         return rows
@@ -520,7 +519,7 @@ class TestSensorGateway(ServerBase):
         status, st = self.get("/api/sensor/status")
         self.assertEqual(status, 200)
         self.assertTrue(st["gateway_enabled"])
-        self.assertTrue(next(s for s in st["sensors"] if s["key"] == "A.water_low")["over"])
+        self.assertTrue(next(s for s in st["sensors"] if s["key"] == "A.depth")["over"])
         self.assertEqual(Client(self.base).get("/api/sensor/status")[0], 401)   # 현황은 담당자만
 
     def send_events(self, *events):
@@ -592,10 +591,9 @@ class TestReportCrosscheck(ServerBase):
     port = 18781
     extra_env = {"WEBAPP_INCIDENT_PER_MIN": "1000", "SENSOR_GATEWAY_TOKEN": GATEWAY_TOKEN}
 
-    def water(self, low, high):
+    def water(self, depth):
         now = time.time()
-        body = {"readings": [{"node": "A", "sensor": "water_low", "value": low, "ts": now},
-                             {"node": "A", "sensor": "water_high", "value": high, "ts": now}]}
+        body = {"readings": [{"node": "A", "sensor": "depth", "value": depth, "ts": now}]}
         status, d, _ = Client(self.base).request("POST", "/api/sensor/readings", body, headers={"X-Gateway-Token": GATEWAY_TOKEN})
         self.assertEqual(status, 200, d)
 
@@ -612,11 +610,11 @@ class TestReportCrosscheck(ServerBase):
         self.fail("신고 대조 결과가 붙지 않음")
 
     def test_exaggerated_then_consistent(self):
-        self.water(30, 10)
+        self.water(30)
         c = self.report_crosscheck("Z1 물이 허리까지 차서 집이 잠겼어요 (대조 시험 1)")
         self.assertEqual((c["verdict"], c["claimed"], c["sensor_level"]), ("과장 가능", 2, 0))
         self.assertIn("다시 확인", c["advice"])
-        self.water(301, 307)
+        self.water(520)   # 위험 기준(400) 넘음 = 심각
         c = self.report_crosscheck("Z1 침수돼서 물이 허리까지 찼어요 (대조 시험 2)")
         self.assertEqual((c["verdict"], c["similar_reports"]), ("일치", 1))
         c = self.report_crosscheck("Z3 침수돼서 물이 허리까지 찼어요 (대조 시험 3)")   # Z3에는 센서가 없다

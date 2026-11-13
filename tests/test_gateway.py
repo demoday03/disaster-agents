@@ -18,19 +18,16 @@ class TestParse(unittest.TestCase):
         for bad in ("E,E,SOS", "E,E,SOS,x", "E,E,SOS,1000", "E,E,S;OS,1", "S,E,temp,3", "E,E,TOOLONGCODE,1"):
             self.assertIsNone(G.parse_event(bad, 0), bad)
 
-    def test_parse_bluetooth_module_lines(self):
-        """G 노드 외부 모듈(블루투스)이 보내는 여러 모양의 줄."""
-        row = lambda sensor, value, node="G": {"node": node, "sensor": sensor, "value": value, "ts": 1.0}
-        self.assertEqual(G.parse_module_line("S,G,temp,23.5\r\n", "G", 1.0), [row("temp", 23.5)])
-        self.assertEqual(G.parse_module_line("temp=23.5,humidity=61", "G", 1.0), [row("temp", 23.5), row("humidity", 61.0)])
-        self.assertEqual(G.parse_module_line("T:23.5 H:61; gas = 312", "G", 1.0), [row("T", 23.5), row("H", 61.0), row("gas", 312.0)])
-        self.assertEqual(G.parse_module_line("온도=19", "G", 1.0), [row("온도", 19.0)])
-        self.assertEqual(G.parse_module_line("23.5,61", "G", 1.0, ["temp", "humidity"]), [row("temp", 23.5), row("humidity", 61.0)])
-        self.assertEqual(G.parse_module_line("23.5 61 7", "M", 1.0, ["temp"]), [row("temp", 23.5, "M"), row("v2", 61.0, "M"), row("v3", 7.0, "M")])
-        for bad in ("", "hello", "AT+OK", "temp=abc", "1.2.3", "temp=1234567"):
-            self.assertEqual(G.parse_module_line(bad, "G", 1.0), [], bad)
-        sim = G.ModuleSimulator()
-        self.assertEqual([r["sensor"] for r in G.parse_module_line(sim.line(), "G", 1.0)], ["temp", "humidity", "gas"])
+    def test_bluetooth_link_is_reported(self):
+        """G가 외부 블루투스 모듈로 연결되면(--bt) 게이트웨이가 연결 방법을 함께 보낸다(메시지 형식은 USB와 같음)."""
+        got = []
+        def sender(server, token, batch, rain, events, link=None):
+            got.append(link)
+            return 200, {}
+        gw = G.Gateway("http://x", "t" * 20, sender=sender, out=lambda *a: None, link="블루투스")
+        gw.feed("S,A,water_low,523")
+        gw.flush()
+        self.assertEqual(got, ["블루투스"])
 
     def test_simulator_scenarios(self):
         flood = [G.parse_line(l, 0) for l in G.Simulator("flood").tick()]
@@ -229,12 +226,14 @@ class TestSensorHub(unittest.TestCase):
 
     def test_window_gives_recent_max(self):
         for v in (50, 320, 90):
-            self.hub.ingest([{"node": "A", "sensor": "water_low", "value": v, "ts": self.now}])
+            self.hub.ingest([{"node": "A", "sensor": "depth", "value": v, "ts": self.now}])
             self.now += 10
         w = self.hub.window(25)                                                 # 마지막 25초: 320(20초 전)·90(10초 전)
-        self.assertEqual((w["A.water_low"]["max"], w["A.water_low"]["age_s"]), (320, 10))
+        self.assertEqual((w["A.depth"]["max"], w["A.depth"]["age_s"]), (320, 10))
         self.assertEqual(self.hub.window(5), {})
-        self.assertEqual(self.hub.thresholds()["A.water_low"], 200)
+        self.assertEqual((self.hub.thresholds()["A.depth"], self.hub.cautions()), (400, {"A.depth": 150}))
+        st = next(x for x in self.hub.status()["sensors"] if x["key"] == "A.depth")
+        self.assertEqual((st["caution"], st["over_caution"], st["over"]), (150, False, False))   # 마지막 값 90
 
     def test_downlink_only_confirmed_stage_and_safety_check(self):
         self.assertEqual(self.hub.downlink(), {"level": 0, "level_name": "정상", "safety_check": False})
@@ -246,21 +245,19 @@ class TestSensorHub(unittest.TestCase):
         db.put_record("check", "H1", {"household": "H1", "state": "안전"})
         self.assertFalse(self.hub.downlink()["safety_check"])
 
-    def test_external_module_values_shown_not_judged(self):
-        """감시 설정에 없는 외부 모듈 값(G 노드 블루투스)은 받아서 보여 주되 판정에는 쓰지 않는다."""
-        sent = []
-        gw = G.Gateway("http://x", "t" * 20, sender=lambda *a: (sent.append(a[2]), (200, {}))[1], out=lambda *a: None, clock=lambda: self.now)
-        self.assertEqual(gw.feed_module("temp=31.5,gas=420"), 2)
-        self.assertEqual(gw.feed_module("AT+OK"), 0)
-        gw.flush()
-        base = self.hub.ingest([])["output"]   # G 값이 없을 때의 판정(A·B 값이 없어 보류)
-        res = self.hub.ingest(sent[0])
+    def test_other_node_values_shown_not_judged_and_link(self):
+        """C·D·E 노드의 온도·조도처럼 감시 설정에 없는 값은 보여 주되 판정에는 쓰지 않는다. G 연결 방법도 보여 준다."""
+        base = self.hub.ingest([])["output"]   # 값이 없을 때의 판정(A·B 값이 없어 보류)
+        rows = [{"node": "E", "sensor": "temp", "value": 31.5, "ts": self.now}, {"node": "D", "sensor": "light", "value": 12, "ts": self.now}]
+        res = self.hub.ingest(rows, link="블루투스")
         self.assertEqual(res["accepted"], 2)
         st = self.hub.status()
-        self.assertEqual([(x["key"], x["value"], x["online"]) for x in st["extra"]], [("G.gas", 420.0, True), ("G.temp", 31.5, True)])
-        self.assertIn("G", [n["node"] for n in st["nodes"]])
-        self.assertNotIn("G.temp", [s["key"] for s in st["sensors"]])
+        self.assertEqual([(x["key"], x["value"], x["online"]) for x in st["extra"]], [("D.light", 12.0, True), ("E.temp", 31.5, True)])
+        self.assertEqual(st["link"], "블루투스")
+        self.assertNotIn("E.temp", [s["key"] for s in st["sensors"]])
         self.assertEqual((res["output"]["level"], res["output"]["status"]), (base["level"], base["status"]))   # 판정은 그대로
+        with self.assertRaises(ValueError):
+            self.hub.ingest([], link="와이파이")
         self.now += 40
         self.assertFalse(any(x["online"] for x in self.hub.status()["extra"]))
 

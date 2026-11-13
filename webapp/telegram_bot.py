@@ -12,15 +12,23 @@
   연결하면 신고에 그 가구가 붙고(담당자 화면 '🏠 가구 … 로그인 신고'), ② 연결하지 않아도 대화방마다 이름 없는
   신고자 번호(T-XXXX)를 붙여 같은 사람이 보낸 신고를 묶어 본다. ③ 담당자가 '신고자에게 묻기'를 쓰면 질문이
   이 대화방으로 오고, 입력창에 적은 답이 그 신고에 붙는다.
+- 📞 연락처 보내기(선택): 신고를 접수하면 '내 연락처 보내기' 버튼을 준다. 누르면 텔레그램이 본인 번호를 보내고(남의
+  연락처는 받지 않는다), 그 신고에 담당자만 보는 연락처로 붙는다. 신고가 끝나거나(취소·오접수) 48시간이 지나면 지운다.
+- 담당자 단체방·주민 공지 채널: 관리자 화면에서 만든 1회용 코드로 연결한다(telegram_staff.py). 담당자 방에는 급한
+  신고만 보내고(많으면 묶어서), 채널을 연결하면 모두에게 보내는 공지·위기 단계는 채널에 한 번만 올린다(구독자가 몇만
+  명이어도 한 번에 간다). 1:1 대화는 신고 답장·담당자 질문·우리 집 안부처럼 그 사람에게만 필요한 것에 쓴다.
 - 받는 방식: 공개 주소가 있으면(Render: RENDER_EXTERNAL_URL, 또는 TELEGRAM_WEBHOOK_URL) 웹훅으로 받는다. 텔레그램이
   보내는 요청이 잠든 무료 서버도 깨운다. 공개 주소가 없는 내부망 PC는 폴링으로 받는다.
-- 설정: TELEGRAM_BOT_TOKEN(필수, @BotFather에서 받음), TELEGRAM_CHANNEL_ID(선택, 공지·단계를 채널에도 올림).
+- 설정: TELEGRAM_BOT_TOKEN(필수, @BotFather에서 받음), TELEGRAM_CHANNEL_ID(선택, 관리자 화면에서 채널을 연결하지 않을 때).
   토큰이 없으면 아무것도 하지 않는다. 토큰은 저장소에 넣지 않는다.
-보내기는 별도 스레드가 차례로 한다(요청 처리를 막지 않게). 텔레그램이 '차단됨'(403)을 주면 구독을 지운다.
+보내기는 별도 스레드가 차례로 한다(요청 처리를 막지 않게). 신고 답장·버튼 응답이 먼저 나가고, 구독자 모두에게 보내는
+공지는 그 사이사이에 뒤에서 보낸다(공지 수천 건 때문에 급한 신고 답장이 밀리지 않게). 텔레그램이 '차단됨'(403)을 주면
+구독을 지우고, '너무 많이 보냄'(429)을 주면 기다렸다가 다시 보낸다.
 """
-import hashlib, json, os, queue, re, secrets, threading, time, urllib.error, urllib.request
+import collections, hashlib, json, os, queue, re, secrets, threading, time, urllib.error, urllib.request
 
 from common import places
+from webapp.telegram_staff import GROUP_COMMANDS, StaffDesk
 
 LEVEL_TEXT = {"주의": "기상 정보를 자주 확인하고, 하천·계곡·지하 공간에 가까이 가지 마세요.",
               "경계": "대피를 준비하세요. 비상용품(물·약·손전등·충전기)을 챙기고 가족과 만날 곳을 정하세요.",
@@ -29,7 +37,8 @@ HELP = ("이 봇은 재난 안전 AI 에이전트(교육용 시연)입니다. �
         "· 🆘 신고하기 (/report) : 버튼으로 고르고 입력창에 적으면 신고가 접수돼요\n"
         "· 📍 지금 상황 (/status) : 위기 단계·공지·대피소\n"
         "· 📋 내 신고 (/my) : 보낸 신고의 처리 상황\n"
-        "· 🏠 우리 집 연결 (/code 가구코드) : 신고하면 담당자가 우리 집을 바로 알아요\n"
+        "· 🏠 우리 집 연결 (/code 우리집번호) : 신고하면 담당자가 우리 집을 바로 알아요\n"
+        "· /contact : 보낸 신고에 내 연락처 붙이기(선택, 담당자만 보고 끝나면 지워요)\n"
         "· /stop : 알림 그만 받기\n"
         "한 번에 보내려면 이렇게 적어 보내도 돼요:\n위치: 옥포동 시장 앞 · 물이 무릎까지 찼어요 · 2명 고립\n"
         "사람이 다치거나 갇혔다면 119·112에 바로 전화하세요.")
@@ -39,8 +48,9 @@ MENU = {"keyboard": [[{"text": "🆘 신고하기"}], [{"text": "📍 지금 상
                      [{"text": "🏠 우리 집 연결"}, {"text": "❓ 도움말"}]],
         "resize_keyboard": True, "is_persistent": True, "input_field_placeholder": "급하면 🆘 신고하기를 누르세요"}
 COMMANDS = [{"command": "report", "description": "🆘 신고하기"}, {"command": "status", "description": "지금 위기 단계·공지·대피소"},
-            {"command": "my", "description": "내 신고 처리 상황"}, {"command": "code", "description": "🏠 가구 코드로 우리 집 연결"},
-            {"command": "unlink", "description": "우리 집 연결 끊기"}, {"command": "cancel", "description": "쓰던 신고 그만두기"},
+            {"command": "my", "description": "내 신고 처리 상황"}, {"command": "code", "description": "🏠 우리 집 번호로 연결"},
+            {"command": "unlink", "description": "우리 집 연결 끊기"}, {"command": "contact", "description": "📞 내 신고에 연락처 보내기(선택)"},
+            {"command": "cancel", "description": "쓰던 신고 그만두기"},
             {"command": "start", "description": "알림 받기·메뉴 열기"}, {"command": "stop", "description": "알림 그만 받기"}]
 REPORT_WORDS = {"🆘 신고하기", "/report", "/신고", "신고", "신고하기"}
 STATUS_WORDS = {"📍 지금 상황", "/status", "/상황", "상황"}
@@ -64,6 +74,10 @@ URGENCY = {1: "매우 급함", 2: "급함", 3: "보통", 4: "확인 필요"}
 STATE_TXT = {"접수": "접수되어 담당자가 확인하고 있어요", "보완 필요": "정보가 더 필요해요", "오접수": "담당자 확인 결과 처리하지 않기로 했어요"}
 LIFE_WARN = "🚑 사람이 다치거나 갇혔다면 지금 바로 119에 전화하세요. 신고는 그다음에 보내도 돼요."
 FLOW_TTL = 1800   # 쓰다 만 신고는 30분 뒤 잊는다
+NO_CONTACT = "보내지 않을래요"
+CONTACT_KB = {"keyboard": [[{"text": "📞 내 연락처 보내기", "request_contact": True}], [{"text": NO_CONTACT}]],
+              "resize_keyboard": True, "one_time_keyboard": True, "input_field_placeholder": "연락처는 아래 버튼으로만 보낼 수 있어요"}
+AFTER_TXT = "🚑 위험해지면 119·112에 바로 전화하세요. 아래 메뉴로 언제든 다시 신고할 수 있어요."
 
 
 class TelegramBot:
@@ -72,14 +86,18 @@ class TelegramBot:
         self.api = env.get("TELEGRAM_API_BASE", "https://api.telegram.org").rstrip("/")
         self.channel = env.get("TELEGRAM_CHANNEL_ID", "").strip()
         base = (env.get("TELEGRAM_WEBHOOK_URL") or env.get("RENDER_EXTERNAL_URL") or "").strip().rstrip("/")
+        self.public_base = base   # 담당자 알림의 '관리자 화면 열기' 버튼(https 주소일 때만)
         self.webhook_url = base + "/api/telegram/webhook" if base else ""
         self.db, self.public, self.status_fn = db, public, status_fn
         self.secret = secrets.token_urlsafe(24)   # 웹훅 요청이 정말 텔레그램에서 왔는지 확인(시작할 때마다 새로)
         self.username, self.mode, self.error = None, None, None
-        self.q = queue.Queue(maxsize=5000)
+        self.q = queue.Queue(maxsize=5000)   # 먼저 보낼 것: 신고 답장·버튼 응답·질문
+        self.bulk, self.block = collections.deque(), threading.Lock()   # 뒤에 보낼 것: 구독자 모두에게 보내는 공지
         self.flows, self.flock = {}, threading.Lock()   # 대화방별로 쓰고 있는 신고(메모리에만, 30분)
         self.hooks = {}   # 서버가 채운다: submit(text, chat), supplement(iid, text, chat), cancel(iid, token), info(iid)
         self.watch_s = float(env.get("TELEGRAM_WATCH_S", "15"))   # 신고 진행 상황을 확인하는 간격(초)
+        self.staff = StaffDesk(self, env)   # 담당자 단체방·주민 공지 채널
+        self.sweep_at = 0.0
 
     @property
     def enabled(self):
@@ -109,10 +127,12 @@ class TelegramBot:
                 raise RuntimeError(f"getMe 실패: {me.get('description') or me.get('error_code')}")
             self.username = me["result"].get("username")
             self.call("setMyCommands", {"commands": COMMANDS})   # 입력창 옆 '메뉴'에 명령 목록(디스코드의 / 명령처럼)
+            self.call("setMyCommands", {"commands": GROUP_COMMANDS, "scope": {"type": "all_group_chats"}})   # 단체방(담당자 방)
             threading.Thread(target=self._watch, daemon=True).start()
             if self.webhook_url:
                 r = self.call("setWebhook", {"url": self.webhook_url, "secret_token": self.secret,
-                                             "allowed_updates": ["message", "callback_query"], "drop_pending_updates": False})
+                                             "allowed_updates": ["message", "callback_query", "channel_post", "my_chat_member"],
+                                             "drop_pending_updates": False})
                 if not r.get("ok"):
                     raise RuntimeError(f"setWebhook 실패: {r.get('description') or r.get('error_code')}")
                 self.mode = "webhook"
@@ -127,7 +147,8 @@ class TelegramBot:
         if not self.enabled:
             return {"enabled": False}
         return {"enabled": True, "bot": self.username, "mode": self.mode, "error": self.error,
-                "subscribers": len(self.db.list_records("tg_sub"))}
+                "subscribers": len(self.db.list_records("tg_sub")), "bulk_pending": len(self.bulk),
+                "staff_rooms": len(self.staff.rooms("staff")), "channel": bool(self.channel_target()[0])}
 
     def _poll(self):
         offset = None
@@ -143,28 +164,58 @@ class TelegramBot:
                 except Exception:
                     pass
 
+    def _next_job(self):
+        """먼저 보낼 것(신고 답장 등)이 있으면 그것부터, 없을 때만 공지 1:1 보내기를 하나."""
+        try:
+            return self.q.get_nowait()
+        except queue.Empty:
+            pass
+        with self.block:
+            if self.bulk:
+                return self.bulk.popleft()
+        try:
+            return self.q.get(timeout=0.5)
+        except queue.Empty:
+            return None
+
     def _sender(self):
         while True:
-            method, payload = self.q.get()
+            job = self._next_job()
+            if job is None:
+                continue
+            method, payload = job
             r = self.call(method, payload)
-            if not r.get("ok") and r.get("error_code") == 403 and payload.get("chat_id"):   # 사용자가 봇을 차단함
-                self.db.delete_record("tg_sub", str(payload["chat_id"]))
+            if not r.get("ok") and r.get("error_code") == 429:   # 너무 많이 보냄: 텔레그램이 알려 준 만큼 쉬고 한 번 더
+                time.sleep(min(float((r.get("parameters") or {}).get("retry_after", 1)), 30))
+                r = self.call(method, payload)
+            cid = payload.get("chat_id")
+            if not r.get("ok") and cid is not None:
+                if r.get("error_code") == 403:   # 사용자가 봇을 차단함
+                    self.db.delete_record("tg_sub", str(cid))
+                self.staff.send_failed(cid, r)   # 연결된 담당자 방·채널이면 이유를 남긴다
+            elif isinstance(cid, int) and cid < 0:   # 단체방·채널(번호가 음수): 예전 오류 표시를 지운다
+                self.staff.send_ok(cid)
             time.sleep(0.05)   # 텔레그램 전송 한도(초당 약 30건) 아래로
 
-    def _queue(self, method, payload):
+    def _queue(self, method, payload, bulk=False):
+        if bulk:
+            with self.block:
+                self.bulk.append((method, payload))
+            return
         try:
             self.q.put_nowait((method, payload))
         except queue.Full:
             pass
 
-    def send(self, chat_id, text, buttons=None, markup=None):
-        """buttons: 메시지에 붙는 버튼(인라인), markup: 아래쪽 키보드 자리 버튼·입력창 안내문(ReplyKeyboard/ForceReply)."""
+    def send(self, chat_id, text, buttons=None, markup=None, bulk=False):
+        """buttons: 메시지에 붙는 버튼(인라인), markup: 아래쪽 키보드 자리 버튼·입력창 안내문(ReplyKeyboard/ForceReply).
+        bulk: 구독자 모두에게 보내는 공지(신고 답장보다 뒤에 보낸다)."""
         payload = {"chat_id": chat_id, "text": text[:4000], "disable_web_page_preview": True}
         if buttons:
             payload["reply_markup"] = {"inline_keyboard": buttons}
         elif markup:
             payload["reply_markup"] = markup
-        self._queue("sendMessage", payload)
+        self._queue("sendMessage", payload, bulk)
 
     def edit(self, chat_id, message_id, text, buttons=None):
         """버튼을 누른 메시지를 고쳐 쓴다(buttons가 없으면 버튼을 없앤다)."""
@@ -185,14 +236,27 @@ class TelegramBot:
     def handle(self, update):
         if "callback_query" in update:
             return self._callback(update["callback_query"])
+        if "channel_post" in update:   # 주민 공지 채널 연결(/channel 코드)
+            return self.staff.handle_channel(update["channel_post"])
+        if "my_chat_member" in update:   # 봇이 단체방·채널에서 빠짐
+            return self.staff.member_update(update["my_chat_member"])
         msg = update.get("message") or {}
         chat, text = (msg.get("chat") or {}).get("id"), (msg.get("text") or "").strip()
+        if (msg.get("chat") or {}).get("type") in ("group", "supergroup"):   # 단체방: 담당자 방 연결·현황 명령만
+            return self.staff.handle_group(msg)
         if chat is None or (msg.get("chat") or {}).get("type") not in (None, "private"):
-            return   # 1:1 대화만(단체방에서 명령을 받지 않는다)
+            return   # 그 밖의 곳에서는 명령을 받지 않는다(신고는 1:1 대화만)
         cmd, _, arg = text.partition(" ")
         cmd = cmd.split("@")[0].lower()
         key = cmd if cmd.startswith("/") else text   # 명령(/report)과 메뉴 버튼 글자를 같은 뜻으로
         flow = self._flow(chat)
+        if msg.get("contact"):   # '📞 내 연락처 보내기'
+            return self._got_contact(chat, msg, flow)
+        if flow and flow["step"] == "contact":
+            self._drop(chat)   # 연락처를 묻던 중에 다른 것을 하면 묻기를 그만둔다(안 보내도 신고는 그대로)
+            if text == NO_CONTACT:
+                return self.send(chat, "알겠어요. 연락처 없이도 신고는 그대로 처리돼요.\n" + AFTER_TXT, markup=MENU)
+            flow = None
         reply_to = (msg.get("reply_to_message") or {}).get("message_id")
         ask, matched = self._pending_ask(chat, reply_to)   # 담당자 질문에 대한 답인지
         ask = ask if (matched or not flow) else None   # 질문 메시지에 답장했거나, 쓰던 신고가 없을 때만 답으로 본다
@@ -227,10 +291,21 @@ class TelegramBot:
             self.send(chat, self.situation_text())
         elif key in MY_WORDS:
             self.my_reports(chat)
+        elif cmd in ("/contact", "/연락처"):   # 신고에 연락처를 나중에 붙이기(선택)
+            iid = self._latest_report(chat)
+            if not iid:
+                return self.send(chat, "연락처를 붙일 신고가 없어요. 🆘 신고하기로 신고한 뒤에 보내 주세요.", markup=MENU)
+            with self.flock:
+                self.flows[chat] = {"id": secrets.token_hex(3), "step": "contact", "iid": iid, "at": time.time()}
+            self.send(chat, f"📞 {iid} 신고에 내 연락처를 붙일까요? (선택) 담당자만 보고, 신고가 끝나거나 48시간이 지나면 지워요.", markup=CONTACT_KB)
         elif key in HELP_WORDS or cmd.startswith("/"):
             self.send(chat, HELP, markup=MENU)
         elif text == "📍 지금 위치 보내기":   # 위치 보내기를 못 하는 기기(컴퓨터용 텔레그램 등)
             self.send(chat, "이 기기에서는 위치를 보낼 수 없어요. 아래 입력창에 주소나 근처 건물·가게 이름을 적어 주세요.")
+        elif text == "📞 내 연락처 보내기":   # 연락처 보내기를 못 하는 기기(컴퓨터용 텔레그램 등)
+            self.send(chat, "이 기기에서는 연락처를 보낼 수 없어요. 휴대폰 텔레그램에서 /contact 를 보내 주세요.", markup=MENU)
+        elif text == NO_CONTACT:   # 연락처 묻기가 끝난 뒤 누른 버튼
+            self.send(chat, AFTER_TXT, markup=MENU)
         elif ask and text:
             self._bg(self._answer, chat, ask, text)
         elif flow and text:
@@ -257,7 +332,7 @@ class TelegramBot:
         now = f"지금 연결된 우리 집: {self.home_place(h)} ({hid})\n다른 코드로 바꾸려면 " if h else ""
         with self.flock:
             self.flows[chat] = {"id": secrets.token_hex(3), "step": "code", "at": time.time()}
-        self.send(chat, "🏠 우리 집 연결\n" + (now or "") + "주민 화면 '우리 집'에 있는 가구 코드를 아래 입력창에 적어 보내 주세요.\n"
+        self.send(chat, "🏠 우리 집 연결\n" + (now or "") + "주민 화면 '🏠 우리 집'에 있는 우리 집 번호(예: H-3F9A1C2B7D)를 아래 입력창에 적어 보내 주세요.\n"
                         "연결하면 신고할 때 담당자가 우리 집을 바로 알고, 안부 확인에도 버튼으로 답할 수 있어요."
                         + ("\n연결을 끊으려면 /unlink" if h else ""),
                   markup={"force_reply": True, "input_field_placeholder": "예: H-3F9A1C2B7D"})
@@ -267,7 +342,7 @@ class TelegramBot:
             return
         status, res = self.hooks["login"](code, chat)
         if status >= 400:
-            return self.send(chat, f"⚠️ {res.get('error', '가구 코드를 확인하지 못했어요')}\n다시 하려면 🏠 우리 집 연결을 누르세요.", markup=MENU)
+            return self.send(chat, f"⚠️ {res.get('error', '우리 집 번호를 확인하지 못했어요')}\n다시 하려면 🏠 우리 집 연결을 누르세요.", markup=MENU)
         sub = self.db.get_record("tg_sub", str(chat)) or {"chat_id": chat, "since": time.time()}   # 연결하면 알림도 받는다
         sub["household"] = res["id"]
         self.db.put_record("tg_sub", str(chat), sub)
@@ -494,7 +569,7 @@ class TelegramBot:
         self._after_report(chat, iid, info)
 
     def _after_report(self, chat, iid, info):
-        """빠진 정보가 있으면 입력창을 열어 바로 묻고, 없으면 메뉴로 돌아간다."""
+        """빠진 정보가 있으면 입력창을 열어 바로 묻고, 없으면 연락처를 보낼지 묻는다(선택). 이미 보냈으면 메뉴로."""
         if info.get("state") == "보완 필요" and info.get("missing"):
             with self.flock:
                 self.flows[chat] = {"id": secrets.token_hex(3), "step": "supp", "iid": iid, "at": time.time()}
@@ -502,8 +577,50 @@ class TelegramBot:
             self.send(chat, f"⚠️ 처리에 필요한 정보가 빠졌어요: {need}\n아래 입력창에 적어 보내 주세요."
                             + ("\n위치를 모르면 📎(첨부) → 위치로 지금 위치를 보내도 돼요." if "위치" in need else ""),
                       markup={"force_reply": True, "input_field_placeholder": "예: 옥포동 ○○마트 앞이에요"})
+        elif "contact" in self.hooks and not info.get("cancelled") and not (self.db.get_record("tg_report", f"{iid}:{chat}") or {}).get("contact"):
+            with self.flock:
+                self.flows[chat] = {"id": secrets.token_hex(3), "step": "contact", "iid": iid, "at": time.time()}
+            self.send(chat, "📞 담당자가 전화로 확인할 수 있게 내 연락처를 보낼까요? (선택)\n"
+                            "· 안 보내도 신고는 그대로 처리돼요\n· 담당자만 봐요(접수번호 조회·다른 주민에게는 안 보여요)\n"
+                            "· 신고가 끝나거나 48시간이 지나면 지워요\n" + AFTER_TXT, markup=CONTACT_KB)
         else:
-            self.send(chat, "🚑 위험해지면 119·112에 바로 전화하세요. 아래 메뉴로 언제든 다시 신고할 수 있어요.", markup=MENU)
+            self.send(chat, AFTER_TXT, markup=MENU)
+
+    def _latest_report(self, chat):
+        """이 대화방에서 하루 안에 보낸, 아직 끝나지 않은 가장 최근 신고 번호."""
+        mine = [r for r in self.db.list_records("tg_report")
+                if r.get("chat_id") == chat and not r.get("done") and time.time() - r.get("at", 0) < 86400]
+        return max(mine, key=lambda r: r.get("at", 0))["iid"] if mine else None
+
+    def _got_contact(self, chat, msg, flow):
+        c, frm = msg.get("contact") or {}, msg.get("from") or {}
+        if not c.get("user_id") or c.get("user_id") != frm.get("id"):   # 남의 연락처(주소록에서 고른 것)는 받지 않는다
+            return self.send(chat, "📞 본인 연락처만 받을 수 있어요. 아래 [📞 내 연락처 보내기] 버튼을 눌러 주세요.", markup=CONTACT_KB)
+        iid = flow["iid"] if flow and flow["step"] == "contact" else self._latest_report(chat)
+        self._drop(chat)
+        if not iid or "contact" not in self.hooks:
+            return self.send(chat, "연락처를 붙일 신고가 없어요. 🆘 신고하기로 신고한 뒤에 보내 주세요.", markup=MENU)
+        self._bg(self._contact, chat, iid, str(c.get("phone_number") or ""))
+
+    def _contact(self, chat, iid, phone):
+        status, res = self.hooks["contact"](iid, phone, self.pseudonym(chat))
+        if status >= 400:
+            return self.send(chat, f"⚠️ 연락처를 전하지 못했어요: {res.get('error', '오류')}", markup=MENU)
+        key = f"{iid}:{chat}"
+        rec = self.db.get_record("tg_report", key)
+        if rec is not None:
+            self.db.put_record("tg_report", key, {**rec, "contact": True})
+        self.send(chat, f"📞 연락처를 담당자에게만 전했어요 ({iid} 신고).\n신고가 끝나거나 48시간이 지나면 지워요. 지금 지우려면 아래 버튼을 누르세요.",
+                  [[{"text": "🗑 연락처 지우기", "callback_data": f"cd:{iid}"}]])
+        self.send(chat, AFTER_TXT, markup=MENU)
+
+    def _forget_contact(self, chat, mid, iid):
+        status, res = self.hooks["forget"](iid, self.pseudonym(chat))
+        key = f"{iid}:{chat}"
+        rec = self.db.get_record("tg_report", key)
+        if rec is not None:
+            self.db.put_record("tg_report", key, {**rec, "contact": False})
+        self.edit(chat, mid, f"🗑 {iid} 신고에서 연락처를 지웠어요." if status < 400 else f"⚠️ {res.get('error', '지우지 못했어요')}")
 
     def _supplement(self, chat, iid, text):
         code, res = self.hooks["supplement"](iid, text, chat)
@@ -545,13 +662,20 @@ class TelegramBot:
                   [[{"text": f"🔄 {r['iid']}", "callback_data": f"pg:{r['iid']}"}] for r in mine])
 
     def _watch(self):
-        """텔레그램으로 받은 신고의 진행(출동 승인·담당자 안내 등)을 신고자에게 알린다."""
+        """텔레그램으로 받은 신고의 진행(출동 승인·담당자 안내 등)을 신고자에게, 급한 신고를 담당자 방에 알린다.
+        10분마다 기한이 지난 신고자 연락처를 지운다."""
         while True:
             time.sleep(self.watch_s)
-            try:
-                self.watch_once()
-            except Exception as e:
-                print("telegram watch error:", type(e).__name__, e)
+            for fn in (self.watch_once, self.staff.scan, self._sweep):
+                try:
+                    fn()
+                except Exception as e:
+                    print("telegram watch error:", type(e).__name__, e)
+
+    def _sweep(self):
+        if "sweep" in self.hooks and time.time() - self.sweep_at >= 600:
+            self.sweep_at = time.time()
+            self.hooks["sweep"]()
 
     def watch_once(self):
         if not self.hooks:
@@ -583,7 +707,12 @@ class TelegramBot:
     def _subscribe(self, chat, payload):
         sub = self.db.get_record("tg_sub", str(chat)) or {"chat_id": chat, "since": time.time()}
         self.db.put_record("tg_sub", str(chat), sub)
-        self.send(chat, "🔔 재난 알림을 받습니다. 담당자가 확정한 위기 단계와 공지를 보내 드려요.\n\n" + HELP, markup=MENU)
+        link = self.channel_target()[1]
+        self.send(chat, ("🔔 재난 알림을 받습니다. 신고 답장·담당자 질문·우리 집 안부 확인을 여기로 보내 드려요."
+                         if link else "🔔 재난 알림을 받습니다. 담당자가 확정한 위기 단계와 공지를 보내 드려요.") + "\n\n" + HELP, markup=MENU)
+        if link:   # 모두에게 보내는 공지·위기 단계는 채널로(구독자가 많아도 한 번에 간다)
+            self.send(chat, "📢 모두에게 보내는 공지와 위기 단계는 공지 채널에 올라와요. 놓치지 않게 채널에 들어와 주세요.",
+                      [[{"text": "📢 공지 채널 들어가기", "url": link}]])
         if payload == "report":   # 주민 화면의 '텔레그램으로 신고' 링크(t.me/봇?start=report)
             self.start_report(chat)
         elif re.fullmatch(r"H-[0-9A-F]{6,20}|H\d{2}", payload or ""):   # 주민 화면의 '텔레그램으로 알림 받기'(가구 코드가 붙은 링크)
@@ -594,7 +723,15 @@ class TelegramBot:
         chat, mid = (m.get("chat") or {}).get("id"), m.get("message_id")
         data, answer, alert = cq.get("data") or "", "처리할 수 없는 버튼입니다", False
         sub = self.db.get_record("tg_sub", str(chat)) if chat is not None else None
-        if data.startswith("safe:") and sub and sub.get("household") == data[5:]:   # 연결된 우리 집의 안부만 답할 수 있다
+        if data.startswith("sa:"):   # 담당자 방 알림의 [👀 확인했어요]
+            answer, alert = self.staff.callback(cq)
+        elif data.startswith("cd:") and chat is not None:   # 보낸 연락처 지우기
+            if self.db.get_record("tg_report", f"{data[3:]}:{chat}") and "forget" in self.hooks:
+                answer = "연락처를 지우는 중이에요"
+                self._bg(self._forget_contact, chat, mid, data[3:])
+            else:
+                answer = "이 대화방에서 보낸 신고만 지울 수 있어요"
+        elif data.startswith("safe:") and sub and sub.get("household") == data[5:]:   # 연결된 우리 집의 안부만 답할 수 있다
             try:
                 self.public.respond_check(data[5:])
                 answer = "안전하다고 알렸어요. 고맙습니다."
@@ -680,19 +817,43 @@ class TelegramBot:
             lines.append("🏫 자리가 남은 대피소: " + ", ".join(f"{x['name']} {x['capacity_left']}명" for x in free))
         if d.get("control_zones"):
             lines.append("⛔ 통제 중인 길: " + ", ".join(c["name"] for c in d["control_zones"]))
+        link = self.channel_target()[1]
+        if link:
+            lines.append(f"📢 공지 채널: {link}")
         lines.append("다치거나 갇혔다면 119·112에 바로 전화하세요.")
         return "\n".join(lines)
 
+    def channel_target(self):
+        """(공지 채널 번호, 주민이 들어올 주소). 관리자 화면에서 연결한 채널이 먼저, 없으면 TELEGRAM_CHANNEL_ID."""
+        room = self.staff.channel()
+        if room:
+            return room["chat_id"], room.get("link")
+        return (self.channel or None), None
+
+    def channel_linked(self, link):
+        """채널을 연결했을 때 지금 구독자에게 한 번 알린다(뒤에서 천천히)."""
+        for sub in self.db.list_records("tg_sub"):
+            self.send(sub["chat_id"], "📢 이제 모두에게 보내는 공지와 위기 단계는 공지 채널에 올라와요. 놓치지 않게 채널에 들어와 주세요.\n"
+                                      "신고 답장·담당자 질문·우리 집 안부 확인은 지금처럼 여기로 와요.",
+                      [[{"text": "📢 공지 채널 들어가기", "url": link}]], bulk=True)
+
     def _broadcast(self, text, zone="all"):
+        """공지·위기 단계 보내기. 채널이 있으면 채널에 한 번 올리고(바로), 1:1은 뒤에서 차례로 보낸다.
+        주민이 들어올 수 있는 채널(주소가 있음)이면 모두에게 보내는 글은 1:1로 보내지 않는다(구독자가 몇만 명이어도
+        채널 글 하나로 끝나고, 신고 답장이 밀리지 않게). 구역 공지는 그 구역에 연결된 집에는 1:1로도 보낸다."""
+        channel, link = self.channel_target()
+        if channel:
+            label = places.describe(zone) if zone != "all" else ""
+            self.send(channel, text if zone == "all" else f"📍 {label} 지역\n{text}")
         for sub in self.db.list_records("tg_sub"):
             hid = sub.get("household")
-            if zone != "all" and hid:   # 구역 공지는 그 구역 집에만(집을 연결하지 않은 구독자는 받는다)
+            if zone != "all" and hid:   # 구역 공지는 그 구역 집에만
                 h = self.public.f.households.get(hid)
                 if h and h.get("zone") != zone:
                     continue
-            self.send(sub["chat_id"], text)
-        if self.channel:
-            self.send(self.channel, text)
+            elif link:   # 채널에서 보는 글(모두에게 보내는 글, 집을 연결하지 않은 구독자의 구역 공지)
+                continue
+            self.send(sub["chat_id"], text, bulk=True)
 
     def announcement(self, row):
         if not self.enabled or row.get("audience") == "volunteer":
@@ -710,7 +871,7 @@ class TelegramBot:
         elif kind == "welfare":
             started = set(data.get("households", []))
             for sub in self.db.list_records("tg_sub"):
-                if sub.get("household") in started:
+                if sub.get("household") in started:   # 구역 전체라 많을 수 있다: 신고 답장보다 뒤에서
                     self.send(sub["chat_id"], "🙋 담당자가 우리 집이 안전한지 확인하고 있어요.\n안전하면 아래 버튼을 눌러 주세요. "
                               "도움이 필요하면 119에 전화하거나 주민 화면에서 신고해 주세요.",
-                              [[{"text": "✅ 안전합니다", "callback_data": "safe:" + sub["household"]}]])
+                              [[{"text": "✅ 안전합니다", "callback_data": "safe:" + sub["household"]}]], bulk=True)

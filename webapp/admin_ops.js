@@ -21,7 +21,7 @@
   const LOADERS = {overview: () => { loadSituation(); }, notice: loadAnnouncements, supply: loadSupply, volunteer: loadVolunteer, recovery: loadRecovery,
                    welfare: loadChecks, sensor: () => { loadVerifyDocs(); loadSensorLive(); }, approvals: () => loadApprovals(),
                    dispatch: () => { loadDispatch(); loadControl(); loadShelterOps(); },
-                   guidance: loadIncidents, system: () => { loadHealth(); loadAgents(); }};
+                   guidance: loadIncidents, system: () => { loadHealth(); loadAgents(); }, telegram: loadTelegram};
   function go(tab) {
     current = tab;
     document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.go === tab));
@@ -29,6 +29,7 @@
     clearInterval(refreshTimer);
     if (tab === 'welfare') refreshTimer = setInterval(loadChecks, 3000);   // 남은 시간·격상 자동 갱신
     if (tab === 'sensor') refreshTimer = setInterval(loadSensorLive, 2000);   // 게이트웨이 수신값 자동 갱신
+    if (tab === 'telegram') refreshTimer = setInterval(loadTelegram, 3000);   // 코드로 방이 연결되면 바로 보이게
     if (LOADERS[tab]) LOADERS[tab]();
     try { localStorage.setItem('adminTab', tab); } catch (e) { /* 저장 불가 환경 */ }
   }
@@ -128,6 +129,11 @@
   async function loadAnnouncements() {
     try {
       await loadMeta();   // 구역 고르기 목록
+      api('/api/telegram').then(t => {   // 텔레그램으로는 어디에 가는지
+        const ch = t.enabled && t.rooms.find(r => r.kind === 'channel');
+        $('annTg').textContent = !t.enabled ? '' : ch ? `텔레그램: 주민 대상 공지는 공지 채널 「${ch.title || '채널'}」에 한 번 올려요(구역 공지는 그 구역에 연결된 집에도 1:1로).`
+          : `텔레그램: 주민 대상 공지는 알림 받는 주민 ${t.subscribers}명에게 1:1로 보내요. 사람이 많으면 📨 텔레그램 탭에서 공지 채널을 연결하세요.`;
+      }).catch(() => {});
       const d = await api('/api/announcements');
       const hide = $('annHideEnded').checked, rows = hide ? d.items.filter(a => a.active) : d.items, ended = d.items.length - d.items.filter(a => a.active).length;
       $('annList').classList.toggle('muted', !rows.length);
@@ -138,6 +144,79 @@
         : (hide && ended ? '게시 중인 공지가 없습니다.' : '아직 올린 공지가 없습니다.')) + (hide && ended ? `<p class="muted">내린 공지 ${ended}건은 숨겼습니다.</p>` : '');
     } catch (e) { showError('annList', e); }
   }
+
+  // ---------------------------------------------------------------- 📨 텔레그램: 담당자 방·주민 공지 채널(1회용 코드로 연결)
+  const TG_CODE = {};   // 용도(staff·channel) → 만든 코드와 안내
+  const mmss = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  function renderCode(purpose, rooms) {
+    const box = $('tgHow-' + purpose), c = TG_CODE[purpose];
+    if (!c) return;
+    const linked = rooms.find(r => r.kind === purpose && r.linked_at * 1000 >= c.made - 5000);
+    if (linked) {   // 코드를 써서 방이 연결됨
+      delete TG_CODE[purpose];
+      box.hidden = false;
+      box.innerHTML = `✅ <b>${E(linked.title || linked.chat_id)}</b>${purpose === 'staff' ? ' 방을 담당자 방으로' : ' 채널을 공지 채널로'} 연결했어요.`;
+      return;
+    }
+    const left = (c.made + c.expires_in * 1000 - Date.now()) / 1000;
+    box.hidden = false;
+    if (left <= 0) { delete TG_CODE[purpose]; box.innerHTML = '코드 시간(10분)이 지났어요. 다시 만들어 주세요.'; return; }
+    box.innerHTML = `연결 코드 <span class="tgcode">${E(c.code)}</span> <span class="muted">남은 시간 ${mmss(left)} · 한 번만 쓸 수 있어요</span>` + (purpose === 'staff'
+      ? `<ol>${c.startgroup ? `<li><a href="${E(c.startgroup)}" target="_blank" rel="noopener">📲 텔레그램에서 단체방을 골라 봇 추가하기</a> <span class="muted">(누르면 텔레그램이 열려요. 방을 고르면 바로 연결돼요)</span></li>` : ''}` +
+        `<li>${c.startgroup ? '또는 ' : ''}봇을 단체방에 초대한 뒤 그 방에 <code>${E(c.command)}</code> 보내기</li></ol>`
+      : `<ol><li>텔레그램에서 채널 만들기 <span class="muted">(공개 채널이면 주민이 주소로 바로 들어와요)</span></li>` +
+        `<li>채널 → 관리자 → 관리자 추가 → <b>@${E(c.bot || '봇')}</b> 검색 → 메시지 보내기·삭제 권한 주기</li>` +
+        `<li>채널에 <code>${E(c.command)}</code> 를 글로 올리기 <span class="muted">(봇이 그 글을 지우고 연결해요)</span></li></ol>`);
+  }
+  async function loadTelegram() {
+    try {
+      const d = await api('/api/telegram');
+      for (const id of ['tgStaffCode', 'tgChanCode']) $(id).disabled = !d.enabled;
+      if (!d.enabled) {
+        $('tgStatus').innerHTML = `${chip('텔레그램 봇이 꺼져 있어요', 'warn')} 서버 설정(Render → Environment)에 TELEGRAM_BOT_TOKEN을 넣으면 켜져요. 토큰은 채팅·저장소에 적지 마세요.`;
+        $('tgStaffRooms').innerHTML = $('tgChannel').innerHTML = '';
+        return;
+      }
+      $('tgStatus').classList.remove('muted');
+      $('tgStatus').innerHTML = `봇 <b>@${E(d.bot || '?')}</b> · ${E(d.mode === 'webhook' ? '웹훅으로 받는 중' : d.mode === 'polling' ? '폴링으로 받는 중' : '연결 안 됨')}` +
+        `${d.error ? ' ' + chip(d.error, 'bad') : ''} · 알림 받는 주민 ${E(d.subscribers)}명` +
+        (d.bulk_pending ? ' · ' + chip(`공지를 1:1로 보내는 중: 남은 ${d.bulk_pending}건 (신고 답장이 먼저 나가요)`, 'warn') : '');
+      const row = r => `<div class="tgroom"><b>${E(r.title || r.chat_id)}</b> <span class="muted">${E(fmtDate(r.linked_at))} 연결${r.by ? ' · 코드 만든 사람 ' + E(r.by) : ''}</span>` +
+        `${r.error ? ' ' + chip(r.error, 'bad') : ''}${r.link ? ` · <a href="${E(r.link)}" target="_blank" rel="noopener">${E(r.link)}</a>` : (r.kind === 'channel' ? ' ' + chip('주민이 들어올 주소가 없어 1:1 알림도 함께 보내요', 'warn') : '')}` +
+        `<br><button type="button" class="quiet" data-tgtest="${E(r.chat_id)}">시험 ${r.kind === 'staff' ? '알림' : '글'} 보내기</button>` +
+        `<button type="button" class="quiet" data-tgunlink="${E(r.chat_id)}" data-tgkind="${E(r.kind)}">연결 끊기</button></div>`;
+      const staff = d.rooms.filter(r => r.kind === 'staff'), ch = d.rooms.find(r => r.kind === 'channel');
+      $('tgStaffRooms').innerHTML = staff.length ? staff.map(row).join('') : '<div class="muted">연결된 담당자 방이 없어요. 지금은 이 화면에서만 새 신고를 볼 수 있어요.</div>';
+      $('tgChannel').innerHTML = ch ? row(ch) : `<div class="muted">${d.env_channel ? '서버 설정(TELEGRAM_CHANNEL_ID)의 채널에도 올려요. 주민이 들어올 주소를 몰라 1:1 알림도 함께 보내요.'
+        : '연결된 채널이 없어요. 지금은 공지를 알림 받는 주민 모두에게 1:1로 보내요(사람이 많으면 다 받기까지 오래 걸려요).'}</div>`;
+      const r = d.rules || {};
+      $('tgRules').textContent = `알림 규칙: 매우 급함(긴급도 1)은 바로 · 긴급도 1~2를 ${Math.round((r.remind_s || 300) / 60)}분 동안 아무도 확인하지 않으면 한 번 더 · ` +
+        `나머지는 ${Math.round((r.digest_s || 1800) / 60)}분마다 숫자 요약 · 한 번에 ${r.batch || 3}건 넘게 들어오면 한 메시지로 묶어요. 연락처·우리 집 번호는 보내지 않아요.`;
+      for (const p of ['staff', 'channel']) renderCode(p, d.rooms);
+    } catch (e) { showError('tgStatus', e); }
+  }
+  document.addEventListener('click', async e => {
+    const b = e.target.closest('button[data-tgcode],button[data-tgtest],button[data-tgunlink]');
+    if (!b) return;
+    if (b.dataset.tgunlink && !confirm(b.dataset.tgkind === 'staff' ? '이 방의 연결을 끊을까요? 이 방으로 더 이상 알림을 보내지 않아요.'
+      : '공지 채널 연결을 끊을까요? 공지를 다시 주민 모두에게 1:1로 보내요.')) return;
+    b.disabled = true;
+    try {
+      if (b.dataset.tgcode) {
+        const c = await post('/api/telegram/link-code', {purpose: b.dataset.tgcode});
+        const d = await api('/api/telegram');
+        TG_CODE[b.dataset.tgcode] = {...c, made: Date.now(), bot: d.bot};
+        renderCode(b.dataset.tgcode, d.rooms);
+      } else if (b.dataset.tgtest) {
+        await post(`/api/telegram/rooms/${encodeURIComponent(b.dataset.tgtest)}/test`);
+        alert('보냈어요. 텔레그램에서 확인해 보세요.');
+      } else {
+        await post(`/api/telegram/rooms/${encodeURIComponent(b.dataset.tgunlink)}/unlink`);
+      }
+      await loadTelegram();
+    } catch (err) { alert(err.message); }
+    finally { b.disabled = false; }
+  });
 
   async function loadSituation() {
     try {
@@ -332,7 +411,7 @@
   }
 
   // ---------------------------------------------------------------- ⑦ 검증
-  // 외부 모듈이 보내는 센서 이름 → 화면 이름·단위(모르는 이름은 그대로 보여 준다)
+  // 노드가 보내는 센서 이름 → 화면 이름·단위(모르는 이름은 그대로 보여 준다)
   const EXT_LABEL = {temp: ['온도', '℃'], temperature: ['온도', '℃'], t: ['온도', '℃'], hum: ['습도', '%'], humidity: ['습도', '%'], h: ['습도', '%'],
     gas: ['가스', ''], co2: ['이산화탄소', 'ppm'], co: ['일산화탄소', 'ppm'], smoke: ['연기', ''], flame: ['불꽃', ''], dust: ['미세먼지', '㎍/㎥'],
     pm25: ['초미세먼지', '㎍/㎥'], pm10: ['미세먼지', '㎍/㎥'], light: ['밝기', ''], lux: ['밝기', 'lx'], water: ['수위', ''], level: ['수위', ''],
@@ -352,25 +431,28 @@
       const age = s => s == null ? '-' : `${s}초 전`;
       const ev = d.last_eval, o = ev && ev.output;
       if (ev && ev.approval_id && ev.approval_id !== lastSensorApproval) { lastSensorApproval = ev.approval_id; loadApprovals(); }   // 대기열 숫자 갱신
+      const via = d.link === '블루투스' ? '🔵 외부 블루투스 모듈' : d.link === 'USB' ? 'USB 케이블' : d.link === '가상' ? '가상 센서(시험)' : null;
       $('sensorLive').innerHTML =
+        (via ? `<div class="sensor-path">경로: 노드 A·B(·C·D·E) ─무선─▶ <b>G 마이크로비트</b> ─${E(via)}─▶ 노트북 게이트웨이 ─▶ 서버 ${chip('G 연결: ' + via, d.last_batch_age_s != null && d.last_batch_age_s <= 30 ? 'ok' : 'bad')}</div>` : '') +
         `<div>노드: ${d.nodes.map(n => chip(`${n.node} ${n.online ? '연결' : '끊김'} · ${age(n.last_seen_age_s)}`, n.online ? 'ok' : 'bad')).join(' ')}` +
         ` · 받은 값 ${E(d.received)}개${d.rejected ? ` · 버린 값 ${E(d.rejected)}개` : ''} · 강우 단계 ${E(d.rain_stage)}</div>` +
         table(['센서', '최근 값', '임계값', '받은 때'], d.sensors.map(s =>
-          `<tr><td>${E(s.key)}</td><td>${s.value == null ? '-' : chip(s.value, s.over ? 'bad' : 'ok')}</td><td>${E(s.threshold)}</td><td>${E(age(s.age_s))}</td></tr>`)) +
+          `<tr><td>${E(s.key)}${s.key === 'A.depth' ? ' <span class="muted">(수심)</span>' : ''}</td><td>${s.value == null ? '-' : chip(s.value, s.over ? 'bad' : s.over_caution ? 'warn' : 'ok')}</td>` +
+          `<td>${s.caution != null ? `주의 ${E(s.caution)} · 위험 ${E(s.threshold)}` : E(s.threshold)}</td><td>${E(age(s.age_s))}</td></tr>`)) +
         (o ? `<div>최근 판정: ${chip(o.status, o.status === '확정후보' ? 'bad' : o.status === '보류' ? 'warn' : 'ok')} 제안 단계 <b>${E(o.level)}</b> · ${E(o.summary)}` +
              (ev.approval_id ? ` · 승인 대기열에 올림(${E(ev.approval_id)})` : ev.duplicate_of ? ' · 같은 단계가 이미 대기·확정 중' : '') + '</div>' +
              (o.false_alarm_log.length ? `<div class="muted">${E(o.false_alarm_log.join(' / '))}</div>` : '')
            : '<div class="muted">아직 받은 값이 없습니다. 게이트웨이를 실행하세요.</div>') +
         (d.calibrated ? '' : '<div class="muted">임계값 보정 전(임시값)</div>') +
-        // G 노드 외부 모듈(블루투스): 감시 설정에 없는 센서 값. 판정에는 쓰지 않고 표시만
-        `<h3 style="margin:14px 0 4px">🔵 G 노드 외부 모듈 (블루투스)${(d.extra || []).length ? ' ' + chip(`${d.extra.length}개 센서`, 'ok') : ''}</h3>` +
+        // C·D·E 노드의 온도·조도처럼 감시 설정에 없는 센서 값. 판정에는 쓰지 않고 표시만(값이 있을 때만 보인다)
+        ((d.extra || []).length ? `<h3 style="margin:14px 0 4px">그 밖의 노드 센서 값 ${chip(`${d.extra.length}개`, 'ok')}</h3>` : '') +
         ((d.extra || []).length
           ? table(['노드', '센서', '최근 값', '받은 때', '상태'], d.extra.map(x => {
               const [name, unit] = extLabel(x.sensor);
               return `<tr><td>${E(x.node)}</td><td>${E(name)}${name !== x.sensor ? ` <span class="muted">(${E(x.sensor)})</span>` : ''}</td>` +
                 `<td><b>${E(x.value)}</b>${unit ? ' ' + E(unit) : ''}</td><td>${E(age(x.age_s))}</td><td>${chip(x.online ? '수신 중' : '끊김', x.online ? 'ok' : 'bad')}</td></tr>`;
-            })) + '<div class="muted">외부 모듈 값은 임계값이 없어 위기 단계 판정에는 쓰지 않고 표시만 합니다.</div>'
-          : '<div class="muted">아직 받은 값이 없습니다. 블루투스 모듈을 노트북과 페어링하고 게이트웨이를 <code>--bt-port COM5</code>처럼 실행하세요(기기 없이 시험: <code>--bt-simulate</code>).</div>') +
+            })) + '<div class="muted">감시 설정(임계값)에 없는 센서라 위기 단계 판정에는 쓰지 않고 표시만 합니다.</div>'
+          : '') +
         `<h3 style="margin:14px 0 4px">현장 버튼 신호${d.open_urgent ? ' ' + chip(`확인 안 한 급한 신호 ${d.open_urgent}건`, 'bad') : ''}</h3>` +
         table(['받은 때', '노드', '신호', '웹 반영', ''], d.events.map(x =>
           `<tr><td>${E(fmtTime(x.ts))}</td><td>${E(x.node)}</td><td>${x.urgent ? chip(x.label, x.open ? 'bad' : '') : E(x.label)}</td>` +
@@ -444,7 +526,7 @@
       try { const d = await api('/api/dispatch'); $('gZones').value = d.control_zones.filter(c => c.active).map(c => c.name).join(', '); }
       catch (err) { alert(err.message); }
     });
-    ['Wl', 'Wh', 'Vb'].forEach(k => $('s' + k).addEventListener('input', () => { $('o' + k).textContent = $('s' + k).value; }));
+    ['Dp', 'Vb'].forEach(k => $('s' + k).addEventListener('input', () => { $('o' + k).textContent = $('s' + k).value; }));
 
     $('supplyForm').addEventListener('submit', async e => {
       e.preventDefault();
@@ -551,7 +633,7 @@
       const now = Date.now() / 1000, rows = [];
       for (let i = 0; i < 3; i++) {   // 최근 3초 동안 같은 값이 유지된 것으로 보냄(연속 3회 조건)
         const ts = now - 2 + i;
-        rows.push({node: 'A', sensor: 'water_low', ts, value: Number($('sWl').value)}, {node: 'A', sensor: 'water_high', ts, value: Number($('sWh').value)},
+        rows.push({node: 'A', sensor: 'depth', ts, value: Number($('sDp').value)},
                   {node: 'B', sensor: 'tilt', ts, value: $('sTilt').checked ? 1 : 0}, {node: 'B', sensor: 'vibration', ts, value: Number($('sVb').value)});
       }
       try {
@@ -576,7 +658,7 @@
   // ---------------------------------------------------------------- 새 긴급 신고·SOS 알림
   // 담당자가 새로고침을 누르지 않아도 주민의 긴급 신고(긴급도 1)와 봉사자 SOS가 15초 안에 보이게 한다.
   // 새로 들어오면 화면 맨 위 빨간 띠·탭 제목·짧은 소리로 알린다. 입력 중일 때는 목록을 다시 그리지 않는다
-  let seenUrgent = null, seenSos = null, seenAns = null, alertCount = 0, lastAlertId = null;
+  let seenUrgent = null, seenSos = null, seenAns = null, seenRep = null, alertCount = 0, lastAlertId = null;
   const TITLE = document.title;
   const editing = () => !!document.activeElement?.closest?.('#incidents, #approvals, form') || !!document.querySelector('#incidents details.fix[open]');
   function beep() {
@@ -610,17 +692,23 @@
       const urgent = inc.items.map(x => x.output).filter(o => o.urgency === 1 && o.state !== '오접수');
       // 담당자가 되물은 질문에 신고자가 텔레그램으로 답하면 함께 알린다
       const answers = inc.items.flatMap(x => (x.output.questions || []).flatMap(q => (q.answers || []).map(a => ({id: `${x.output.id}:${q.id}:${a.at}`, iid: x.output.id, text: a.text}))));
+      // 급한 신고(긴급도 1~2)에 같은 신고가 또 들어오면(여러 사람이 알림) 함께 알린다
+      const reps = new Map(inc.items.map(x => x.output).filter(o => o.urgency <= 2 && o.state !== '오접수' && o.repeats).map(o => [o.id, o]));
       if (seenUrgent) {
         const fresh = urgent.filter(o => !seenUrgent.has(o.id)), freshAns = answers.filter(a => !seenAns.has(a.id));
+        const moreRep = [...reps.values()].filter(o => o.repeats > (seenRep.get(o.id) || 0));
         if (fresh.length) lastAlertId = fresh[0].id;
+        else if (moreRep.length) lastAlertId = moreRep[0].id;
         else if (freshAns.length) lastAlertId = freshAns[0].iid;
         const lines = [...fresh.map(o => `${o.type} ${o.id}: ${String(o.text || '').slice(0, 40)}`),
                        ...vol.sos.filter(s => !seenSos.has(s.id)).map(s => `봉사자 SOS(${s.name || vn(s.volunteer)})`),
-                       ...freshAns.map(a => `💬 ${a.iid} 신고자 답: ${String(a.text).slice(0, 40)}`)];
+                       ...freshAns.map(a => `💬 ${a.iid} 신고자 답: ${String(a.text).slice(0, 40)}`),
+                       ...moreRep.map(o => `🔁 ${o.type} ${o.id}: 같은 신고가 또 들어옴(모두 ${o.repeats + 1}번)`)];
         if (lines.length) raiseAlert(lines);
       }
       seenUrgent = new Set(urgent.map(o => o.id));
       seenAns = new Set(answers.map(a => a.id));
+      seenRep = new Map([...reps.values()].map(o => [o.id, o.repeats]));
       seenSos = new Set(vol.sos.map(s => s.id));
       $('approvalCount').textContent = ap.items.length;
       $('approvalCount').hidden = false;

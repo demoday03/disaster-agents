@@ -432,6 +432,17 @@ class TestPipeline(ServerBase):
         self.assertEqual(self.staff_view(d3["output"]["id"])["household"], hid)
         self.assertEqual(anon.post(f"/api/incidents/{d3['output']['id']}/cancel", {"token": d3["edit_token"]})[0], 200)
 
+    def test_same_report_again_is_counted_on_original(self):
+        """10분 안에 같은 내용이 또 들어오면 새로 만들지 않고 원래 신고에 '같은 신고 N번 더'를 남긴다(웹·텔레그램 공통)."""
+        anon, text = Client(self.base), "위치: 옥포동 다리 밑 · 사람이 갇혔거나 다쳤어요(구조 요청) (중복 시험)"
+        code, d = anon.post("/api/incidents", {"text": text})
+        self.assertEqual(code, 201, d)
+        for n in (1, 2):
+            code, again = Client(self.base).post("/api/incidents", {"text": text})
+            self.assertEqual((code, again["duplicate"], again["output"]["id"]), (200, True, d["output"]["id"]))
+            self.assertNotIn("edit_token", again)                                        # 남의 신고는 고치거나 취소 못 함
+            self.assertEqual(self.staff_view(d["output"]["id"])["repeats"], n)
+
     def test_human_vs_ai_battle(self):
         """사람 vs AI 분류 대결: 문제에는 정답이 없고, 채점은 서버가 한다. AI 결과는 한 번만 계산해 둔다."""
         import json as _json
