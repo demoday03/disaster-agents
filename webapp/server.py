@@ -16,7 +16,7 @@ os.chdir(ROOT)
 from common.llm import SolarClient
 from common.docparse import DocumentParser
 from common.masking import mask
-from common import scenario
+from common import places, scenario
 from agents import crosscheck, dispatch, intake, monitor, recovery, welfare, verify
 from coordinator import Coordinator
 from database import db as database
@@ -457,7 +457,9 @@ def approve_one(current, s, reason):
 BULK_SKIP_KINDS = {"welfare_guidance_review"}   # 검증이 불확실한 안내문은 하나씩 보고 판단한다
 
 
-PUBLIC_HIDDEN = ("notes", "invalidated_by", "invalid_reason", "invalidated_at", "triage", "owner_hash", "household")   # household = 가구 코드(로그인용)
+# household = 가구 코드(로그인용), reporter = 텔레그램 신고자 번호, questions = 담당자 질문(담당자 이름이 들어 있음)
+PUBLIC_HIDDEN = ("notes", "invalidated_by", "invalid_reason", "invalidated_at", "triage", "owner_hash", "household", "household_place",
+                 "reporter", "questions")
 
 
 def public_row(row):
@@ -867,12 +869,13 @@ def reporter_change(iid, action, data):
     return 200, public_row(new)
 
 
-CARRY_FIELDS = ("owner_hash", "channel", "household", "edits", "supplements")   # 다시 분류해도 남겨 둘 신고 정보
+CARRY_FIELDS = ("owner_hash", "channel", "household", "household_place", "reporter", "questions", "edits", "supplements")   # 다시 분류해도 남겨 둘 신고 정보
 
 
-def submit_report(text, rate_key, channel=None, household=None):
+def submit_report(text, rate_key, channel=None, household=None, reporter=None):
     """주민 신고 접수(웹 화면·텔레그램 공통). (상태 코드, 응답)을 돌려준다.
-    household: 가구 코드로 로그인한 주민이 보낸 신고면 그 가구(담당자 화면에만 보이고 공개 응답에서는 뺀다)."""
+    household: 가구 코드로 로그인한(텔레그램은 가구를 연결한) 주민의 신고면 그 가구.
+    reporter: 텔레그램 신고자 번호(이름 대신, 같은 사람이 보낸 신고끼리 묶어 보게). 둘 다 담당자 화면에만 보인다."""
     if not isinstance(text, str) or not text.strip():
         return 400, {"error": "신고 내용을 입력해 주세요"}
     if len(text) > 2000:
@@ -890,7 +893,11 @@ def submit_report(text, rate_key, channel=None, household=None):
     if channel:
         row["output"]["channel"] = channel   # 담당자 화면에 '텔레그램 신고'처럼 표시
     if isinstance(household, str) and household in FEATURES.households:
+        h = FEATURES.households[household]
         row["output"]["household"] = household   # 로그인한 가구의 신고(로그인 없이 보낸 긴급 신고와 구분)
+        row["output"]["household_place"] = h.get("address") or places.describe(h["zone"])
+    if isinstance(reporter, str) and reporter:
+        row["output"]["reporter"] = reporter[:20]
     # Persist only the classifier result (the intake agent applies its configured masking).
     row = database.save_incident(row)
     row = database.update_incident(link_incident(row))
@@ -931,6 +938,46 @@ def supplement_incident(iid, extra, rate_key):
         return 200, public_row(row)
 
 
+def ask_reporter(iid, question, s):
+    """담당자가 신고자에게 되묻는다(텔레그램으로 온 신고만: 봇이 그 대화방으로 질문을 보내고 답을 받아 신고에 붙인다)."""
+    if not isinstance(question, str) or not question.strip() or len(question) > 300:
+        return 400, {"error": "질문을 1~300자로 적어 주세요"}
+    chats = TELEGRAM.report_chats(iid) if TELEGRAM.enabled else []
+    with _incident_lock:
+        row = incident_output(iid)
+        if row is None:
+            return 404, {"error": "접수번호를 찾을 수 없습니다"}
+        o = row["output"]
+        if o.get("state") == INVALID:
+            return 409, {"error": "취소됐거나 처리하지 않기로 한 신고예요"}
+        if not chats:
+            return 409, {"error": "연락할 수 있는 신고자가 없어요. 텔레그램으로 온 신고만 되물을 수 있어요"}
+        qid = "Q-" + uuid.uuid4().hex[:6].upper()
+        o["questions"] = list(o.get("questions") or []) + [{"id": qid, "q": question.strip(), "by": s["username"], "at": time.time(), "answers": []}]
+        database.update_incident(row)
+    database.log_audit("reporter_asked", "incident", iid, {"question": qid, "chats": len(chats)})
+    TELEGRAM.ask(chats, iid, qid, question.strip())
+    return 200, {"id": qid, "sent_to": len(chats)}
+
+
+def record_answer(iid, qid, text):
+    """신고자가 텔레그램으로 보낸 답을 그 질문에 붙인다(분류는 바꾸지 않는다: 필요하면 담당자가 분류 수정)."""
+    if not isinstance(text, str) or not text.strip():
+        return 400, {"error": "답이 비어 있어요"}
+    with _incident_lock:
+        row = incident_output(iid)
+        if row is None:
+            return 404, {"error": "접수번호를 찾을 수 없습니다"}
+        o = row["output"]
+        q = next((x for x in o.get("questions") or [] if x["id"] == qid), None)
+        if q is None:
+            return 404, {"error": "질문을 찾을 수 없어요"}
+        q["answers"] = list(q.get("answers") or []) + [{"text": mask(text.strip()[:500]), "at": time.time()}]
+        database.update_incident(row)
+    database.log_audit("reporter_answered", "incident", iid, {"question": qid})
+    return 200, {"id": qid}
+
+
 def report_info(iid):
     """텔레그램 봇이 신고자에게 알려 줄 처리 상황(접수번호 조회와 같은 범위만)."""
     row = incident_output(iid)
@@ -942,9 +989,21 @@ def report_info(iid):
             "steps": public_progress(o), "guidance": g["text"] if g else None}
 
 
+def tg_household_login(code, chat):
+    """텔레그램에서 가구 코드 연결(/code). 주민 화면 로그인과 같은 확인·같은 시도 횟수 제한(대화방별)."""
+    if not HH_LOGIN_LIMIT.allow(f"tg:{chat}"):
+        return 429, {"error": "가구 코드 시도가 너무 많아요. 10분 뒤 다시 해 주세요"}
+    try:
+        return 200, PUBLIC.login_household({"code": code})
+    except ValueError as e:
+        return 400, {"error": str(e)}
+
+
 # 텔레그램 봇에서 신고·보완·취소·진행 상황 조회(웹 화면과 같은 함수, 속도 제한은 대화방별)
 TELEGRAM.hooks = {
-    "submit": lambda text, chat: submit_report(text, f"tg:{chat}", "텔레그램"),
+    "submit": lambda text, chat, **kw: submit_report(text, f"tg:{chat}", "텔레그램", **kw),
+    "login": lambda code, chat: tg_household_login(code, chat),
+    "answer": record_answer,
     "supplement": lambda iid, text, chat: supplement_incident(iid, text, f"tg:{chat}"),
     "cancel": lambda iid, token: reporter_change(iid, "cancel", {"token": token}),
     "info": report_info,
@@ -1690,6 +1749,14 @@ class Handler(BaseHTTPRequestHandler):
                 if len(parts) != 4 or not parts[2] or len(parts[2]) > 40:
                     return self.send_json(404, {"error": "찾을 수 없는 경로입니다"})
                 return self.send_json(*supplement_incident(parts[2], data.get("text"), self.client_ip()))
+            if path.startswith("/api/incidents/") and path.endswith("/ask"):   # 담당자: 신고자에게 되묻기(텔레그램)
+                s = self.require_staff(check_csrf=True)
+                if not s:
+                    return
+                parts = path.strip("/").split("/")
+                if len(parts) != 4 or not parts[2] or len(parts[2]) > 40:
+                    return self.send_json(404, {"error": "찾을 수 없는 경로입니다"})
+                return self.send_json(*ask_reporter(parts[2], data.get("question"), s))
             if path.startswith("/api/incidents/") and path.endswith("/approve-all"):   # 담당자: 이 신고의 대응안 한 번에 승인
                 s = self.require_staff(check_csrf=True)
                 if not s:

@@ -8,13 +8,19 @@
   '📍 지금 위치 보내기' → ③ 더 알려 줄 것을 입력창에 적기(건너뛰기 가능) → 확인 후 보내기. 웹 화면과 같은 접수 함수를
   쓰고(접수 에이전트 분류·중복 합치기·속도 제한), 접수번호·취소 버튼을 준다. 담당자가 출동을 승인하는 등 진행이 생기면
   이 대화방으로 알린다. 그냥 글을 보내면 '이 내용으로 신고할까요?'라고 묻는다(급할 때 한 번에 보내기).
+- 누가 보냈는지: 텔레그램 이름·아이디는 저장하지 않는다. 대신 ① /code(또는 메뉴 '🏠 우리 집 연결')로 가구 코드를
+  연결하면 신고에 그 가구가 붙고(담당자 화면 '🏠 가구 … 로그인 신고'), ② 연결하지 않아도 대화방마다 이름 없는
+  신고자 번호(T-XXXX)를 붙여 같은 사람이 보낸 신고를 묶어 본다. ③ 담당자가 '신고자에게 묻기'를 쓰면 질문이
+  이 대화방으로 오고, 입력창에 적은 답이 그 신고에 붙는다.
 - 받는 방식: 공개 주소가 있으면(Render: RENDER_EXTERNAL_URL, 또는 TELEGRAM_WEBHOOK_URL) 웹훅으로 받는다. 텔레그램이
   보내는 요청이 잠든 무료 서버도 깨운다. 공개 주소가 없는 내부망 PC는 폴링으로 받는다.
 - 설정: TELEGRAM_BOT_TOKEN(필수, @BotFather에서 받음), TELEGRAM_CHANNEL_ID(선택, 공지·단계를 채널에도 올림).
   토큰이 없으면 아무것도 하지 않는다. 토큰은 저장소에 넣지 않는다.
 보내기는 별도 스레드가 차례로 한다(요청 처리를 막지 않게). 텔레그램이 '차단됨'(403)을 주면 구독을 지운다.
 """
-import json, os, queue, re, secrets, threading, time, urllib.error, urllib.request
+import hashlib, json, os, queue, re, secrets, threading, time, urllib.error, urllib.request
+
+from common import places
 
 LEVEL_TEXT = {"주의": "기상 정보를 자주 확인하고, 하천·계곡·지하 공간에 가까이 가지 마세요.",
               "경계": "대피를 준비하세요. 비상용품(물·약·손전등·충전기)을 챙기고 가족과 만날 곳을 정하세요.",
@@ -23,21 +29,27 @@ HELP = ("이 봇은 재난 안전 AI 에이전트(교육용 시연)입니다. �
         "· 🆘 신고하기 (/report) : 버튼으로 고르고 입력창에 적으면 신고가 접수돼요\n"
         "· 📍 지금 상황 (/status) : 위기 단계·공지·대피소\n"
         "· 📋 내 신고 (/my) : 보낸 신고의 처리 상황\n"
+        "· 🏠 우리 집 연결 (/code 가구코드) : 신고하면 담당자가 우리 집을 바로 알아요\n"
         "· /stop : 알림 그만 받기\n"
         "한 번에 보내려면 이렇게 적어 보내도 돼요:\n위치: 옥포동 시장 앞 · 물이 무릎까지 찼어요 · 2명 고립\n"
         "사람이 다치거나 갇혔다면 119·112에 바로 전화하세요.")
 
 # 아래쪽 고정 메뉴(키보드 자리에 버튼으로 뜬다)
-MENU = {"keyboard": [[{"text": "🆘 신고하기"}], [{"text": "📍 지금 상황"}, {"text": "📋 내 신고"}], [{"text": "❓ 도움말"}]],
+MENU = {"keyboard": [[{"text": "🆘 신고하기"}], [{"text": "📍 지금 상황"}, {"text": "📋 내 신고"}],
+                     [{"text": "🏠 우리 집 연결"}, {"text": "❓ 도움말"}]],
         "resize_keyboard": True, "is_persistent": True, "input_field_placeholder": "급하면 🆘 신고하기를 누르세요"}
 COMMANDS = [{"command": "report", "description": "🆘 신고하기"}, {"command": "status", "description": "지금 위기 단계·공지·대피소"},
-            {"command": "my", "description": "내 신고 처리 상황"}, {"command": "cancel", "description": "쓰던 신고 그만두기"},
+            {"command": "my", "description": "내 신고 처리 상황"}, {"command": "code", "description": "🏠 가구 코드로 우리 집 연결"},
+            {"command": "unlink", "description": "우리 집 연결 끊기"}, {"command": "cancel", "description": "쓰던 신고 그만두기"},
             {"command": "start", "description": "알림 받기·메뉴 열기"}, {"command": "stop", "description": "알림 그만 받기"}]
 REPORT_WORDS = {"🆘 신고하기", "/report", "/신고", "신고", "신고하기"}
 STATUS_WORDS = {"📍 지금 상황", "/status", "/상황", "상황"}
 MY_WORDS = {"📋 내 신고", "/my", "/내신고", "내 신고"}
 HELP_WORDS = {"❓ 도움말", "/help", "/도움말", "도움말"}
 QUIT_WORDS = {"❌ 신고 그만두기", "/cancel", "그만두기"}
+CODE_WORDS = {"🏠 우리 집 연결", "/code", "/코드", "/가구"}
+HOME_BTN = "🏠 우리 집"
+ASK_TTL = 3 * 3600   # 담당자 질문에 답할 수 있는 시간
 SKIP, NO_PLACE = "건너뛰기", "위치 모름"
 # 웹 신고 화면과 같은 고르기(사람에게 더 위험한 것부터: 여러 개 고르면 신고문에도 이 순서로 적는다)
 KINDS = [("life", "🚑", "사람이 다치거나 갇혔어요", "사람이 갇혔거나 다쳤어요(구조 요청)"),
@@ -181,7 +193,13 @@ class TelegramBot:
         cmd = cmd.split("@")[0].lower()
         key = cmd if cmd.startswith("/") else text   # 명령(/report)과 메뉴 버튼 글자를 같은 뜻으로
         flow = self._flow(chat)
+        reply_to = (msg.get("reply_to_message") or {}).get("message_id")
+        ask, matched = self._pending_ask(chat, reply_to)   # 담당자 질문에 대한 답인지
+        ask = ask if (matched or not flow) else None   # 질문 메시지에 답장했거나, 쓰던 신고가 없을 때만 답으로 본다
         if msg.get("location"):   # '📍 지금 위치 보내기'(또는 첨부 → 위치)
+            if ask:
+                loc = msg["location"]
+                return self._bg(self._answer, chat, ask, f"위치: GPS {float(loc.get('latitude', 0)):.5f}, {float(loc.get('longitude', 0)):.5f}")
             return self._got_location(chat, flow, msg["location"])
         if cmd == "/start":
             self._subscribe(chat, arg.strip())
@@ -193,6 +211,18 @@ class TelegramBot:
             self.send(chat, "쓰던 신고를 그만뒀어요. 필요하면 언제든 🆘 신고하기를 눌러 주세요.", markup=MENU)
         elif key in REPORT_WORDS:
             self.start_report(chat)
+        elif key in CODE_WORDS:
+            if arg.strip() and cmd.startswith("/"):
+                self._link(chat, arg.strip())
+            else:
+                self._ask_code(chat)
+        elif cmd in ("/unlink", "/연결끊기"):
+            sub = self.db.get_record("tg_sub", str(chat))
+            if sub and sub.pop("household", None):
+                self.db.put_record("tg_sub", str(chat), sub)
+                self.send(chat, "우리 집 연결을 끊었어요. 다시 연결하려면 🏠 우리 집 연결을 누르세요.", markup=MENU)
+            else:
+                self.send(chat, "연결된 우리 집이 없어요.", markup=MENU)
         elif key in STATUS_WORDS:
             self.send(chat, self.situation_text())
         elif key in MY_WORDS:
@@ -201,12 +231,104 @@ class TelegramBot:
             self.send(chat, HELP, markup=MENU)
         elif text == "📍 지금 위치 보내기":   # 위치 보내기를 못 하는 기기(컴퓨터용 텔레그램 등)
             self.send(chat, "이 기기에서는 위치를 보낼 수 없어요. 아래 입력창에 주소나 근처 건물·가게 이름을 적어 주세요.")
+        elif ask and text:
+            self._bg(self._answer, chat, ask, text)
         elif flow and text:
             self._flow_text(chat, flow, text)
         elif len(text) >= 4:   # 그냥 적어 보낸 글: 급할 때 한 번에 신고할 수 있게 묻는다
             self._ask_quick(chat, text)
         else:
             self.send(chat, HELP, markup=MENU)
+
+    # ------------------------------------------------------------------ 우리 집(가구 코드) 연결
+    def _home(self, chat):
+        """이 대화방에 연결된 가구(없으면 None)."""
+        sub = self.db.get_record("tg_sub", str(chat)) or {}
+        hid = sub.get("household")
+        h = self.public.f.households.get(hid) if hid else None
+        return (hid, h) if h else (None, None)
+
+    @staticmethod
+    def home_place(h):
+        return h.get("address") or places.describe(h["zone"])
+
+    def _ask_code(self, chat):
+        hid, h = self._home(chat)
+        now = f"지금 연결된 우리 집: {self.home_place(h)} ({hid})\n다른 코드로 바꾸려면 " if h else ""
+        with self.flock:
+            self.flows[chat] = {"id": secrets.token_hex(3), "step": "code", "at": time.time()}
+        self.send(chat, "🏠 우리 집 연결\n" + (now or "") + "주민 화면 '우리 집'에 있는 가구 코드를 아래 입력창에 적어 보내 주세요.\n"
+                        "연결하면 신고할 때 담당자가 우리 집을 바로 알고, 안부 확인에도 버튼으로 답할 수 있어요."
+                        + ("\n연결을 끊으려면 /unlink" if h else ""),
+                  markup={"force_reply": True, "input_field_placeholder": "예: H-3F9A1C2B7D"})
+
+    def _link(self, chat, code):
+        if "login" not in self.hooks:
+            return
+        status, res = self.hooks["login"](code, chat)
+        if status >= 400:
+            return self.send(chat, f"⚠️ {res.get('error', '가구 코드를 확인하지 못했어요')}\n다시 하려면 🏠 우리 집 연결을 누르세요.", markup=MENU)
+        sub = self.db.get_record("tg_sub", str(chat)) or {"chat_id": chat, "since": time.time()}   # 연결하면 알림도 받는다
+        sub["household"] = res["id"]
+        self.db.put_record("tg_sub", str(chat), sub)
+        h = self.public.f.households.get(res["id"]) or {}
+        self.send(chat, f"🏠 우리 집({self.home_place(h) if h else res['id']})과 연결했어요.\n이제 신고하면 담당자가 우리 집을 바로 알 수 있고, "
+                        "담당자가 안전을 물으면 여기에서 버튼으로 답할 수 있어요.", markup=MENU)
+
+    def pseudonym(self, chat):
+        """텔레그램 신고자 번호(T-XXXX): 이름 대신, 같은 대화방이 보낸 신고끼리 묶어 보는 데만 쓴다(대화방 번호로 되돌릴 수 없게)."""
+        if not getattr(self, "_salt", None):
+            rec = self.db.get_record("tg_meta", "salt")
+            if not rec:
+                rec = {"v": secrets.token_hex(16)}
+                self.db.put_record("tg_meta", "salt", rec)
+            self._salt = rec["v"]
+        return "T-" + hashlib.sha256(f"{self._salt}:{chat}".encode()).hexdigest()[:4].upper()
+
+    # ------------------------------------------------------------------ 담당자 질문 → 신고자 답
+    def report_chats(self, iid):
+        """이 신고를 텔레그램으로 보낸(또는 같은 내용으로 합쳐진) 대화방들."""
+        return sorted({r["chat_id"] for r in self.db.list_records("tg_report") if r.get("iid") == iid and not r.get("done")})
+
+    def ask(self, chats, iid, qid, question):
+        def run(chat):
+            r = self.call("sendMessage", {"chat_id": chat, "disable_web_page_preview": True,
+                                          "text": f"💬 담당자가 묻습니다 · {iid} 신고\n「{question}」\n\n아래 입력창에 답을 적어 보내 주세요."
+                                                  "\n위치를 물으면 📎(첨부) → 위치로 보내도 돼요.",
+                                          "reply_markup": {"force_reply": True, "input_field_placeholder": "답을 적어 주세요"}})
+            res = r.get("result") if isinstance(r, dict) else None
+            key = f"{iid}:{chat}"
+            rec = self.db.get_record("tg_report", key)
+            if rec is not None:
+                rec["ask"] = {"qid": qid, "mid": res.get("message_id") if isinstance(res, dict) else None, "at": time.time()}
+                self.db.put_record("tg_report", key, rec)
+        for chat in chats:
+            threading.Thread(target=run, args=(chat,), daemon=True).start()
+
+    def _pending_ask(self, chat, reply_to):
+        """이 대화방에 답을 기다리는 담당자 질문과, 그 질문 메시지에 답장한 것인지.
+        질문 메시지에 답장했으면 그 질문(True), 아니면 가장 최근 질문(False). 다른 메시지에 답장했으면 없음."""
+        now, best = time.time(), None
+        for r in self.db.list_records("tg_report"):
+            a = r.get("ask")
+            if r.get("chat_id") != chat or not a or now - a.get("at", 0) > ASK_TTL:
+                continue
+            if reply_to and a.get("mid") == reply_to:
+                return {"iid": r["iid"], **a}, True
+            if best is None or a["at"] > best["at"]:
+                best = {"iid": r["iid"], **a}
+        return (None, False) if reply_to else (best, False)
+
+    def _answer(self, chat, ask, text):
+        status, res = self.hooks["answer"](ask["iid"], ask["qid"], text)
+        if status >= 400:
+            return self.send(chat, f"⚠️ 답을 전하지 못했어요: {res.get('error', '오류')}", markup=MENU)
+        key = f"{ask['iid']}:{chat}"
+        rec = self.db.get_record("tg_report", key)
+        if rec is not None:
+            rec.pop("ask", None)
+            self.db.put_record("tg_report", key, rec)
+        self.send(chat, f"✅ 답을 담당자에게 보냈어요 ({ask['iid']} 신고). 고맙습니다.", markup=MENU)
 
     # ------------------------------------------------------------------ 신고 받기(버튼 → 입력창 → 확인)
     def _flow(self, chat):
@@ -249,8 +371,9 @@ class TelegramBot:
             f["step"] = "place"
             self.send(chat, "📍 어디인가요? (2/3)\n아래 입력창에 주소나 근처 건물·가게·다리 이름을 적어 보내 주세요.\n"
                             "주소를 모르면 [📍 지금 위치 보내기]를 누르세요." + (f"\n\n{LIFE_WARN}" if "life" in f["kinds"] else ""),
-                      markup={"keyboard": [[{"text": "📍 지금 위치 보내기", "request_location": True}],
-                                           [{"text": NO_PLACE}, {"text": "❌ 신고 그만두기"}]],
+                      markup={"keyboard": ([[{"text": HOME_BTN}]] if self._home(chat)[1] else [])
+                                          + [[{"text": "📍 지금 위치 보내기", "request_location": True}],
+                                             [{"text": NO_PLACE}, {"text": "❌ 신고 그만두기"}]],
                               "resize_keyboard": True, "one_time_keyboard": True,
                               "input_field_placeholder": "예: 옥포동 시장 앞 / ○○아파트 101동"})
         elif f["detail"] is None or (etc_only and not f["detail"]):
@@ -275,12 +398,21 @@ class TelegramBot:
         text = " · ".join(parts)
         if f.get("detail"):
             text += (". " if text else "") + f["detail"]
+        if f.get("home_floor") is not None and "home_floor" in f:
+            text += f" (우리 집{' · ' + f['home_floor'] if f['home_floor'] else ''})"
         return text
 
     def _flow_text(self, chat, f, text):
         step = f["step"]
+        if step == "code":
+            self._drop(chat)
+            return self._link(chat, text)
         if step == "place":
-            f["place"] = "" if text == NO_PLACE else re.sub(r"[·\n]+", ", ", text)[:80]
+            hid, h = self._home(chat) if text == HOME_BTN else (None, None)
+            if h:   # 연결한 우리 집에서 신고
+                f["place"], f["home_floor"] = re.sub(r"[·\n]+", ", ", self.home_place(h))[:80], h.get("floor") or ""
+            else:
+                f["place"] = "" if text == NO_PLACE else re.sub(r"[·\n]+", ", ", text)[:80]
         elif step == "detail":
             if text == SKIP and f["kinds"] != ["etc"]:
                 f["detail"] = ""
@@ -335,7 +467,8 @@ class TelegramBot:
         threading.Thread(target=run, daemon=True).start()
 
     def _submit(self, chat, message_id, text):
-        code, res = self.hooks["submit"](text, chat)
+        hid, _ = self._home(chat)
+        code, res = self.hooks["submit"](text, chat, household=hid, reporter=self.pseudonym(chat))
         if code >= 400:
             return self.edit(chat, message_id, f"⚠️ 보내지 못했어요: {res.get('error', '오류')}\n급하면 119·112에 바로 전화하세요.")
         o = res.get("output", {})
@@ -351,7 +484,9 @@ class TelegramBot:
         lines = ["✅ 신고를 접수했어요" if not res.get("duplicate") else "✅ 같은 내용이 이미 접수돼 있어 그 신고에 합쳤어요",
                  f"접수번호: {iid}", f"종류: {o.get('type') or '확인 중'}" + (f" · {URGENCY[o['urgency']]}" if o.get("urgency") in URGENCY else "")]
         lines += [f"{s['icon']} {s['text']}" for s in info.get("steps", [])]
-        lines.append("담당자가 확인하거나 출동을 승인하면 이 대화방으로 알려 드릴게요.")
+        lines.append(f"🏠 우리 집({hid})과 연결된 신고로 보냈어요." if hid else
+                     "💡 🏠 우리 집 연결(/code)을 해 두면 담당자가 우리 집을 바로 알 수 있어요.")
+        lines.append("담당자가 확인하거나 출동을 승인하면 이 대화방으로 알려 드릴게요. 담당자가 더 물어볼 수도 있어요.")
         buttons = [[{"text": "🔄 진행 상황", "callback_data": f"pg:{iid}"}]]
         if rec.get("token"):
             buttons[0].append({"text": "❌ 신고 취소", "callback_data": f"cx:{iid}"})
@@ -447,19 +582,12 @@ class TelegramBot:
 
     def _subscribe(self, chat, payload):
         sub = self.db.get_record("tg_sub", str(chat)) or {"chat_id": chat, "since": time.time()}
-        linked = ""
-        if re.fullmatch(r"H-[0-9A-F]{6,20}", payload or ""):   # 주민 화면의 '텔레그램으로 알림 받기'에서 온 경우
-            try:
-                h = self.public.f.households[payload]
-                if h.get("registered"):
-                    sub["household"] = payload
-                    linked = f"\n\n🏠 우리 집({h.get('address') or '등록한 집'})과 연결했어요. 담당자가 안전을 물으면 여기에서 버튼으로 답할 수 있어요."
-            except KeyError:
-                pass
         self.db.put_record("tg_sub", str(chat), sub)
-        self.send(chat, "🔔 재난 알림을 받습니다. 담당자가 확정한 위기 단계와 공지를 보내 드려요." + linked + "\n\n" + HELP, markup=MENU)
+        self.send(chat, "🔔 재난 알림을 받습니다. 담당자가 확정한 위기 단계와 공지를 보내 드려요.\n\n" + HELP, markup=MENU)
         if payload == "report":   # 주민 화면의 '텔레그램으로 신고' 링크(t.me/봇?start=report)
             self.start_report(chat)
+        elif re.fullmatch(r"H-[0-9A-F]{6,20}|H\d{2}", payload or ""):   # 주민 화면의 '텔레그램으로 알림 받기'(가구 코드가 붙은 링크)
+            self._link(chat, payload)
 
     def _callback(self, cq):
         m = cq.get("message") or {}

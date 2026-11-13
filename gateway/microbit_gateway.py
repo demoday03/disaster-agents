@@ -14,10 +14,22 @@
   python gateway/microbit_gateway.py --port /dev/ttyACM0               # 실제 마이크로비트(리눅스·맥)
   python gateway/microbit_gateway.py --simulate flood --ticks 10       # 기기 없이 가상 센서로 시험
 
+G 노드 외부 모듈(블루투스): 블루투스 센서 모듈(HC-05/HC-06, ESP32 등 블루투스 시리얼)을 이 노트북과 페어링하면
+운영체제가 시리얼 포트(Windows는 'COM5' 같은 이름)를 만든다. --bt-port로 그 포트를 함께 읽어 노드 G의 값으로 서버에 보낸다.
+(G 마이크로비트는 무선(radio)으로 A~E를 받고 있어 블루투스를 함께 쓸 수 없다. 그래서 G가 꽂힌 노트북이 블루투스를 받는다.)
+모듈이 보내는 한 줄은 아래 모양 중 하나면 된다(줄 끝은 줄바꿈):
+  S,G,temp,23.5            마이크로비트와 같은 형식
+  temp=23.5,humidity=61    이름=값(쉼표·세미콜론·띄어쓰기로 여러 개)
+  T:23.5 H:61              이름:값
+  23.5,61                  숫자만(--bt-fields temp,humidity로 이름을 붙인다. 없으면 v1, v2)
+  python gateway/microbit_gateway.py --port COM3 --bt-port COM5            # G 마이크로비트 + 블루투스 모듈
+  python gateway/microbit_gateway.py --bt-port COM5 --bt-fields temp,gas   # 블루투스 모듈만
+  python gateway/microbit_gateway.py --simulate normal --bt-simulate       # 둘 다 기기 없이 시험
+
 실제 기기 연결에는 pyserial이 필요하다(pip install pyserial). 가상 센서 모드는 표준 라이브러리만 쓴다.
 토큰은 환경변수 SENSOR_GATEWAY_TOKEN에서 읽는다(명령줄에 쓰면 기록에 남으므로 쓰지 않는다).
 """
-import argparse, json, os, random, re, secrets, sys, time, urllib.error, urllib.request
+import argparse, json, os, queue, random, re, secrets, sys, threading, time, urllib.error, urllib.request
 
 LINE = re.compile(r"^S,([A-Za-z0-9_]{1,20}),([A-Za-z0-9_]{1,20}),(-?\d{1,6}(?:\.\d{1,3})?)$")
 EVENT_LINE = re.compile(r"^E,([A-Za-z0-9_]{1,20}),([A-Za-z0-9+\-]{1,8}),(\d{1,3})$")
@@ -36,6 +48,43 @@ def parse_line(line, ts):
         return None
     node, sensor, value = m.groups()
     return {"node": node, "sensor": sensor, "value": float(value), "ts": ts}
+
+
+MODULE_PAIR = re.compile(r"([^\s=:,;]{1,20})\s*[=:]\s*(-?\d{1,6}(?:\.\d{1,3})?)(?![\d.])")
+MODULE_NUM = re.compile(r"^-?\d{1,6}(?:\.\d{1,3})?$")
+MODULE_NAME = re.compile(r"^\w{1,20}$")
+
+
+def parse_module_line(line, node, ts, fields=()):
+    """블루투스 외부 모듈의 한 줄 → 측정값 목록(형식이 다르면 빈 목록).
+    'S,G,temp,23.5' / 'temp=23.5,humidity=61' / 'T:23.5 H:61' / '23.5,61'(fields로 이름, 없으면 v1·v2)."""
+    line = line.strip()
+    if not line:
+        return []
+    r = parse_line(line, ts)
+    if r is not None:
+        return [r]
+    pairs = MODULE_PAIR.findall(line)
+    if pairs:
+        return [{"node": node, "sensor": k, "value": float(v), "ts": ts} for k, v in pairs if MODULE_NAME.match(k)]
+    parts = [p for p in re.split(r"[\s,;]+", line) if p]
+    if 0 < len(parts) <= 10 and all(MODULE_NUM.match(p) for p in parts):
+        names = list(fields)[:len(parts)] + [f"v{i + 1}" for i in range(len(fields), len(parts))]
+        return [{"node": node, "sensor": names[i], "value": float(p), "ts": ts} for i, p in enumerate(parts)]
+    return []
+
+
+class ModuleSimulator:
+    """기기 없이 시험할 때 쓰는 가상 블루투스 모듈: 온도·습도·가스 값을 조금씩 바꿔 'temp=..,humidity=..,gas=..' 줄로 준다."""
+    def __init__(self, seed=0):
+        self.rng, self.t, self.h, self.g = random.Random(seed), 24.0, 60.0, 150.0
+
+    def line(self):
+        r = self.rng
+        self.t = min(40, max(10, self.t + r.uniform(-0.3, 0.3)))
+        self.h = min(99, max(20, self.h + r.uniform(-1, 1)))
+        self.g = min(900, max(50, self.g + r.uniform(-15, 15)))
+        return f"temp={self.t:.1f},humidity={self.h:.0f},gas={self.g:.0f}"
 
 
 def parse_event(line, ts):
@@ -158,6 +207,24 @@ class Gateway:
         if len(self.pending_events) > MAX_PENDING:
             del self.pending_events[:len(self.pending_events) - MAX_PENDING]
 
+    def feed_module(self, line, node="G", fields=()):
+        """블루투스 외부 모듈(G 노드)이 보낸 한 줄. 처음 보는 센서는 한 번 알려 준다."""
+        rows = parse_module_line(line, node, self.clock(), fields)
+        if not rows:
+            if line.strip():
+                self.ignored += 1
+            return 0
+        seen = getattr(self, "module_seen", set())
+        for r in rows:
+            if (r["node"], r["sensor"]) not in seen:
+                seen.add((r["node"], r["sensor"]))
+                self.out(f"[블루투스 모듈] 노드 {r['node']} · {r['sensor']} 값 받기 시작 ({r['value']:g})")
+        self.module_seen = seen
+        self.pending.extend(rows)
+        if len(self.pending) > MAX_PENDING:
+            del self.pending[:len(self.pending) - MAX_PENDING]
+        return len(rows)
+
     def write(self, msg):
         """수신기 마이크로비트로 한 줄 보낸다(무선 방송용). 기기가 없거나 끊겼으면 False."""
         return bool(self.writer and self.writer(msg))
@@ -256,7 +323,9 @@ def list_ports():
         raise SystemExit("포트 목록을 보려면 pyserial이 필요합니다: pip install pyserial")
     ports = list(lp.comports())
     for p in ports:
-        hint = " ← 마이크로비트로 보임" if "mbed" in (p.description or "").lower() or p.vid == 0x0D28 else ""
+        desc = (p.description or "").lower()
+        hint = (" ← 마이크로비트로 보임(--port)" if "mbed" in desc or p.vid == 0x0D28
+                else " ← 블루투스 시리얼로 보임(--bt-port)" if "bluetooth" in desc or "블루투스" in desc else "")
         print(f"{p.device}\t{p.description}{hint}")
     if not ports:
         print("연결된 시리얼 포트가 없습니다. USB 케이블(데이터 전송용)과 마이크로비트 전원을 확인하세요.")
@@ -274,6 +343,11 @@ def main(argv=None):
     ap.add_argument("--interval", type=float, default=1.0, help="서버로 보내는 간격(초)")
     ap.add_argument("--rain-stage", type=int, choices=range(5), default=None, help="강우 단계(0~4, 생략하면 서버 값 유지)")
     ap.add_argument("--ticks", type=int, default=0, help="가상 센서 모드에서 보낼 횟수(0이면 Ctrl+C까지)")
+    ap.add_argument("--bt-port", help="G 노드 외부 모듈의 블루투스 시리얼 포트(페어링하면 생김, 예: COM5, /dev/rfcomm0)")
+    ap.add_argument("--bt-baud", type=int, default=9600, help="블루투스 모듈 통신 속도(HC-05/06 기본 9600)")
+    ap.add_argument("--bt-node", default="G", help="블루투스 모듈 값에 붙일 노드 이름(기본 G)")
+    ap.add_argument("--bt-fields", default="", help="숫자만 보내는 모듈의 값 이름(쉼표로, 예: temp,humidity)")
+    ap.add_argument("--bt-simulate", action="store_true", help="블루투스 모듈 없이 가상 온도·습도·가스 값으로 시험")
     args = ap.parse_args(argv)
 
     if args.new_token:
@@ -282,8 +356,13 @@ def main(argv=None):
     if args.list_ports:
         list_ports()
         return 0
-    if not args.port and not args.simulate:
-        ap.error("--port 또는 --simulate 중 하나가 필요합니다")
+    if not (args.port or args.simulate or args.bt_port or args.bt_simulate):
+        ap.error("--port, --simulate, --bt-port, --bt-simulate 중 하나가 필요합니다")
+    if args.bt_port and args.bt_simulate:
+        ap.error("--bt-port와 --bt-simulate는 함께 쓸 수 없습니다")
+    if not re.fullmatch(r"[A-Za-z0-9_]{1,20}", args.bt_node):
+        ap.error("--bt-node는 영문·숫자 20자 이하")
+    fields = [f.strip() for f in args.bt_fields.split(",") if f.strip()]
     token = os.getenv("SENSOR_GATEWAY_TOKEN", "").strip()
     if not token:
         raise SystemExit("환경변수 SENSOR_GATEWAY_TOKEN이 없습니다. 서버와 같은 값을 설정하세요(--new-token으로 생성).")
@@ -300,24 +379,57 @@ def main(argv=None):
         except OSError:   # 끊긴 순간이면 다음 재연결 뒤 다시 보낸다
             return False
 
-    gw = Gateway(args.server, token, args.interval, args.rain_stage, writer=None if args.simulate else write)
-    print(f"게이트웨이 시작: {'가상 센서(' + args.simulate + ')' if args.simulate else args.port} → {args.server}  (Ctrl+C로 종료)")
+    gw = Gateway(args.server, token, args.interval, args.rain_stage, writer=write if args.port else None)
+    # 블루투스 모듈은 따로 읽어 줄을 쌓아 두고, 아래 반복에서 꺼내 G 노드 값으로 넣는다
+    bt_q, module_sim = queue.Queue(maxsize=2000), ModuleSimulator() if args.bt_simulate else None
+    if args.bt_port:
+        def read_bt():
+            for line in serial_lines(args.bt_port, args.bt_baud):
+                if line.strip():
+                    try:
+                        bt_q.put_nowait(line)
+                    except queue.Full:
+                        pass
+        threading.Thread(target=read_bt, daemon=True).start()
+
+    def drain_bt():
+        while True:
+            try:
+                gw.feed_module(bt_q.get_nowait(), args.bt_node, fields)
+            except queue.Empty:
+                return
+
+    src = [args.port or (f"가상 센서({args.simulate})" if args.simulate else ""),
+           f"블루투스 모듈 {args.bt_port}" if args.bt_port else "가상 블루투스 모듈" if args.bt_simulate else ""]
+    print(f"게이트웨이 시작: {' + '.join(x for x in src if x)} → {args.server}  (Ctrl+C로 종료)")
     try:
-        if args.simulate:
-            sim, sent = Simulator(args.simulate), 0
-            while not args.ticks or sent < args.ticks:
-                for line in sim.tick():
-                    gw.feed(line)
-                gw.flush()
-                sent += 1
-                if not args.ticks or sent < args.ticks:
-                    time.sleep(args.interval)
-        else:
+        if args.port:
+            last_sim = 0.0
             for line in serial_lines(args.port, args.baud, on_open=lambda ser: link.update(ser=ser)):
                 gw.feed(line)
+                drain_bt()
+                if module_sim and time.time() - last_sim >= args.interval:
+                    gw.feed_module(module_sim.line(), args.bt_node)
+                    last_sim = time.time()
                 if gw.due():
                     gw.flush()
                 gw.poll_downlink()
+        else:   # 가상 센서, 또는 블루투스 모듈만
+            sim, sent = (Simulator(args.simulate) if args.simulate else None), 0
+            while not args.ticks or sent < args.ticks:
+                for line in sim.tick() if sim else []:
+                    gw.feed(line)
+                if module_sim:
+                    gw.feed_module(module_sim.line(), args.bt_node)
+                end = time.time() + args.interval
+                while time.time() < end:   # 블루투스 줄은 기다리는 동안에도 받는다
+                    try:
+                        gw.feed_module(bt_q.get(timeout=max(0.01, end - time.time())), args.bt_node, fields)
+                    except queue.Empty:
+                        pass
+                drain_bt()
+                gw.flush()
+                sent += 1
     except KeyboardInterrupt:
         pass
     if gw.ignored:

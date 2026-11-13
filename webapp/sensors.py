@@ -6,6 +6,8 @@
 - 현장 버튼 신호(E 메시지: SOS·체크인·입소 등)는 최근 것만 메모리에 두고 감사 기록에 남긴다. 단계를 바꾸지 않는다.
   급한 신호(SOS 등)는 담당자가 '확인'을 누를 때까지 열려 있다.
 - 내려보내기(downlink): 담당자가 확정한 단계와 안부 확인 요청을 게이트웨이에 알려 현장 마이크로비트로 방송하게 한다.
+- 외부 모듈(G 노드 블루투스 센서 등)처럼 감시 설정(config/monitor.json)에 없는 센서 값도 받아 담당자 화면에 보여 준다.
+  임계값이 없으므로 단계 판정에는 쓰지 않는다(표시만).
 """
 import itertools, math, threading, time
 from collections import deque
@@ -180,12 +182,15 @@ class SensorHub:
                         "threshold": v["threshold"],
                         "over": k in latest and latest[k]["value"] > v["threshold"]}
                        for k, v in self.cfg["sensors"].items()]
+            extra = sorted(({"key": k, "node": r["node"], "sensor": r["sensor"], "value": r["value"],
+                             "age_s": round(now - r["ts"], 1), "online": now - r["ts"] <= self.cfg["stale_sec"]}
+                            for k, r in latest.items() if k not in self.cfg["sensors"]), key=lambda x: x["key"])[:60]
             names = list(self.cfg["nodes"]) + sorted(n for n in self.last_seen if n not in self.cfg["nodes"])
             nodes = [{"node": n, "last_seen_age_s": round(now - self.last_seen[n], 1) if n in self.last_seen else None,
                       "online": n in self.last_seen and now - self.last_seen[n] <= self.cfg["stale_sec"]}
                      for n in names]
             events = [dict(e) for e in reversed(self.events)]
-            return {"sensors": sensors, "nodes": nodes, "last_eval": self.last_eval, "received": self.received,
+            return {"sensors": sensors, "extra": extra, "nodes": nodes, "last_eval": self.last_eval, "received": self.received,
                     "events": events[:30] + [e for e in events[30:] if e["open"]], "open_urgent": sum(e["open"] for e in events),
                     "rejected": self.rejected, "rain_stage": self.rain_stage,
                     "last_batch_age_s": round(now - self.last_batch_at, 1) if self.last_batch_at else None,

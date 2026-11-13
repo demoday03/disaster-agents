@@ -18,6 +18,20 @@ class TestParse(unittest.TestCase):
         for bad in ("E,E,SOS", "E,E,SOS,x", "E,E,SOS,1000", "E,E,S;OS,1", "S,E,temp,3", "E,E,TOOLONGCODE,1"):
             self.assertIsNone(G.parse_event(bad, 0), bad)
 
+    def test_parse_bluetooth_module_lines(self):
+        """G 노드 외부 모듈(블루투스)이 보내는 여러 모양의 줄."""
+        row = lambda sensor, value, node="G": {"node": node, "sensor": sensor, "value": value, "ts": 1.0}
+        self.assertEqual(G.parse_module_line("S,G,temp,23.5\r\n", "G", 1.0), [row("temp", 23.5)])
+        self.assertEqual(G.parse_module_line("temp=23.5,humidity=61", "G", 1.0), [row("temp", 23.5), row("humidity", 61.0)])
+        self.assertEqual(G.parse_module_line("T:23.5 H:61; gas = 312", "G", 1.0), [row("T", 23.5), row("H", 61.0), row("gas", 312.0)])
+        self.assertEqual(G.parse_module_line("온도=19", "G", 1.0), [row("온도", 19.0)])
+        self.assertEqual(G.parse_module_line("23.5,61", "G", 1.0, ["temp", "humidity"]), [row("temp", 23.5), row("humidity", 61.0)])
+        self.assertEqual(G.parse_module_line("23.5 61 7", "M", 1.0, ["temp"]), [row("temp", 23.5, "M"), row("v2", 61.0, "M"), row("v3", 7.0, "M")])
+        for bad in ("", "hello", "AT+OK", "temp=abc", "1.2.3", "temp=1234567"):
+            self.assertEqual(G.parse_module_line(bad, "G", 1.0), [], bad)
+        sim = G.ModuleSimulator()
+        self.assertEqual([r["sensor"] for r in G.parse_module_line(sim.line(), "G", 1.0)], ["temp", "humidity", "gas"])
+
     def test_simulator_scenarios(self):
         flood = [G.parse_line(l, 0) for l in G.Simulator("flood").tick()]
         self.assertTrue(all(r["value"] > 400 for r in flood if r["node"] == "A"))
@@ -231,6 +245,24 @@ class TestSensorHub(unittest.TestCase):
         self.assertEqual(self.hub.downlink(), {"level": 2, "level_name": "경계", "safety_check": True})
         db.put_record("check", "H1", {"household": "H1", "state": "안전"})
         self.assertFalse(self.hub.downlink()["safety_check"])
+
+    def test_external_module_values_shown_not_judged(self):
+        """감시 설정에 없는 외부 모듈 값(G 노드 블루투스)은 받아서 보여 주되 판정에는 쓰지 않는다."""
+        sent = []
+        gw = G.Gateway("http://x", "t" * 20, sender=lambda *a: (sent.append(a[2]), (200, {}))[1], out=lambda *a: None, clock=lambda: self.now)
+        self.assertEqual(gw.feed_module("temp=31.5,gas=420"), 2)
+        self.assertEqual(gw.feed_module("AT+OK"), 0)
+        gw.flush()
+        base = self.hub.ingest([])["output"]   # G 값이 없을 때의 판정(A·B 값이 없어 보류)
+        res = self.hub.ingest(sent[0])
+        self.assertEqual(res["accepted"], 2)
+        st = self.hub.status()
+        self.assertEqual([(x["key"], x["value"], x["online"]) for x in st["extra"]], [("G.gas", 420.0, True), ("G.temp", 31.5, True)])
+        self.assertIn("G", [n["node"] for n in st["nodes"]])
+        self.assertNotIn("G.temp", [s["key"] for s in st["sensors"]])
+        self.assertEqual((res["output"]["level"], res["output"]["status"]), (base["level"], base["status"]))   # 판정은 그대로
+        self.now += 40
+        self.assertFalse(any(x["online"] for x in self.hub.status()["extra"]))
 
     def test_status_shows_latest_and_offline_nodes(self):
         self.send("dropout", 3)

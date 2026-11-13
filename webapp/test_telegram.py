@@ -19,6 +19,8 @@ class FakeTelegram(BaseHTTPRequestHandler):
             body = {"ok": True, "result": {"id": 1, "is_bot": True, "username": "test_disaster_bot"}}
         elif method == "sendMessage" and payload.get("chat_id") == 999:   # 봇을 차단한 사용자
             self.send_response(403); self.end_headers(); self.wfile.write(b'{"ok":false,"error_code":403}'); return
+        elif method == "sendMessage":   # 진짜 텔레그램처럼 보낸 메시지 번호를 돌려준다(답장 확인용)
+            body = {"ok": True, "result": {"message_id": 1000 + len(CALLS)}}
         else:
             body = {"ok": True, "result": True}
         data = json.dumps(body).encode()
@@ -153,6 +155,67 @@ class TestTelegramBot(ServerBase):
         self.assertNotEqual(o["state"], "보완 필요")
         self.press(555, f"cx:{iid}")                                                            # 보완한 뒤에도 취소 버튼이 듣는다
         self.sent_to(555, lambda p: "취소할까요" in p["text"], "보완 뒤 취소 확인")
+
+    def test_who_sent_it_household_reporter_and_questions(self):
+        """누가 보냈는지: 가구 코드 연결(/code)·이름 없는 신고자 번호, 담당자가 되물으면 답이 신고에 붙는다."""
+        secret, anon = self.secret(), Client(self.base)
+        _, h = anon.post("/api/public/households", {"address": "옥포동 시장 뒤 주택", "floor": "반지하", "members": 2})
+        # 메뉴 '🏠 우리 집 연결' → 입력창(답장)에 코드 → 연결. 틀린 코드는 안내만
+        self.update(self.msg(666, "/code H-0000000000"), secret)
+        self.sent_to(666, lambda p: "가구 코드를 찾을 수 없어요" in p["text"], "틀린 코드")
+        self.update(self.msg(666, "🏠 우리 집 연결"), secret)
+        ask = self.sent_to(666, lambda p: "가구 코드를 아래 입력창" in p["text"], "코드 묻기")
+        self.assertTrue(ask["reply_markup"]["force_reply"])
+        self.update(self.msg(666, h["id"][2:].lower()), secret)                                   # 소문자·H- 빠뜨려도
+        self.sent_to(666, lambda p: "옥포동 시장 뒤 주택" in p["text"] and "연결했어요" in p["text"], "연결 완료")
+        # 신고: 위치에 '🏠 우리 집' 버튼 → 신고문에 우리 집, 담당자에게는 가구·신고자 번호
+        self.update(self.msg(666, "🆘 신고하기"), secret)
+        fid = self.sent_to(666, lambda p: "무슨 일인가요" in p["text"], "종류")["reply_markup"]["inline_keyboard"][0][0]["callback_data"].split(":")[1]
+        self.press(666, f"rk:{fid}:flood"); self.press(666, f"rn:{fid}")
+        kb = self.sent_to(666, lambda p: "어디인가요" in p["text"], "위치 묻기")["reply_markup"]["keyboard"]
+        self.assertEqual(kb[0][0]["text"], "🏠 우리 집")
+        self.update(self.msg(666, "🏠 우리 집"), secret)
+        self.sent_to(666, lambda p: "더 알려 줄 것" in p["text"], "자세히")
+        self.update(self.msg(666, "건너뛰기"), secret)
+        conf = self.sent_to(666, lambda p: "이렇게 보낼까요" in p["text"], "확인")
+        self.assertIn("위치: 옥포동 시장 뒤 주택 · 물이 차고 있어요(침수) (우리 집 · 반지하)", conf["text"])
+        self.press(666, f"rs:{fid}", mid=91)
+        rec = self.sent_to(666, lambda p: p.get("message_id") == 91 and "접수번호" in p["text"], "접수", "editMessageText")
+        self.assertIn(f"우리 집({h['id']})", rec["text"])
+        iid = re.search(r"R-[0-9A-F]{8}", rec["text"]).group(0)
+        o = self.get(f"/api/incidents/{iid}")[1]["result"]["output"]
+        staff = next(x["output"] for x in self.get("/api/incidents")[1]["items"] if x["output"]["id"] == iid)
+        self.assertEqual((staff["household"], staff["household_place"], staff["channel"]), (h["id"], "옥포동 시장 뒤 주택", "텔레그램"))
+        self.assertRegex(staff["reporter"], r"^T-[0-9A-F]{4}$")
+        for k in ("household", "reporter", "questions"):
+            self.assertNotIn(k, anon.get(f"/api/incidents/{iid}")[1]["result"]["output"])          # 공개 조회에는 없음
+        # 연결하지 않은 대화방도 같은 사람이면 같은 신고자 번호
+        nums = set()
+        for i, t in enumerate(("위치: 옥포동 다리 밑 · 길이 무너져서 차가 못 지나가요", "위치: 옥포동 다리 위 · 돌이 계속 떨어져요")):
+            self.update(self.msg(777, t), secret)
+            q = self.sent_to(777, lambda p, t=t: "바로 신고할까요" in p["text"] and t in p["text"], "바로 신고")
+            self.press(777, q["reply_markup"]["inline_keyboard"][0][0]["callback_data"], mid=200 + i)
+            r = self.sent_to(777, lambda p, i=i: p.get("message_id") == 200 + i and "접수번호" in p["text"], "접수", "editMessageText")
+            rid = re.search(r"R-[0-9A-F]{8}", r["text"]).group(0)
+            nums.add(next(x["output"] for x in self.get("/api/incidents")[1]["items"] if x["output"]["id"] == rid).get("reporter"))
+        self.assertEqual(len(nums), 1)
+        self.assertNotIn(staff["reporter"], nums)
+        # 담당자가 되묻기 → 텔레그램으로 질문(입력창) → 답장하면 그 신고에 붙는다
+        self.assertEqual(self.post(f"/api/incidents/{iid}/ask", {"question": ""})[0], 400)
+        code, r = self.post(f"/api/incidents/{iid}/ask", {"question": "물이 어디까지 찼나요?"})
+        self.assertEqual((code, r["sent_to"]), (200, 1))
+        self.wait_for(lambda m, p: m == "sendMessage" and p.get("chat_id") == 666 and "물이 어디까지" in p.get("text", ""), "질문")
+        idx = next(i for i, (m, p) in enumerate(CALLS) if m == "sendMessage" and p.get("chat_id") == 666 and "물이 어디까지" in p.get("text", ""))
+        time.sleep(0.3)   # 질문 메시지 번호가 저장될 때까지
+        reply = {"update_id": 9, "message": {"chat": {"id": 666, "type": "private"}, "text": "무릎까지요, 할머니가 2층에 계세요",
+                                             "reply_to_message": {"message_id": 1000 + idx + 1}}}
+        self.update(reply, secret)
+        self.sent_to(666, lambda p: "답을 담당자에게 보냈어요" in p["text"], "답 전달")
+        staff = next(x["output"] for x in self.get("/api/incidents")[1]["items"] if x["output"]["id"] == iid)
+        self.assertEqual((staff["questions"][0]["q"], staff["questions"][0]["answers"][0]["text"]),
+                         ("물이 어디까지 찼나요?", "무릎까지요, 할머니가 2층에 계세요"))
+        _, web = anon.post("/api/incidents", {"text": "위치: 가람초 정문 · 길이 막혔어요 (웹 신고)"})
+        self.assertEqual(self.post(f"/api/incidents/{web['output']['id']}/ask", {"question": "몇 시부터요?"})[0], 409)   # 웹 신고는 못 물음
 
     def test_subscribe_notify_and_answer_safety_check(self):
         hook = self.wait_for(lambda m, p: m == "setWebhook", "웹훅 등록")[0][1]
