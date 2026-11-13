@@ -870,7 +870,8 @@ def reporter_change(iid, action, data):
     return 200, public_row(new)
 
 
-CARRY_FIELDS = ("owner_hash", "channel", "household", "household_place", "reporter", "questions", "edits", "supplements")   # 다시 분류해도 남겨 둘 신고 정보
+CARRY_FIELDS = ("owner_hash", "channel", "household", "household_place", "reporter", "questions", "edits", "supplements",
+                "repeats", "repeat_at")   # 다시 분류해도 남겨 둘 신고 정보
 
 
 def submit_report(text, rate_key, channel=None, household=None, reporter=None):
@@ -884,8 +885,14 @@ def submit_report(text, rate_key, channel=None, household=None, reporter=None):
     if not INCIDENT_LIMIT.allow(rate_key):
         return 429, {"error": "짧은 시간에 신고가 너무 많습니다. 급한 상황이면 119·112에 바로 전화하세요"}
     duplicate = database.find_duplicate_incident(text)
-    if duplicate:
-        return 200, {**public_row(duplicate), "duplicate": True}
+    if duplicate:   # 10분 안의 같은 내용은 새로 만들지 않고 원래 신고에 '같은 신고가 또 들어옴'을 남긴다(여러 사람이 같은 일을 알림)
+        with _incident_lock:
+            cur = incident_output(duplicate["output"]["id"]) or duplicate
+            o = cur["output"]
+            o["repeats"], o["repeat_at"] = o.get("repeats", 0) + 1, time.time()
+            cur = database.update_incident(cur)
+        database.log_audit("incident_repeated", "incident", o["id"], {"repeats": o["repeats"], "channel": channel or "웹"})
+        return 200, {**public_row(cur), "duplicate": True}
     rid = "R-" + uuid.uuid4().hex[:8].upper()
     row = classify_incident(rid, text, time.time())
     # 신고자만 고치거나 취소할 수 있게, 그 기기(텔레그램이면 그 대화방)에만 주는 비밀 값(서버에는 해시만 저장)
