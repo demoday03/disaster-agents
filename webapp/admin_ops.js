@@ -559,7 +559,7 @@
   // ---------------------------------------------------------------- 새 긴급 신고·SOS 알림
   // 담당자가 새로고침을 누르지 않아도 주민의 긴급 신고(긴급도 1)와 봉사자 SOS가 15초 안에 보이게 한다.
   // 새로 들어오면 화면 맨 위 빨간 띠·탭 제목·짧은 소리로 알린다. 입력 중일 때는 목록을 다시 그리지 않는다
-  let seenUrgent = null, seenSos = null, alertCount = 0, lastAlertId = null;
+  let seenUrgent = null, seenSos = null, seenAns = null, alertCount = 0, lastAlertId = null;
   const TITLE = document.title;
   const editing = () => !!document.activeElement?.closest?.('#incidents, #approvals, form') || !!document.querySelector('#incidents details.fix[open]');
   function beep() {
@@ -591,14 +591,19 @@
     try {
       const [inc, vol, ap] = await Promise.all([api('/api/incidents'), api('/api/volunteer'), api('/api/approvals')]);
       const urgent = inc.items.map(x => x.output).filter(o => o.urgency === 1 && o.state !== '오접수');
+      // 담당자가 되물은 질문에 신고자가 텔레그램으로 답하면 함께 알린다
+      const answers = inc.items.flatMap(x => (x.output.questions || []).flatMap(q => (q.answers || []).map(a => ({id: `${x.output.id}:${q.id}:${a.at}`, iid: x.output.id, text: a.text}))));
       if (seenUrgent) {
-        const fresh = urgent.filter(o => !seenUrgent.has(o.id));
+        const fresh = urgent.filter(o => !seenUrgent.has(o.id)), freshAns = answers.filter(a => !seenAns.has(a.id));
         if (fresh.length) lastAlertId = fresh[0].id;
+        else if (freshAns.length) lastAlertId = freshAns[0].iid;
         const lines = [...fresh.map(o => `${o.type} ${o.id}: ${String(o.text || '').slice(0, 40)}`),
-                       ...vol.sos.filter(s => !seenSos.has(s.id)).map(s => `봉사자 SOS(${s.name || vn(s.volunteer)})`)];
+                       ...vol.sos.filter(s => !seenSos.has(s.id)).map(s => `봉사자 SOS(${s.name || vn(s.volunteer)})`),
+                       ...freshAns.map(a => `💬 ${a.iid} 신고자 답: ${String(a.text).slice(0, 40)}`)];
         if (lines.length) raiseAlert(lines);
       }
       seenUrgent = new Set(urgent.map(o => o.id));
+      seenAns = new Set(answers.map(a => a.id));
       seenSos = new Set(vol.sos.map(s => s.id));
       $('approvalCount').textContent = ap.items.length;
       $('approvalCount').hidden = false;
