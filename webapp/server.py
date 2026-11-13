@@ -90,6 +90,7 @@ class RateLimiter:
 INCIDENT_LIMIT = RateLimiter(int(os.getenv("WEBAPP_INCIDENT_PER_MIN", "10")), 60)   # 접속 IP당 분당 신고 수
 PUBLIC_LIMIT = RateLimiter(int(os.getenv("WEBAPP_PUBLIC_PER_MIN", "60")), 60)   # 시민·봉사자 화면의 기록 요청
 LOGIN_IP_LIMIT = RateLimiter(30, 600)   # 접속 IP당 10분에 로그인 시도 30번(계정별 5번 잠금과 별도)
+HH_LOGIN_LIMIT = RateLimiter(30, 600)   # 주민 가구 코드 로그인: 접속 IP당 10분에 30번(코드 맞히기 방지)
 
 
 def login_blocked(username):
@@ -456,7 +457,7 @@ def approve_one(current, s, reason):
 BULK_SKIP_KINDS = {"welfare_guidance_review"}   # 검증이 불확실한 안내문은 하나씩 보고 판단한다
 
 
-PUBLIC_HIDDEN = ("notes", "invalidated_by", "invalid_reason", "invalidated_at", "triage", "owner_hash")
+PUBLIC_HIDDEN = ("notes", "invalidated_by", "invalid_reason", "invalidated_at", "triage", "owner_hash", "household")   # household = 가구 코드(로그인용)
 
 
 def public_row(row):
@@ -866,11 +867,12 @@ def reporter_change(iid, action, data):
     return 200, public_row(new)
 
 
-CARRY_FIELDS = ("owner_hash", "channel", "edits", "supplements")   # 다시 분류해도 남겨 둘 신고 정보
+CARRY_FIELDS = ("owner_hash", "channel", "household", "edits", "supplements")   # 다시 분류해도 남겨 둘 신고 정보
 
 
-def submit_report(text, rate_key, channel=None):
-    """주민 신고 접수(웹 화면·텔레그램 공통). (상태 코드, 응답)을 돌려준다."""
+def submit_report(text, rate_key, channel=None, household=None):
+    """주민 신고 접수(웹 화면·텔레그램 공통). (상태 코드, 응답)을 돌려준다.
+    household: 가구 코드로 로그인한 주민이 보낸 신고면 그 가구(담당자 화면에만 보이고 공개 응답에서는 뺀다)."""
     if not isinstance(text, str) or not text.strip():
         return 400, {"error": "신고 내용을 입력해 주세요"}
     if len(text) > 2000:
@@ -887,6 +889,8 @@ def submit_report(text, rate_key, channel=None):
     row["output"]["owner_hash"] = hashlib.sha256(token.encode()).hexdigest()
     if channel:
         row["output"]["channel"] = channel   # 담당자 화면에 '텔레그램 신고'처럼 표시
+    if isinstance(household, str) and household in FEATURES.households:
+        row["output"]["household"] = household   # 로그인한 가구의 신고(로그인 없이 보낸 긴급 신고와 구분)
     # Persist only the classifier result (the intake agent applies its configured masking).
     row = database.save_incident(row)
     row = database.update_incident(link_incident(row))
@@ -1186,6 +1190,7 @@ class Handler(BaseHTTPRequestHandler):
         routes = {
             ("GET", "households"): lambda: {"items": PUBLIC.households()},
             ("POST", "households"): lambda: PUBLIC.register_household(data),
+            ("POST", "household-login"): lambda: PUBLIC.login_household(data),   # 주민 화면 로그인(가구 코드)
             ("POST", "households", "*", "update"): lambda: PUBLIC.update_household(p[1], data),
             ("GET", "households", "*"): lambda: PUBLIC.household(p[1]),
             ("POST", "households", "*", "safe"): lambda: PUBLIC.respond_check(p[1]),
@@ -1461,6 +1466,8 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/api/public/"):
                 if not PUBLIC_LIMIT.allow(self.client_ip()):
                     return self.send_json(429, {"error": "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요"})
+                if path == "/api/public/household-login" and not HH_LOGIN_LIMIT.allow(self.client_ip()):
+                    return self.send_json(429, {"error": "로그인 시도가 너무 많아요. 10분 뒤 다시 해 주세요. 급하면 로그인 없이 신고하거나 119·112에 전화하세요"})
                 if path == "/api/public/battle":   # AI 분류(처음 한 번 Solar 20회)는 FEATURES 잠금 밖에서
                     try:
                         return self.send_json(201, battle.submit(database, LLM, data))
@@ -1670,7 +1677,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(200, row)
 
             if path == "/api/incidents":
-                return self.send_json(*submit_report(data.get("text"), self.client_ip()))
+                return self.send_json(*submit_report(data.get("text"), self.client_ip(), household=data.get("household")))
             if path.startswith("/api/incidents/") and path.endswith(("/edit", "/cancel")):   # 신고자가 고치기·취소(이 기기의 비밀 값으로)
                 parts = path.strip("/").split("/")
                 if len(parts) != 4 or not parts[2] or len(parts[2]) > 40:

@@ -405,6 +405,33 @@ class TestPipeline(ServerBase):
         self.assertIn("신고자가 취소함", self.staff_view(iid)["notes"][-1])
         self.assertEqual(anon.post(f"/api/incidents/{iid}/cancel", {"token": token})[0], 409)
 
+    def test_citizen_logs_in_with_household_code(self):
+        """주민 화면 로그인: 가구 코드(대소문자·'H-' 빠뜨림 허용). 로그인한 가구의 신고는 담당자에게만 가구가 보인다."""
+        anon = Client(self.base)
+        _, r = anon.post("/api/public/households", {"address": "옥포동 시장 뒤 주택", "floor": "반지하", "members": 2})
+        hid = r["id"]
+        for typed in (hid, hid.lower(), hid[2:].lower(), " " + hid.replace("-", "") + " "):
+            self.assertEqual(anon.post("/api/public/household-login", {"code": typed}), (201, {"id": hid, "registered": True}), typed)
+        self.assertEqual(anon.post("/api/public/household-login", {"code": "h5"})[1]["id"], "H05")      # 시연 가구
+        for bad in ("H-0000000000", "", "x" * 50):
+            self.assertEqual(anon.post("/api/public/household-login", {"code": bad})[0], 400, bad)
+        # 로그인한 가구의 신고: 공개 조회(접수번호)에는 가구 코드가 나오지 않는다(코드 = 로그인 수단)
+        code, d = anon.post("/api/incidents", {"text": "위치: 옥포동 시장 뒤 · 물이 차고 있어요(침수) (로그인 시험)", "household": hid})
+        self.assertEqual(code, 201, d)
+        iid = d["output"]["id"]
+        self.assertNotIn(hid, str(d))
+        self.assertNotIn(hid, str(anon.get(f"/api/incidents/{iid}")[1]))
+        self.assertEqual(self.staff_view(iid)["household"], hid)
+        # 없는 가구 코드를 붙여 보내면 무시(로그인 없이 보낸 신고와 같음)
+        _, d2 = anon.post("/api/incidents", {"text": "위치: 옥포동 다리 밑 · 길이 막혔어요 (로그인 시험)", "household": "H-0000000000"})
+        self.assertNotIn("household", self.staff_view(d2["output"]["id"]))
+        # 보완해도 가구·신고자 권한이 남는다
+        _, d3 = anon.post("/api/incidents", {"text": "물이 차고 있어요 (보완 시험)", "household": hid})
+        self.assertEqual(d3["output"]["state"], "보완 필요")
+        self.assertEqual(anon.post(f"/api/incidents/{d3['output']['id']}/supplement", {"text": "옥포동 시장 뒤예요"})[0], 200)
+        self.assertEqual(self.staff_view(d3["output"]["id"])["household"], hid)
+        self.assertEqual(anon.post(f"/api/incidents/{d3['output']['id']}/cancel", {"token": d3["edit_token"]})[0], 200)
+
     def test_human_vs_ai_battle(self):
         """사람 vs AI 분류 대결: 문제에는 정답이 없고, 채점은 서버가 한다. AI 결과는 한 번만 계산해 둔다."""
         import json as _json
