@@ -388,7 +388,8 @@ def report_crosscheck(o):
         if (x.get("id") != o["id"] and x.get("state") != INVALID and x.get("type") == o["type"]
                 and x.get("zone") == o["zone"] and abs((x.get("ts") or 0) - (o.get("ts") or 0)) <= span):
             similar += 1
-    return crosscheck.assess(o, SENSORS.window(cfg["window_sec"]), SENSORS.thresholds(), cfg, similar=similar)
+    return crosscheck.assess(o, SENSORS.window(cfg["window_sec"]), SENSORS.thresholds(), cfg, similar=similar,
+                             cautions=SENSORS.cautions())
 
 
 def queue_welfare_check(o):

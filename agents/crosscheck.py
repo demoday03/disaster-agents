@@ -25,8 +25,18 @@ def claimed_level(typ, text, cfg):
     return 1, []
 
 
-def sensor_level(rule, window, thresholds):
-    """센서 쪽 심각도 = 기준을 넘은 센서 수(0~2). 값이 없는 센서가 있으면 None."""
+def sensor_level(rule, window, thresholds, cautions=None):
+    """센서 쪽 심각도(0~2). 센서가 여러 개면 기준을 넘은 센서 수, 수심 센서처럼 하나에 주의 기준(cautions)이 있으면
+    주의 기준 넘음 1 · 위험 기준 넘음 2. 값이 없는 센서가 있으면 None."""
+    cautions = cautions or {}
+    if len(rule["keys"]) == 1 and rule["keys"][0] in cautions:
+        key = rule["keys"][0]
+        w = window.get(key)
+        if w is None:
+            return None, [f"{key} 최근 값 없음"]
+        t, c = thresholds[key], cautions[key]
+        level = 2 if w["max"] > t else 1 if w["max"] > c else 0
+        return level, [f"{key} 최대 {w['max']:g}(주의 {c:g} · 위험 {t:g} → {['기준 아래', '주의 기준 넘음', '위험 기준 넘음'][level]})"]
     over, detail = 0, []
     for key in rule["keys"]:
         w = window.get(key)
@@ -38,7 +48,7 @@ def sensor_level(rule, window, thresholds):
     return over, detail
 
 
-def assess(report, window, thresholds, cfg, similar=0, window_sec=None):
+def assess(report, window, thresholds, cfg, similar=0, window_sec=None, cautions=None):
     """report: 접수 결과(type·zone·text·urgency·people·vulnerable). window: {센서키: {'max','age_s'}} 최근 window_sec초.
     similar: 같은 구역·유형의 최근 다른 신고 수. 대조할 수 없는 유형이면 None."""
     typ, zone = report.get("type"), report.get("zone")
@@ -52,7 +62,7 @@ def assess(report, window, thresholds, cfg, similar=0, window_sec=None):
     if zone not in rule["zones"]:
         res["reasons"].append(f"{zone}에는 {typ} 센서가 없습니다(설치 구역: {', '.join(rule['zones'])})")
     else:
-        level, detail = sensor_level(rule, window, thresholds)
+        level, detail = sensor_level(rule, window, thresholds, cautions)
         res["reasons"] += detail
         if level is None:
             res["reasons"].append(f"노드 {rule['node']}가 최근 {window_sec}초 동안 값을 보내지 않았습니다")

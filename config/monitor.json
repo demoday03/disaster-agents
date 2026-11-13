@@ -1,19 +1,41 @@
 {
   "calibrated": false,
   "_note": "임계값은 임시값. 제안서 8.6의 설치 점검에서 측정해 확정하고 D14에 기록한다.",
+  "_depth_note": "A.depth: 노드 A의 수심 센서 1개(아날로그 0~1023, 깊을수록 큼). caution을 연속 sustain_n회 넘으면 주의(지켜봄), threshold를 연속 sustain_n회 넘으면 침수 확정 후보(담당자 승인). 한 번 튀는 값은 무시.",
   "sustain_n": 3,
   "window_sec": 10,
   "stale_sec": 30,
   "danger_rain_stage": 3,
-  "nodes": ["A", "B"],
+  "nodes": [
+    "A",
+    "B"
+  ],
   "sensors": {
-    "A.water_low":  {"threshold": 200},
-    "A.water_high": {"threshold": 200},
-    "B.tilt":       {"threshold": 0},
-    "B.vibration":  {"threshold": 300}
+    "A.depth": {
+      "threshold": 400,
+      "caution": 150,
+      "label": "수심"
+    },
+    "B.tilt": {
+      "threshold": 0
+    },
+    "B.vibration": {
+      "threshold": 300
+    }
   },
   "rules": {
-    "flood": {"keys": ["A.water_low", "A.water_high"], "mode": "sustained"},
-    "slope": {"keys": ["B.tilt", "B.vibration"], "mode": "window"}
+    "flood": {
+      "keys": [
+        "A.depth"
+      ],
+      "mode": "sustained"
+    },
+    "slope": {
+      "keys": [
+        "B.tilt",
+        "B.vibration"
+      ],
+      "mode": "window"
+    }
   }
 }

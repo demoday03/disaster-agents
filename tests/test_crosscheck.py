@@ -4,10 +4,11 @@ import unittest
 from agents import crosscheck as C
 
 CFG = C.load_cfg()
-TH = {"A.water_low": 200, "A.water_high": 200, "B.tilt": 0, "B.vibration": 300}
-DRY = {"A.water_low": {"max": 30, "age_s": 1}, "A.water_high": {"max": 10, "age_s": 1}}
-LOW_ONLY = {"A.water_low": {"max": 290, "age_s": 1}, "A.water_high": {"max": 20, "age_s": 1}}
-BOTH = {"A.water_low": {"max": 301, "age_s": 1}, "A.water_high": {"max": 307, "age_s": 1}}
+TH = {"A.depth": 400, "B.tilt": 0, "B.vibration": 300}
+CAUT = {"A.depth": 150}   # 수심 센서 1개: 주의 기준 넘음 = 1, 위험 기준 넘음 = 2
+DRY = {"A.depth": {"max": 30, "age_s": 1}}
+LOW_ONLY = {"A.depth": {"max": 250, "age_s": 1}}    # 주의 기준만 넘음
+BOTH = {"A.depth": {"max": 520, "age_s": 1}}        # 위험 기준 넘음
 
 
 def flood(text, zone="Z1", **kw):
@@ -29,24 +30,24 @@ class TestCrosscheck(unittest.TestCase):
                  (flood("Z1 길에 물이 조금 고였어요"), LOW_ONLY, C.CONSISTENT),
                  (flood("Z1 길에 물이 조금 고였어요"), BOTH, C.UNDERSTATED)]
         for report, window, want in cases:
-            r = C.assess(report, window, TH, CFG)
+            r = C.assess(report, window, TH, CFG, cautions=CAUT)
             self.assertEqual(r["verdict"], want, (report["text"], window))
             self.assertFalse(r["changes_urgency"])                                     # 참고용
 
     def test_unknown_when_no_sensor_or_offline(self):
-        other_zone = C.assess(flood("Z3 허리까지 잠겼어요", zone="Z3"), BOTH, TH, CFG)
+        other_zone = C.assess(flood("Z3 허리까지 잠겼어요", zone="Z3"), BOTH, TH, CFG, cautions=CAUT)
         self.assertEqual(other_zone["verdict"], C.UNKNOWN)
         self.assertIn("Z3에는 침수 센서가 없습니다", other_zone["reasons"][1])
-        offline = C.assess(flood("Z1 허리까지 잠겼어요"), {}, TH, CFG)               # 센서가 조용 ≠ 위험 없음
+        offline = C.assess(flood("Z1 허리까지 잠겼어요"), {}, TH, CFG, cautions=CAUT)               # 센서가 조용 ≠ 위험 없음
         self.assertEqual((offline["verdict"], offline["sensor_level"]), (C.UNKNOWN, None))
         self.assertTrue(any("값을 보내지 않았습니다" in x for x in offline["reasons"]))
-        self.assertIsNone(C.assess({"type": "물품 요청", "zone": "Z1", "text": "생수"}, BOTH, TH, CFG))
+        self.assertIsNone(C.assess({"type": "물품 요청", "zone": "Z1", "text": "생수"}, BOTH, TH, CFG, cautions=CAUT))
 
     def test_people_or_vulnerable_always_asks_field_check(self):
-        r = C.assess(flood("Z1 할머니 집이 허리까지 잠겼어요", vulnerable=True), DRY, TH, CFG)
+        r = C.assess(flood("Z1 할머니 집이 허리까지 잠겼어요", vulnerable=True), DRY, TH, CFG, cautions=CAUT)
         self.assertEqual(r["verdict"], C.EXAGGERATED)
         self.assertIn("현장 확인을 먼저", r["advice"])
-        r = C.assess(flood("Z1 허리까지 잠겼어요"), DRY, TH, CFG, similar=2)
+        r = C.assess(flood("Z1 허리까지 잠겼어요"), DRY, TH, CFG, cautions=CAUT, similar=2)
         self.assertIn("센서 위치와 다른 곳일 수 있음", r["advice"])
         self.assertIn("최근 2건 더", r["reasons"][-1])
 
@@ -54,8 +55,8 @@ class TestCrosscheck(unittest.TestCase):
         rep = {"type": "산사태·토사", "zone": "Z5", "text": "Z5 뒷산이 무너졌어요"}
         tilt_only = {"B.tilt": {"max": 1, "age_s": 1}, "B.vibration": {"max": 20, "age_s": 1}}
         both = {"B.tilt": {"max": 1, "age_s": 1}, "B.vibration": {"max": 650, "age_s": 1}}
-        self.assertEqual(C.assess(rep, tilt_only, TH, CFG)["verdict"], C.PARTIAL)
-        self.assertEqual(C.assess(rep, both, TH, CFG)["verdict"], C.CONSISTENT)
+        self.assertEqual(C.assess(rep, tilt_only, TH, CFG, cautions=CAUT)["verdict"], C.PARTIAL)
+        self.assertEqual(C.assess(rep, both, TH, CFG, cautions=CAUT)["verdict"], C.CONSISTENT)
 
 
 if __name__ == "__main__":

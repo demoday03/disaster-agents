@@ -175,6 +175,10 @@ class SensorHub:
     def thresholds(self):
         return {k: v["threshold"] for k, v in self.cfg["sensors"].items()}
 
+    def cautions(self):
+        """주의 기준이 있는 센서(수심 센서)의 주의 기준."""
+        return {k: v["caution"] for k, v in self.cfg["sensors"].items() if "caution" in v}
+
     def status(self):
         with self.lock:
             now = self.clock()
@@ -185,8 +189,9 @@ class SensorHub:
                     latest[k] = r
             sensors = [{"key": k, "value": latest[k]["value"] if k in latest else None,
                         "age_s": round(now - latest[k]["ts"], 1) if k in latest else None,
-                        "threshold": v["threshold"],
-                        "over": k in latest and latest[k]["value"] > v["threshold"]}
+                        "threshold": v["threshold"], "caution": v.get("caution"),
+                        "over": k in latest and latest[k]["value"] > v["threshold"],
+                        "over_caution": k in latest and "caution" in v and latest[k]["value"] > v["caution"]}
                        for k, v in self.cfg["sensors"].items()]
             extra = sorted(({"key": k, "node": r["node"], "sensor": r["sensor"], "value": r["value"],
                              "age_s": round(now - r["ts"], 1), "online": now - r["ts"] <= self.cfg["stale_sec"]}

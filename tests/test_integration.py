@@ -16,7 +16,7 @@ CFGS = dict(mon=M.load_config("config/monitor.json"), ic=I.load_cfg("config/inta
 def run_core_flow():
     co = Coordinator()
     # 1) 감시: 침수 센서 두 개가 함께 반응
-    readings = [{"node": "A", "sensor": s, "value": 900, "ts": NOW - i} for s in ("water_low", "water_high") for i in range(5)]
+    readings = [{"node": "A", "sensor": "depth", "value": 900, "ts": NOW - i} for i in range(5)]
     readings += [{"node": "B", "sensor": s, "value": v, "ts": NOW - i} for s, v in (("tilt", 0), ("vibration", 50)) for i in range(5)]
     mon = M.Monitor(CFGS["mon"]).evaluate(readings, NOW)
     assert mon.output["status"] == "확정후보" and mon.needs_approval

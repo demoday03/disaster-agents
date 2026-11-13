@@ -8,13 +8,13 @@ disaster-agents 서버(`gateway/microbit_gateway.py`)에 맞춘 MakeCode 코드.
 3. **G 는 외부 블루투스 모듈(HC-05/HC-06)로 노트북과 잇는다**(P1 → 모듈 RXD, P2 ← 모듈 TXD, 9600, 노트북에서 페어링 후
    `python gateway/microbit_gateway.py --port COM5 --bt`). USB로 쓰려면 `G_게이트웨이.ts` 의 `USE_BLUETOOTH = false`.
    A~E 와 블루투스 모드의 G 는 배터리(보조배터리 권장)로 전원. 자세한 배선: 프로젝트 `docs/마이크로비트_게이트웨이.md` 1-2
-   (`hex/G_게이트웨이.hex` 는 예전 USB 버전. 블루투스로 쓸 때는 .ts 를 붙여 넣어 새로 받는다)
+   (`hex/G_게이트웨이.hex` 는 예전 USB 버전, `hex/A_침수.hex` 는 예전 수위 센서 2개 버전. 둘 다 .ts 를 붙여 넣어 새로 받는다)
 
 ## 장치별 요약
 
 | 장치 | 파일 | 핀 | 버튼 | 지금 서버 연결 |
 |---|---|---|---|---|
-| A 침수 | `A_침수.ts` | P0 낮은 수위, P1 높은 수위 | A/B: 센서값 표시(설치 점검) | ✅ |
+| A 침수 | `A_침수.ts` | P0 수심 센서 1개 | A: 수심 값 표시(설치 점검) | ✅ |
 | B 사면 | `B_사면.ts` | P0 진동, P9 기울기(S), P8 모듈 LED(L) | A: 진동 최댓값, B: 기울기 핀 값 | ✅ |
 | G 게이트웨이 | `G_게이트웨이.ts` | P1 TX → 블루투스 모듈 RXD, P2 RX ← 모듈 TXD | – | ✅ (받기·내려보내기, 블루투스 또는 USB) |
 | C 대피소 | `C_대피소.ts` | (내장 온도) | A 입소, B 퇴소, 로고 물품 도착 | ✅ (보드에는 아직 안 올림) |
@@ -25,7 +25,7 @@ disaster-agents 서버(`gateway/microbit_gateway.py`)에 맞춘 MakeCode 코드.
 
 | 메시지 | 방향 | 뜻 | 예 |
 |---|---|---|---|
-| `S,노드,센서,값` | 노드 → G | 센서 원값 (A·B 1초, C·D·E 5초) | `S,A,water_low,523` |
+| `S,노드,센서,값` | 노드 → G | 센서 원값 (A·B 1초, C·D·E 5초) | `S,A,depth,523` |
 | `E,노드,코드,번호` | 노드 → G | 이벤트 (번호 0~99, 중복 제거용) | `E,D,SOS,7` |
 | `K,노드,번호` | G → 노드 | 이벤트 수신 확인 (없으면 노드가 최대 3번 보냄) | `K,D,7` |
 | `L단계` | G → 전체 | 담당자가 확정한 위험 단계 0~3 | `L2` |
@@ -35,7 +35,7 @@ disaster-agents 서버(`gateway/microbit_gateway.py`)에 맞춘 MakeCode 코드.
 이벤트 코드: C `+1` `-1` `GOT` / D `SAFE` `SOS` `NEED` `DARK` `LIGHT` / E `IN` `SOS` `DONE` `HEAT` `COOL`
 
 ## 설치 점검 때 맞출 값
-- A `LOW_THRESHOLD`·`HIGH_THRESHOLD`, B `VIBRATION_THRESHOLD`: 화면 표시용. 서버 `config/monitor.json` 과 같은 값으로
+- A `CAUTION`·`DANGER`(수심 주의·위험), B `VIBRATION_THRESHOLD`: 화면 표시용. 서버 `config/monitor.json` 과 같은 값으로
 - B 기울기 모듈에 저항이 있으면 `PinPullMode.PullNone`
 - D `DARK_THRESHOLD`, E `HEAT_THRESHOLD`·`INVERTED`
 - 같은 교실 다른 팀과 그룹 23 이 겹치면 6개 파일과 서버 쪽 모두 바꾼다

@@ -226,12 +226,14 @@ class TestSensorHub(unittest.TestCase):
 
     def test_window_gives_recent_max(self):
         for v in (50, 320, 90):
-            self.hub.ingest([{"node": "A", "sensor": "water_low", "value": v, "ts": self.now}])
+            self.hub.ingest([{"node": "A", "sensor": "depth", "value": v, "ts": self.now}])
             self.now += 10
         w = self.hub.window(25)                                                 # 마지막 25초: 320(20초 전)·90(10초 전)
-        self.assertEqual((w["A.water_low"]["max"], w["A.water_low"]["age_s"]), (320, 10))
+        self.assertEqual((w["A.depth"]["max"], w["A.depth"]["age_s"]), (320, 10))
         self.assertEqual(self.hub.window(5), {})
-        self.assertEqual(self.hub.thresholds()["A.water_low"], 200)
+        self.assertEqual((self.hub.thresholds()["A.depth"], self.hub.cautions()), (400, {"A.depth": 150}))
+        st = next(x for x in self.hub.status()["sensors"] if x["key"] == "A.depth")
+        self.assertEqual((st["caution"], st["over_caution"], st["over"]), (150, False, False))   # 마지막 값 90
 
     def test_downlink_only_confirmed_stage_and_safety_check(self):
         self.assertEqual(self.hub.downlink(), {"level": 0, "level_name": "정상", "safety_check": False})

@@ -1,7 +1,7 @@
 """마이크로비트 게이트웨이: USB로 연결한 수신용 마이크로비트의 시리얼 출력을 읽어 서버(/api/sensor/readings)로 보낸다.
 
 센서 노드(microbit/node_a.py, node_b.py)가 무선(radio)으로 보낸 값을 수신기(microbit/receiver.py)가 한 줄씩 출력한다.
-한 줄 형식:  S,<노드>,<센서>,<값>      예) S,A,water_low,523
+한 줄 형식:  S,<노드>,<센서>,<값>      예) S,A,depth,523   (노드 A 수심 센서)
              E,<노드>,<신호>,<번호>    예) E,E,SOS,7   (현장 버튼 신호. 받으면 수신기로 K,E,7을 돌려보내 재전송을 멈춘다)
 그 밖의 줄(디버그 출력 등)은 무시한다.
 반대 방향: 서버에서 담당자가 확정한 단계를 몇 초마다 물어 바뀌면 수신기로 L0~L3(정상이면 X)을,
@@ -55,7 +55,7 @@ def parse_event(line, ts):
 
 class Simulator:
     """기기 없이 시험할 때 쓰는 가상 센서. tick()마다 노드 A·B의 한 번 측정값을 시리얼 줄 형식으로 돌려준다.
-    normal: 모두 정상 / flood: 수위 두 개가 함께 높음(확정 후보) / single: 낮은 수위만 높음(보류)
+    normal: 모두 정상 / flood: 수심이 위험 기준 위(확정 후보) / single: 수심이 주의 기준만 넘음(보류·주의)
     spike: 한 번만 튐(무시) / slope: 기울기+진동(사면 확정 후보) / dropout: 노드 B가 끊김(센서 이상)
     sos: 센서는 정상, 첫 회에 봉사자 노드 E의 SOS 버튼 신호(같은 신호를 무선 재전송처럼 두 번)"""
     def __init__(self, scenario, seed=0):
@@ -66,17 +66,17 @@ class Simulator:
     def tick(self):
         s, n, r = self.scenario, self.n, self.rng
         self.n += 1
-        low = high = r.randint(80, 200)
+        depth = r.randint(20, 120)   # 수심(주의 150 · 위험 400 기준, config/monitor.json)
         tilt, vib = 0, r.randint(10, 120)
         if s == "flood":
-            low, high = r.randint(600, 800), r.randint(520, 700)
+            depth = r.randint(500, 750)
         elif s == "single":
-            low = r.randint(600, 800)
+            depth = r.randint(200, 350)
         elif s == "spike" and n == 2:
-            low = high = 900
+            depth = 900
         elif s == "slope":
             tilt, vib = 1, r.randint(400, 700)
-        lines = [f"S,A,water_low,{low}", f"S,A,water_high,{high}"]
+        lines = [f"S,A,depth,{depth}"]
         if not (s == "dropout" and n >= 1):
             lines += [f"S,B,tilt,{tilt}", f"S,B,vibration,{vib}"]
         if s == "sos" and n == 0:

@@ -358,7 +358,8 @@
         `<div>노드: ${d.nodes.map(n => chip(`${n.node} ${n.online ? '연결' : '끊김'} · ${age(n.last_seen_age_s)}`, n.online ? 'ok' : 'bad')).join(' ')}` +
         ` · 받은 값 ${E(d.received)}개${d.rejected ? ` · 버린 값 ${E(d.rejected)}개` : ''} · 강우 단계 ${E(d.rain_stage)}</div>` +
         table(['센서', '최근 값', '임계값', '받은 때'], d.sensors.map(s =>
-          `<tr><td>${E(s.key)}</td><td>${s.value == null ? '-' : chip(s.value, s.over ? 'bad' : 'ok')}</td><td>${E(s.threshold)}</td><td>${E(age(s.age_s))}</td></tr>`)) +
+          `<tr><td>${E(s.key)}${s.key === 'A.depth' ? ' <span class="muted">(수심)</span>' : ''}</td><td>${s.value == null ? '-' : chip(s.value, s.over ? 'bad' : s.over_caution ? 'warn' : 'ok')}</td>` +
+          `<td>${s.caution != null ? `주의 ${E(s.caution)} · 위험 ${E(s.threshold)}` : E(s.threshold)}</td><td>${E(age(s.age_s))}</td></tr>`)) +
         (o ? `<div>최근 판정: ${chip(o.status, o.status === '확정후보' ? 'bad' : o.status === '보류' ? 'warn' : 'ok')} 제안 단계 <b>${E(o.level)}</b> · ${E(o.summary)}` +
              (ev.approval_id ? ` · 승인 대기열에 올림(${E(ev.approval_id)})` : ev.duplicate_of ? ' · 같은 단계가 이미 대기·확정 중' : '') + '</div>' +
              (o.false_alarm_log.length ? `<div class="muted">${E(o.false_alarm_log.join(' / '))}</div>` : '')
@@ -446,7 +447,7 @@
       try { const d = await api('/api/dispatch'); $('gZones').value = d.control_zones.filter(c => c.active).map(c => c.name).join(', '); }
       catch (err) { alert(err.message); }
     });
-    ['Wl', 'Wh', 'Vb'].forEach(k => $('s' + k).addEventListener('input', () => { $('o' + k).textContent = $('s' + k).value; }));
+    ['Dp', 'Vb'].forEach(k => $('s' + k).addEventListener('input', () => { $('o' + k).textContent = $('s' + k).value; }));
 
     $('supplyForm').addEventListener('submit', async e => {
       e.preventDefault();
@@ -553,7 +554,7 @@
       const now = Date.now() / 1000, rows = [];
       for (let i = 0; i < 3; i++) {   // 최근 3초 동안 같은 값이 유지된 것으로 보냄(연속 3회 조건)
         const ts = now - 2 + i;
-        rows.push({node: 'A', sensor: 'water_low', ts, value: Number($('sWl').value)}, {node: 'A', sensor: 'water_high', ts, value: Number($('sWh').value)},
+        rows.push({node: 'A', sensor: 'depth', ts, value: Number($('sDp').value)},
                   {node: 'B', sensor: 'tilt', ts, value: $('sTilt').checked ? 1 : 0}, {node: 'B', sensor: 'vibration', ts, value: Number($('sVb').value)});
       }
       try {
