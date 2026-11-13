@@ -21,7 +21,7 @@
   const LOADERS = {overview: () => { loadSituation(); }, notice: loadAnnouncements, supply: loadSupply, volunteer: loadVolunteer, recovery: loadRecovery,
                    welfare: loadChecks, sensor: () => { loadVerifyDocs(); loadSensorLive(); }, approvals: () => loadApprovals(),
                    dispatch: () => { loadDispatch(); loadControl(); loadShelterOps(); },
-                   guidance: loadIncidents, system: () => { loadHealth(); loadAgents(); }};
+                   guidance: loadIncidents, system: () => { loadHealth(); loadAgents(); }, telegram: loadTelegram};
   function go(tab) {
     current = tab;
     document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.go === tab));
@@ -29,6 +29,7 @@
     clearInterval(refreshTimer);
     if (tab === 'welfare') refreshTimer = setInterval(loadChecks, 3000);   // 남은 시간·격상 자동 갱신
     if (tab === 'sensor') refreshTimer = setInterval(loadSensorLive, 2000);   // 게이트웨이 수신값 자동 갱신
+    if (tab === 'telegram') refreshTimer = setInterval(loadTelegram, 3000);   // 코드로 방이 연결되면 바로 보이게
     if (LOADERS[tab]) LOADERS[tab]();
     try { localStorage.setItem('adminTab', tab); } catch (e) { /* 저장 불가 환경 */ }
   }
@@ -128,6 +129,11 @@
   async function loadAnnouncements() {
     try {
       await loadMeta();   // 구역 고르기 목록
+      api('/api/telegram').then(t => {   // 텔레그램으로는 어디에 가는지
+        const ch = t.enabled && t.rooms.find(r => r.kind === 'channel');
+        $('annTg').textContent = !t.enabled ? '' : ch ? `텔레그램: 주민 대상 공지는 공지 채널 「${ch.title || '채널'}」에 한 번 올려요(구역 공지는 그 구역에 연결된 집에도 1:1로).`
+          : `텔레그램: 주민 대상 공지는 알림 받는 주민 ${t.subscribers}명에게 1:1로 보내요. 사람이 많으면 📨 텔레그램 탭에서 공지 채널을 연결하세요.`;
+      }).catch(() => {});
       const d = await api('/api/announcements');
       const hide = $('annHideEnded').checked, rows = hide ? d.items.filter(a => a.active) : d.items, ended = d.items.length - d.items.filter(a => a.active).length;
       $('annList').classList.toggle('muted', !rows.length);
@@ -138,6 +144,79 @@
         : (hide && ended ? '게시 중인 공지가 없습니다.' : '아직 올린 공지가 없습니다.')) + (hide && ended ? `<p class="muted">내린 공지 ${ended}건은 숨겼습니다.</p>` : '');
     } catch (e) { showError('annList', e); }
   }
+
+  // ---------------------------------------------------------------- 📨 텔레그램: 담당자 방·주민 공지 채널(1회용 코드로 연결)
+  const TG_CODE = {};   // 용도(staff·channel) → 만든 코드와 안내
+  const mmss = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  function renderCode(purpose, rooms) {
+    const box = $('tgHow-' + purpose), c = TG_CODE[purpose];
+    if (!c) return;
+    const linked = rooms.find(r => r.kind === purpose && r.linked_at * 1000 >= c.made - 5000);
+    if (linked) {   // 코드를 써서 방이 연결됨
+      delete TG_CODE[purpose];
+      box.hidden = false;
+      box.innerHTML = `✅ <b>${E(linked.title || linked.chat_id)}</b>${purpose === 'staff' ? ' 방을 담당자 방으로' : ' 채널을 공지 채널로'} 연결했어요.`;
+      return;
+    }
+    const left = (c.made + c.expires_in * 1000 - Date.now()) / 1000;
+    box.hidden = false;
+    if (left <= 0) { delete TG_CODE[purpose]; box.innerHTML = '코드 시간(10분)이 지났어요. 다시 만들어 주세요.'; return; }
+    box.innerHTML = `연결 코드 <span class="tgcode">${E(c.code)}</span> <span class="muted">남은 시간 ${mmss(left)} · 한 번만 쓸 수 있어요</span>` + (purpose === 'staff'
+      ? `<ol>${c.startgroup ? `<li><a href="${E(c.startgroup)}" target="_blank" rel="noopener">📲 텔레그램에서 단체방을 골라 봇 추가하기</a> <span class="muted">(누르면 텔레그램이 열려요. 방을 고르면 바로 연결돼요)</span></li>` : ''}` +
+        `<li>${c.startgroup ? '또는 ' : ''}봇을 단체방에 초대한 뒤 그 방에 <code>${E(c.command)}</code> 보내기</li></ol>`
+      : `<ol><li>텔레그램에서 채널 만들기 <span class="muted">(공개 채널이면 주민이 주소로 바로 들어와요)</span></li>` +
+        `<li>채널 → 관리자 → 관리자 추가 → <b>@${E(c.bot || '봇')}</b> 검색 → 메시지 보내기·삭제 권한 주기</li>` +
+        `<li>채널에 <code>${E(c.command)}</code> 를 글로 올리기 <span class="muted">(봇이 그 글을 지우고 연결해요)</span></li></ol>`);
+  }
+  async function loadTelegram() {
+    try {
+      const d = await api('/api/telegram');
+      for (const id of ['tgStaffCode', 'tgChanCode']) $(id).disabled = !d.enabled;
+      if (!d.enabled) {
+        $('tgStatus').innerHTML = `${chip('텔레그램 봇이 꺼져 있어요', 'warn')} 서버 설정(Render → Environment)에 TELEGRAM_BOT_TOKEN을 넣으면 켜져요. 토큰은 채팅·저장소에 적지 마세요.`;
+        $('tgStaffRooms').innerHTML = $('tgChannel').innerHTML = '';
+        return;
+      }
+      $('tgStatus').classList.remove('muted');
+      $('tgStatus').innerHTML = `봇 <b>@${E(d.bot || '?')}</b> · ${E(d.mode === 'webhook' ? '웹훅으로 받는 중' : d.mode === 'polling' ? '폴링으로 받는 중' : '연결 안 됨')}` +
+        `${d.error ? ' ' + chip(d.error, 'bad') : ''} · 알림 받는 주민 ${E(d.subscribers)}명` +
+        (d.bulk_pending ? ' · ' + chip(`공지를 1:1로 보내는 중: 남은 ${d.bulk_pending}건 (신고 답장이 먼저 나가요)`, 'warn') : '');
+      const row = r => `<div class="tgroom"><b>${E(r.title || r.chat_id)}</b> <span class="muted">${E(fmtDate(r.linked_at))} 연결${r.by ? ' · 코드 만든 사람 ' + E(r.by) : ''}</span>` +
+        `${r.error ? ' ' + chip(r.error, 'bad') : ''}${r.link ? ` · <a href="${E(r.link)}" target="_blank" rel="noopener">${E(r.link)}</a>` : (r.kind === 'channel' ? ' ' + chip('주민이 들어올 주소가 없어 1:1 알림도 함께 보내요', 'warn') : '')}` +
+        `<br><button type="button" class="quiet" data-tgtest="${E(r.chat_id)}">시험 ${r.kind === 'staff' ? '알림' : '글'} 보내기</button>` +
+        `<button type="button" class="quiet" data-tgunlink="${E(r.chat_id)}" data-tgkind="${E(r.kind)}">연결 끊기</button></div>`;
+      const staff = d.rooms.filter(r => r.kind === 'staff'), ch = d.rooms.find(r => r.kind === 'channel');
+      $('tgStaffRooms').innerHTML = staff.length ? staff.map(row).join('') : '<div class="muted">연결된 담당자 방이 없어요. 지금은 이 화면에서만 새 신고를 볼 수 있어요.</div>';
+      $('tgChannel').innerHTML = ch ? row(ch) : `<div class="muted">${d.env_channel ? '서버 설정(TELEGRAM_CHANNEL_ID)의 채널에도 올려요. 주민이 들어올 주소를 몰라 1:1 알림도 함께 보내요.'
+        : '연결된 채널이 없어요. 지금은 공지를 알림 받는 주민 모두에게 1:1로 보내요(사람이 많으면 다 받기까지 오래 걸려요).'}</div>`;
+      const r = d.rules || {};
+      $('tgRules').textContent = `알림 규칙: 매우 급함(긴급도 1)은 바로 · 긴급도 1~2를 ${Math.round((r.remind_s || 300) / 60)}분 동안 아무도 확인하지 않으면 한 번 더 · ` +
+        `나머지는 ${Math.round((r.digest_s || 1800) / 60)}분마다 숫자 요약 · 한 번에 ${r.batch || 3}건 넘게 들어오면 한 메시지로 묶어요. 연락처·우리 집 번호는 보내지 않아요.`;
+      for (const p of ['staff', 'channel']) renderCode(p, d.rooms);
+    } catch (e) { showError('tgStatus', e); }
+  }
+  document.addEventListener('click', async e => {
+    const b = e.target.closest('button[data-tgcode],button[data-tgtest],button[data-tgunlink]');
+    if (!b) return;
+    if (b.dataset.tgunlink && !confirm(b.dataset.tgkind === 'staff' ? '이 방의 연결을 끊을까요? 이 방으로 더 이상 알림을 보내지 않아요.'
+      : '공지 채널 연결을 끊을까요? 공지를 다시 주민 모두에게 1:1로 보내요.')) return;
+    b.disabled = true;
+    try {
+      if (b.dataset.tgcode) {
+        const c = await post('/api/telegram/link-code', {purpose: b.dataset.tgcode});
+        const d = await api('/api/telegram');
+        TG_CODE[b.dataset.tgcode] = {...c, made: Date.now(), bot: d.bot};
+        renderCode(b.dataset.tgcode, d.rooms);
+      } else if (b.dataset.tgtest) {
+        await post(`/api/telegram/rooms/${encodeURIComponent(b.dataset.tgtest)}/test`);
+        alert('보냈어요. 텔레그램에서 확인해 보세요.');
+      } else {
+        await post(`/api/telegram/rooms/${encodeURIComponent(b.dataset.tgunlink)}/unlink`);
+      }
+      await loadTelegram();
+    } catch (err) { alert(err.message); }
+    finally { b.disabled = false; }
+  });
 
   async function loadSituation() {
     try {
