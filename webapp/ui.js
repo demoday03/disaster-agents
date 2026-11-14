@@ -4,6 +4,8 @@
 //  - details.acc : 접고 펼치는 묶음(아코디언) 모양.
 //  - UI.urgentBar : 긴급 공지 띠. 접으면 한 줄('긴급 공지 N건 · 펼치기')만 남고, 새 긴급 공지가 오면 다시 펼친다.
 //  - 버튼 쿨타임 : 누른 버튼·보낸 양식은 1.5초 동안 다시 눌러도 무시한다(연타로 신고·승인·요청이 겹치지 않게).
+//  - 접속 환경 : 서버에 기기 종류(스마트폰·태블릿·노트북/PC)를 묻고 <html data-device>에 적는다. 컴퓨터면 '전화는 휴대폰으로',
+//    'GPS가 부정확할 수 있어요'를 보여 주고, 카카오톡 등 앱 안에서 열렸으면 '다른 브라우저로 열기'를 안내한다.
 (function () {
   const css = `
 .fold-hide{display:none!important}
@@ -28,6 +30,11 @@ button.cooling{opacity:.6;cursor:progress}
 [data-urgentbar] .ann-line{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;font-size:1rem}
 .ann-tg{margin:0!important;background:#fff!important;color:#A3182A!important;border:1.5px solid #F0B7BE!important;border-radius:99px!important;min-height:36px!important;padding:4px 14px!important;font:inherit;font-size:.9rem!important;font-weight:700;cursor:pointer;white-space:nowrap}
 
+.pc-only{display:none}html[data-device=pc] .pc-only{display:block}html[data-device=pc] .not-pc{display:none}
+.env-note{margin:8px 0 0;padding:8px 12px;border-radius:10px;background:#FFF6E0;color:#6B4A00;font-size:.9rem;line-height:1.45}
+.env-bar{position:sticky;top:0;z-index:50;display:flex;gap:8px 12px;align-items:center;flex-wrap:wrap;padding:10px 14px;background:#FFF6E0;color:#4A3500;border-bottom:1px solid #F0D58A;font-size:.92rem}
+.env-bar span{flex:1 1 220px}.env-bar a,.env-bar button{margin:0!important;min-height:36px;padding:4px 12px!important;border-radius:99px;font:inherit;font-weight:700;font-size:.88rem;cursor:pointer}
+.env-bar a{background:#FEE500;color:#191600;text-decoration:none;display:inline-flex;align-items:center}.env-bar button{background:#fff!important;color:#4A3500!important;border:1px solid #E2C46B!important}
 @media(prefers-reduced-motion:reduce){details.acc>summary::after{transition:none}}`;
   const st = document.createElement('style');
   st.textContent = css;
@@ -160,7 +167,48 @@ button.cooling{opacity:.6;cursor:progress}
     root.querySelectorAll('[data-fold]').forEach(watchFold);
     root.querySelectorAll('select[data-sync]').forEach(watchSync);
   }
-  window.UI = {scan, applyFold, urgentBar};
+  // ---------------------------------------------------------------- 접속 환경(스마트폰·태블릿·노트북/PC)
+  let devTouch = 0;
+  try { devTouch = navigator.maxTouchPoints || 0; } catch (e) { /* 오래된 브라우저 */ }
+  const clientHints = () => ({touch: devTouch, w: screen.width, h: screen.height});
+  const env = fetch(`/api/public/env?p=${encodeURIComponent(location.pathname)}&touch=${devTouch}&w=${screen.width}&h=${screen.height}`)
+    .then(r => r.ok ? r.json() : Promise.reject()).then(d => d.device).catch(() => null);
+  function applyEnv(d) {
+    if (!d) return;
+    document.documentElement.dataset.device = d.key;
+    if (d.inapp) document.documentElement.dataset.inapp = '1';
+    if (location.pathname.startsWith('/admin')) return;   // 담당자 화면은 안내하지 않는다
+    if (d.key === 'pc') {   // 컴퓨터: 전화 버튼이 안 걸릴 수 있다(첫 번째 전화 버튼 묶음 아래에 한 번)
+      const tel = [...document.querySelectorAll('a[href^="tel:"]')].find(a => !a.closest('header'));
+      const box = tel && (tel.closest('[data-callgroup]') || tel.parentElement);
+      if (box && !box.querySelector('.env-note') && !(box.nextElementSibling || {}).classList?.contains('env-note')) {
+        const n = document.createElement('p');
+        n.className = 'env-note';
+        n.textContent = '💻 컴퓨터에서는 전화가 걸리지 않을 수 있어요. 위험하면 휴대폰으로 119·112에 바로 전화하세요.';
+        box.after(n);
+      }
+    }
+    if (d.inapp && !sessionStorageGet('envbar')) {   // 카카오톡·인스타그램 등 앱 안 브라우저
+      const bar = document.createElement('div');
+      bar.className = 'env-bar';
+      bar.setAttribute('role', 'note');
+      const kakao = /카카오톡/.test(d.browser) && /Android/.test(d.os);
+      bar.innerHTML = `<span>💬 ${escH(d.browser)} 안에서 열렸어요. 위치 보내기·알림·저장이 잘 안 될 수 있어요. ` +
+        `${kakao ? '아래 버튼으로' : '오른쪽 위 ⋮ 또는 ··· 를 누르고 \'다른 브라우저로 열기\'로'} 열어 주세요.</span>` +
+        (kakao ? `<a href="kakaotalk://web/openExternal?url=${encodeURIComponent(location.href)}">브라우저로 열기</a>` : '') +
+        '<button type="button" data-nocool>닫기</button>';
+      bar.querySelector('button').addEventListener('click', () => { bar.remove(); sessionStorageSet('envbar', '1'); });
+      document.body.prepend(bar);
+    }
+  }
+  function sessionStorageGet(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
+  function sessionStorageSet(k, v) { try { sessionStorage.setItem(k, v); } catch (e) { /* 저장 불가 */ } }
+  env.then(d => {
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => applyEnv(d));
+    else applyEnv(d);
+  });
+
+  window.UI = {scan, applyFold, urgentBar, env, clientHints};
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => scan());
   else scan();
 })();

@@ -241,7 +241,10 @@ class TestDashboardServer(ServerBase):
         self.assertEqual(g['output']['status'], '표준 원문')
         self.assertNotIn('draft', g['output'])
         _, after = self.get('/api/approvals')
-        self.assertEqual(len(before['items']), len(after['items']))
+        # 신고 뒤 다른 에이전트(센서 대조 등)가 백그라운드에서 승인 요청을 더할 수 있으니, 이 신고의 안내문 승인만 비교한다
+        mine = lambda d: [a for a in d['items'] if a['kind'].startswith('welfare_guidance')
+                          and (a.get('incident_id') or a['item'].get('incident_id')) == iid and a['id'] not in {x['id'] for x in before['items']}]
+        self.assertEqual(mine(after), [])
 
     def test_guidance_bad_types(self):
         status, created = self.post('/api/incidents', {'text': 'Z3 구역 도로 침수 (타입 테스트)'})

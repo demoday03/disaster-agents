@@ -3,12 +3,12 @@ Run from project root: python webapp/server.py
 This is a prototype, not a production or emergency-dispatch system.
 """
 from __future__ import annotations
-import hashlib, hmac, json, os, re, secrets, ssl, sys, threading, time, traceback, uuid
+import collections, hashlib, hmac, json, os, re, secrets, ssl, sys, threading, time, traceback, uuid
 from datetime import datetime
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import quote, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -16,7 +16,7 @@ os.chdir(ROOT)
 from common.llm import SolarClient
 from common.docparse import DocumentParser
 from common.masking import mask
-from common import places, scenario
+from common import device as devices, places, scenario
 from agents import crosscheck, dispatch, intake, monitor, recovery, welfare, verify
 from coordinator import Coordinator
 from database import db as database
@@ -461,7 +461,7 @@ BULK_SKIP_KINDS = {"welfare_guidance_review"}   # 검증이 불확실한 안내�
 # household = 가구 코드(로그인용), reporter = 텔레그램 신고자 번호, questions = 담당자 질문(담당자 이름이 들어 있음),
 # classified_by·seen = 담당자 이름, contacts = 신고자가 담당자에게만 보낸 연락처
 PUBLIC_HIDDEN = ("notes", "invalidated_by", "invalid_reason", "invalidated_at", "triage", "owner_hash", "household", "household_place",
-                 "reporter", "questions", "classified_by", "seen", "contacts")
+                 "reporter", "questions", "classified_by", "seen", "contacts", "device")
 
 
 def public_row(row):
@@ -873,10 +873,10 @@ def reporter_change(iid, action, data):
 
 
 CARRY_FIELDS = ("owner_hash", "channel", "household", "household_place", "reporter", "questions", "edits", "supplements",
-                "repeats", "repeat_at", "seen", "contacts")   # 다시 분류해도 남겨 둘 신고 정보
+                "repeats", "repeat_at", "seen", "contacts", "device")   # 다시 분류해도 남겨 둘 신고 정보
 
 
-def submit_report(text, rate_key, channel=None, household=None, reporter=None):
+def submit_report(text, rate_key, channel=None, household=None, reporter=None, device=None):
     """주민 신고 접수(웹 화면·텔레그램 공통). (상태 코드, 응답)을 돌려준다.
     household: 가구 코드로 로그인한(텔레그램은 가구를 연결한) 주민의 신고면 그 가구.
     reporter: 텔레그램 신고자 번호(이름 대신, 같은 사람이 보낸 신고끼리 묶어 보게). 둘 다 담당자 화면에만 보인다."""
@@ -908,6 +908,8 @@ def submit_report(text, rate_key, channel=None, household=None, reporter=None):
         row["output"]["household_place"] = h.get("address") or places.describe(h["zone"])
     if isinstance(reporter, str) and reporter:
         row["output"]["reporter"] = reporter[:20]
+    if isinstance(device, dict):
+        row["output"]["device"] = devices.stored(device)   # 보낸 기기(스마트폰·PC 등). User-Agent 원문은 저장하지 않는다
     # Persist only the classifier result (the intake agent applies its configured masking).
     row = database.save_incident(row)
     row = database.update_incident(link_incident(row))
@@ -1167,6 +1169,24 @@ TELEGRAM.hooks = {
 }
 
 
+VISITS = collections.deque(maxlen=20000)   # (시각, 화면, 종류, 운영체제, 브라우저, 앱 안) · 서버 메모리에만, 다시 켜면 비어 있다
+VISIT_PAGES = {"/": "첫 화면", "/report": "주민 화면", "/volunteer": "봉사자 화면", "/battle": "대결 화면", "/admin": "관리자 화면"}
+
+
+def env_stats():
+    """담당자: 최근 24시간 접속 환경(화면을 연 기기)과 신고를 보낸 기기."""
+    now = time.time()
+    rows = [v for v in VISITS if now - v[0] < 86400]
+    count = lambda i: dict(collections.Counter(v[i] for v in rows).most_common())
+    reports = collections.Counter()
+    for r in database.list_incidents(300):
+        o = r.get("output") or {}
+        reports[(o.get("device") or {}).get("kind") or ("텔레그램" if o.get("channel") == "텔레그램" else "기록 없음")] += 1
+    return {"visits": {"total": len(rows), "kind": count(2), "os": count(3), "browser": count(4), "page": count(1),
+                       "inapp": sum(1 for v in rows if v[5])},
+            "since": max(STARTED, now - 86400), "reports": dict(reports.most_common())}
+
+
 def public_progress(output):
     """신고자에게 보여 줄 진행 상황(도움이 오고 있는지). 담당자 이름·승인 ID는 넣지 않는다."""
     if output.get("state") == INVALID:
@@ -1287,6 +1307,7 @@ def read_json_body(handler, limit=MAX_BODY):
         raise ValueError("JSON 최상위 값은 객체여야 합니다")
     return data
 
+STARTED = time.time()
 SECURITY_HEADERS = {
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
@@ -1337,6 +1358,11 @@ class Handler(BaseHTTPRequestHandler):
     def host_allowed(self):
         """허용한 Host로 들어온 요청만 처리한다. 악성 사이트가 DNS를 바꿔 이 서버로 요청을 보내는 공격(DNS 리바인딩)을 막는다."""
         return self.headers.get("Host", "").strip().lower() in ALLOWED_HOSTS
+
+    def device(self, client=None):
+        """이 요청을 보낸 기기(스마트폰·태블릿·노트북/PC) 추정."""
+        return devices.detect(self.headers.get("User-Agent", ""), self.headers.get("Sec-CH-UA-Mobile"),
+                              self.headers.get("Sec-CH-UA-Platform"), client)
 
     def client_ip(self):
         if CLOUD:   # 플랫폼 프록시 뒤에서는 모든 요청이 프록시 주소로 온다. 원래 접속 IP는 X-Forwarded-For 맨 앞
@@ -1546,6 +1572,16 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {"history": battle.history(database),
                                         "ai": {**battle.score({r["id"]: r["type"] for r in ai["rows"]}), "total_ms": ai["total_ms"],
                                                "mode": ai["mode"]} if ai else None})
+        if path == "/api/public/env":   # 화면이 처음 열릴 때 한 번: 기기에 맞는 안내용 + 접속 환경 통계(메모리)
+            q = parse_qs(urlparse(self.path).query)
+            d = self.device({k: (q.get(k) or [None])[0] for k in ("touch", "w", "h")})
+            page = (q.get("p") or [""])[0]
+            VISITS.append((time.time(), VISIT_PAGES.get(page, "기타"), d["kind"], d["os"], d["browser"], d["inapp"]))
+            return self.send_json(200, {"device": d})
+        if path == "/api/env-stats":   # 담당자: 접속 환경 통계
+            if not self.require_staff():
+                return
+            return self.send_json(200, env_stats())
         if path.startswith("/api/public/") and path != "/api/public/status":
             return self.public_call("GET", path, {})
         if path == "/api/weather":   # 기상청 실제 강수·특보(참고 정보)와 지금 감시 에이전트가 쓰는 강우 단계
@@ -1955,7 +1991,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(200, row)
 
             if path == "/api/incidents":
-                return self.send_json(*submit_report(data.get("text"), self.client_ip(), household=data.get("household")))
+                return self.send_json(*submit_report(data.get("text"), self.client_ip(), household=data.get("household"),
+                                                     device=self.device(data.get("client"))))
             if path.startswith("/api/incidents/") and path.endswith(("/edit", "/cancel")):   # 신고자가 고치기·취소(이 기기의 비밀 값으로)
                 parts = path.strip("/").split("/")
                 if len(parts) != 4 or not parts[2] or len(parts[2]) > 40:

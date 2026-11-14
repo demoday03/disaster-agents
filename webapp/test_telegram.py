@@ -408,6 +408,18 @@ class TestStaffRoomRules(unittest.TestCase):
         self.assertEqual(len(self.sent(lambda p: p["text"].startswith("📊 지난"))), 1)
 
 
+    def test_ack_while_alert_is_being_sent(self):
+        """알림을 보내는 사이(메시지 번호를 저장하기 전)에 누가 확인해도, 그 알림이 '확인함'으로 바뀐다."""
+        x = self.inc(30, 1, self.t0 + 20)
+        self.bot.db.put_record("tg_alert", x["id"], {"iid": x["id"], "msgs": []})                # 보내기 시작(번호는 아직 없음)
+        self.desk.close_alerts(x["id"], {"by": "김담당(텔레그램)", "at": self.t0 + 20})   # 그 사이에 확인됨
+        self.assertFalse([p for m, p in self.bot.calls if m == "editMessageText"])
+        self.desk._alert(self.desk.rooms("staff"), [x], "new", self.t0 + 21)
+        ed = [p for m, p in self.bot.calls if m == "editMessageText"]
+        self.assertEqual(len(ed), 1)
+        self.assertIn("김담당(텔레그램) 확인", ed[0]["text"])
+
+
 STAFF_FAKE, STAFF_APP = 18792, 18793
 
 
