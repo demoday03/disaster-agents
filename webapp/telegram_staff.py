@@ -266,10 +266,13 @@ class StaffDesk:
             if not rec or rec.get("closed"):
                 return
             rec["closed"] = time.time()
+            rec["note"] = f"\n\n✅ {seen.get('by') or '담당자'} 확인" + (f" · {hm(seen['at'])}" if seen.get("at") else "")
             self.db.put_record("tg_alert", iid, rec)
-        note = f"\n\n✅ {seen.get('by') or '담당자'} 확인" + (f" · {hm(seen['at'])}" if seen.get("at") else "")
-        for chat, mid in rec.get("msgs", []):
-            self.bot.call("editMessageText", {"chat_id": chat, "message_id": mid, "text": (rec.get("text", "") + note)[:4000],
+        self._edit_closed(rec, rec.get("msgs", []))
+
+    def _edit_closed(self, rec, msgs):
+        for chat, mid in msgs:
+            self.bot.call("editMessageText", {"chat_id": chat, "message_id": mid, "text": (rec.get("text", "") + rec.get("note", ""))[:4000],
                                               "disable_web_page_preview": True})
 
     # ------------------------------------------------------------------ 알림 보내기(봇의 감시 스레드가 부른다)
@@ -324,6 +327,8 @@ class StaffDesk:
                 rec["msgs"] = (rec.get("msgs") or []) + msgs
                 rec["text"] = text
                 self.db.put_record("tg_alert", x["id"], rec)
+            if rec.get("closed"):   # 보내는 사이에 누가 이미 확인함: 방금 보낸 알림도 '확인함'으로
+                self._edit_closed(rec, msgs)
 
     def scan(self, now=None):
         rooms = self.rooms("staff")

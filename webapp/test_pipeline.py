@@ -405,6 +405,29 @@ class TestPipeline(ServerBase):
         self.assertIn("신고자가 취소함", self.staff_view(iid)["notes"][-1])
         self.assertEqual(anon.post(f"/api/incidents/{iid}/cancel", {"token": token})[0], 409)
 
+    def test_device_is_detected_and_kept_staff_only(self):
+        """접속 환경: 화면을 연 기기·신고를 보낸 기기(스마트폰·노트북/PC). 담당자만 보고, 원문 User-Agent는 저장하지 않는다."""
+        iphone = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) "
+                                "Version/17.5 Mobile/15E148 Safari/604.1"}
+        pc = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"}
+        anon = Client(self.base)
+        code, d, _ = anon.request("GET", "/api/public/env?p=/report&touch=5&w=390&h=844", headers=iphone)
+        self.assertEqual((code, d["device"]["key"], d["device"]["label"]), (200, "phone", "📱 스마트폰 · iOS · 사파리"))
+        self.assertEqual(anon.request("GET", "/api/public/env?p=/", headers=pc)[1]["device"]["key"], "pc")
+        code, r, _ = anon.request("POST", "/api/incidents", {"text": "위치: GPS 34.88, 128.62 · 길이 막혔어요 (컴퓨터에서 보냄)",
+                                                            "client": {"touch": 0, "w": 1920, "h": 1080}}, headers=pc)
+        self.assertEqual(code, 201)
+        iid = r["output"]["id"]
+        self.assertNotIn("device", r["output"])                                                  # 공개 응답에는 없다
+        staff = next(x["output"] for x in self.get("/api/incidents")[1]["items"] if x["output"]["id"] == iid)
+        self.assertEqual(staff["device"], {"kind": "노트북·PC", "os": "Windows", "browser": "크롬", "inapp": False})
+        self.assertNotIn("device", anon.get(f"/api/incidents/{iid}")[1]["result"]["output"])
+        self.assertEqual(anon.get("/api/env-stats")[0], 401)                                       # 통계는 담당자만
+        st = self.get("/api/env-stats")[1]
+        self.assertGreaterEqual(st["visits"]["kind"].get("스마트폰", 0), 1)
+        self.assertGreaterEqual(st["visits"]["page"].get("주민 화면", 0), 1)
+        self.assertGreaterEqual(st["reports"].get("노트북·PC", 0), 1)
+
     def test_citizen_logs_in_with_household_code(self):
         """주민 화면 로그인: 가구 코드(대소문자·'H-' 빠뜨림 허용). 로그인한 가구의 신고는 담당자에게만 가구가 보인다."""
         anon = Client(self.base)

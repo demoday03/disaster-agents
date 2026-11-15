@@ -162,7 +162,7 @@ body:not(.guest) #menuLogin{display:none}
 <div class="box bad" id="lifeWarn" hidden><b>사람이 위험하면 지금 119에 먼저 전화하세요.</b> 신고는 전화한 뒤에 보내도 됩니다.<br><a class="tel" href="tel:119" style="margin-top:8px">📞 119 전화하기</a></div>
 <p class="q"><span class="n">2</span>어디인가요?</p>
 <div class="choices" id="whereChoice" hidden><label><input type="radio" name="where" value="home" checked> <span id="whereHomeTxt">우리 집</span></label><label><input type="radio" name="where" value="other"> 다른 곳</label></div>
-<div id="whereOther"><label for="rPlace" class="sr">신고 위치</label><input id="rPlace" maxlength="80" autocomplete="street-address" placeholder="예: 옥포동 ○○아파트 101동 앞 / ○○초등학교 정문"><div class="gpsrow"><button type="button" class="sub" id="gpsBtn">📍 지금 있는 곳으로 쓰기</button><span class="muted" id="gpsMsg" aria-live="polite"></span></div><p class="muted" style="margin:6px 0 0">주소를 몰라도 괜찮아요. 근처 건물·가게·다리 이름을 적거나, 위 버튼으로 지금 위치를 보내세요.</p></div>
+<div id="whereOther"><label for="rPlace" class="sr">신고 위치</label><input id="rPlace" maxlength="80" autocomplete="street-address" placeholder="예: 옥포동 ○○아파트 101동 앞 / ○○초등학교 정문"><div class="gpsrow"><button type="button" class="sub" id="gpsBtn">📍 지금 있는 곳으로 쓰기</button><span class="muted" id="gpsMsg" aria-live="polite"></span></div><p class="muted" style="margin:6px 0 0">주소를 몰라도 괜찮아요. 근처 건물·가게·다리 이름을 적거나, 위 버튼으로 지금 위치를 보내세요.</p><p class="env-note pc-only">💻 컴퓨터로 보낸 위치는 수백 m~수 km 틀릴 수 있어요. 주소나 근처 건물 이름을 꼭 함께 적어 주세요.</p></div>
 <p class="q"><span class="n">3</span>몇 명인가요? <span class="opt">(모르면 넘어가세요)</span></p>
 <div class="choices" id="people"><label><input type="radio" name="ppl" value="1"> 1명</label><label><input type="radio" name="ppl" value="2"> 2명</label><label><input type="radio" name="ppl" value="3"> 3명</label><label><input type="radio" name="ppl" value="4"> 4명</label><label><input type="radio" name="ppl" value="5명 이상"> 5명 이상</label></div>
 <div class="choices" id="vuln" style="margin-top:8px" aria-label="도움이 더 필요한 분"><label><input type="checkbox" value="어르신"> 어르신</label><label><input type="checkbox" value="영유아"> 영유아</label><label><input type="checkbox" value="거동 불편"> 거동이 불편한 분</label><label><input type="checkbox" value="임산부"> 임산부</label></div>
@@ -330,7 +330,7 @@ if(await sendReport(c.text)){$('incidentForm').reset();delete $('vuln').dataset.
 async function sendReport(text){const b=$('submitIncident'),sb=$('stickyBtn');const label=t=>{b.textContent=t;sb.textContent=t};
 b.disabled=sb.disabled=true;label('보내는 중…');const slow=setTimeout(()=>label('조금만 기다려 주세요… (연결이 느려요)'),4000);
 const ctl=new AbortController(),limit=setTimeout(()=>ctl.abort(),15000);   // 서버가 깨는 중이거나 느리면 15초에서 멈추고 보관한다
-try{const r=await api('/api/incidents',{method:'POST',body:JSON.stringify({text,...(HH?{household:HH}:{})}),signal:ctl.signal});const o=r.output;addReceipt(o.id);saveToken(o.id,r.edit_token);store.set('pendingReport','');showPending();
+try{const r=await api('/api/incidents',{method:'POST',body:JSON.stringify({text,...(HH?{household:HH}:{}),...(window.UI&&UI.clientHints?{client:UI.clientHints()}:{})}),signal:ctl.signal});const o=r.output;addReceipt(o.id);saveToken(o.id,r.edit_token);store.set('pendingReport','');showPending();
  await drawMyReports(o.id,r.duplicate);$('myReports').scrollIntoView({block:'start',behavior:'smooth'});return true}
 catch(err){const late=err.name==='AbortError',offline=late||err instanceof TypeError||!navigator.onLine;
  if(offline){store.set('pendingReport',text);showPending();$('pendingBox').scrollIntoView({block:'center',behavior:'smooth'})}

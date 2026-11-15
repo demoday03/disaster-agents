@@ -21,7 +21,7 @@
   const LOADERS = {overview: () => { loadSituation(); }, notice: loadAnnouncements, supply: loadSupply, volunteer: loadVolunteer, recovery: loadRecovery,
                    welfare: loadChecks, sensor: () => { loadVerifyDocs(); loadSensorLive(); }, approvals: () => loadApprovals(),
                    dispatch: () => { loadDispatch(); loadControl(); loadShelterOps(); },
-                   guidance: loadIncidents, system: () => { loadHealth(); loadAgents(); }, telegram: loadTelegram};
+                   guidance: loadIncidents, system: () => { loadHealth(); loadAgents(); loadEnvStats(); }, telegram: loadTelegram};
   function go(tab) {
     current = tab;
     document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.go === tab));
@@ -217,6 +217,22 @@
     } catch (err) { alert(err.message); }
     finally { b.disabled = false; }
   });
+
+  // ---------------------------------------------------------------- 📱 접속 환경(스마트폰·태블릿·노트북/PC)
+  async function loadEnvStats() {
+    try {
+      const d = await api('/api/env-stats'), v = d.visits;
+      const bars = (obj, total) => Object.entries(obj).map(([k, n]) =>
+        `<div class="envrow"><span class="nm">${E(k)}</span><span class="meter" title="${Math.round(100 * n / (total || 1))}%"><span style="width:${Math.round(100 * n / (total || 1))}%"></span></span><span class="n">${E(n)}번</span></div>`).join('') || '<div class="muted">아직 없어요.</div>';
+      const rtotal = Object.values(d.reports).reduce((a, b) => a + b, 0);
+      $('envStats').classList.remove('muted');
+      $('envStats').innerHTML = `<p>화면을 연 횟수 <b>${E(v.total)}</b>번 <span class="muted">(${E(fmtDate(d.since))}부터)</span>` +
+        (v.inapp ? ` · ${chip(`카카오톡 등 앱 안에서 연 것 ${v.inapp}번`, 'warn')}` : '') + '</p>' +
+        `<div class="tgcols"><div class="tgbox"><h3>기기</h3>${bars(v.kind, v.total)}</div><div class="tgbox"><h3>신고를 보낸 기기 <span class="muted">(최근 신고 ${E(rtotal)}건)</span></h3>${bars(d.reports, rtotal)}</div>` +
+        `<div class="tgbox"><h3>운영체제</h3>${bars(v.os, v.total)}</div><div class="tgbox"><h3>브라우저</h3>${bars(v.browser, v.total)}</div>` +
+        `<div class="tgbox"><h3>연 화면</h3>${bars(v.page, v.total)}</div></div>`;
+    } catch (e) { showError('envStats', e); }
+  }
 
   async function loadSituation() {
     try {
