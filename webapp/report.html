@@ -153,21 +153,23 @@ body:not(.guest) #menuLogin{display:none}
 <main>
 <!-- 신고: 고르기만 해도 보낼 수 있게. 접수번호 조회·보완 입력은 같은 화면의 '내 신고'에서 -->
 <section class="view" data-view="report">
-<h2>재난 신고하기</h2><p class="lead">눌러서 고르기만 해도 보낼 수 있어요. 담당자가 확인하고 필요한 도움을 보냅니다.</p>
+<h2>재난 신고하기</h2><p class="lead">두 가지만 고르면 보낼 수 있어요.</p>
 <div class="box warn" id="pendingBox" hidden style="margin-top:0"><b>보내지 못한 신고가 있어요.</b><div id="pendingText" class="muted" style="margin:4px 0"></div><button type="button" id="pendingSend" style="margin:6px 8px 0 0">지금 다시 보내기</button><button type="button" class="sub" id="pendingDrop" style="margin:6px 0 0">지우기</button></div>
 <div id="myReports"></div>
 <form id="incidentForm">
-<p class="q"><span class="n">1</span>무슨 일인가요? <span class="opt">(여러 개 골라도 돼요)</span></p>
+<p class="q"><span class="n">1</span>무슨 일인가요?</p>
 <div class="choices kind" id="kind" role="group" aria-label="무슨 일인가요(여러 개 고를 수 있어요)"></div>
 <div class="box bad" id="lifeWarn" hidden><b>사람이 위험하면 지금 119에 먼저 전화하세요.</b> 신고는 전화한 뒤에 보내도 됩니다.<br><a class="tel" href="tel:119" style="margin-top:8px">📞 119 전화하기</a></div>
 <p class="q"><span class="n">2</span>어디인가요?</p>
 <div class="choices" id="whereChoice" hidden><label><input type="radio" name="where" value="home" checked> <span id="whereHomeTxt">우리 집</span></label><label><input type="radio" name="where" value="other"> 다른 곳</label></div>
-<div id="whereOther"><label for="rPlace" class="sr">신고 위치</label><input id="rPlace" maxlength="80" autocomplete="street-address" placeholder="예: 옥포동 ○○아파트 101동 앞 / ○○초등학교 정문"><div class="gpsrow"><button type="button" class="sub" id="gpsBtn">📍 지금 있는 곳으로 쓰기</button><span class="muted" id="gpsMsg" aria-live="polite"></span></div><p class="muted" style="margin:6px 0 0">주소를 몰라도 괜찮아요. 근처 건물·가게·다리 이름을 적거나, 위 버튼으로 지금 위치를 보내세요.</p><p class="env-note pc-only">💻 컴퓨터로 보낸 위치는 수백 m~수 km 틀릴 수 있어요. 주소나 근처 건물 이름을 꼭 함께 적어 주세요.</p></div>
-<p class="q"><span class="n">3</span>몇 명인가요? <span class="opt">(모르면 넘어가세요)</span></p>
+<div id="whereOther"><label for="rPlace" class="sr">신고 위치</label><input id="rPlace" maxlength="80" autocomplete="street-address" placeholder="예: 옥포동 ○○아파트 101동 앞 / ○○초등학교 정문"><div class="gpsrow"><button type="button" class="sub" id="gpsBtn">📍 지금 있는 곳으로 쓰기</button><span class="muted" id="gpsMsg" aria-live="polite"></span></div><p class="muted" style="margin:6px 0 0">주소를 몰라도 돼요. 근처 건물 이름이나 지금 위치면 충분해요.</p><p class="env-note pc-only">💻 컴퓨터로 보낸 위치는 수백 m~수 km 틀릴 수 있어요. 주소나 근처 건물 이름을 꼭 함께 적어 주세요.</p></div>
+<details class="acc" id="moreAcc"><summary>➕ 더 알려 주기 <span class="sum-sub">선택 · 몇 명·도움이 필요한 분·자세한 내용</span></summary><div class="acc-body">
+<p class="q">몇 명인가요?</p>
 <div class="choices" id="people"><label><input type="radio" name="ppl" value="1"> 1명</label><label><input type="radio" name="ppl" value="2"> 2명</label><label><input type="radio" name="ppl" value="3"> 3명</label><label><input type="radio" name="ppl" value="4"> 4명</label><label><input type="radio" name="ppl" value="5명 이상"> 5명 이상</label></div>
 <div class="choices" id="vuln" style="margin-top:8px" aria-label="도움이 더 필요한 분"><label><input type="checkbox" value="어르신"> 어르신</label><label><input type="checkbox" value="영유아"> 영유아</label><label><input type="checkbox" value="거동 불편"> 거동이 불편한 분</label><label><input type="checkbox" value="임산부"> 임산부</label></div>
-<p class="q" id="qDetail"><span class="n">4</span>더 알려 주실 내용 <span class="opt">(선택)</span></p>
+<p class="q" id="qDetail">자세한 내용</p>
 <textarea id="reportText" aria-labelledby="qDetail" maxlength="1500" placeholder="예: 반지하 현관까지 물이 들어왔어요. 할머니가 2층으로 못 올라가세요."></textarea>
+</div></details>
 <div class="preview" id="preview" aria-live="polite">위에서 고르면 보낼 내용이 여기에 보여요.</div>
 <button id="submitIncident" type="submit" class="big">신고 보내기</button>
 <p class="muted" id="formErr" aria-live="assertive"></p>
@@ -304,7 +306,7 @@ $('shelters').innerHTML=list.map(x=>{const used=Math.round(100*(x.capacity-Math.
 $('controls').className=d.control_zones.length?'':'muted';$('controls').innerHTML=d.control_zones.length?'<ul class="list">'+d.control_zones.map(c=>`<li>⛔ <b>${esc(c.name)}</b>${c.between.length?' <span class="muted">('+esc(c.between.map(place).join(' ↔ '))+' 사이)</span>':''}</li>`).join('')+'</ul>':'지금 통제 중인 길은 없습니다.'}
 
 // ---- 신고 만들기: 고른 것을 한 문장으로 합쳐 보낸다(접수 에이전트가 알아듣는 말로)
-const KINDS=[['flood','🌊','물이 차요','물이 차고 있어요(침수)'],['slide','⛰️','흙·돌이 무너져요','흙·돌이 무너졌어요(산사태·토사)'],['life','🚑','사람이 다치거나 갇혔어요','사람이 갇혔거나 다쳤어요(구조 요청)'],
+const KINDS=[['life','🚑','사람이 다치거나 갇혔어요','사람이 갇혔거나 다쳤어요(구조 요청)'],['flood','🌊','물이 차요','물이 차고 있어요(침수)'],['slide','⛰️','흙·돌이 무너져요','흙·돌이 무너졌어요(산사태·토사)'],
 ['power','💡','전기·물이 끊겼어요','전기나 물이 끊겼어요(정전·단수)'],['road','🚧','길이 막혔어요','길이 막혔어요(도로 통행 불가)'],['supply','📦','물품이 필요해요','물품이 필요해요'],['etc','✏️','그 밖의 일','']];
 $('kind').innerHTML=KINDS.map(([v,e,t])=>`<label><input type="checkbox" name="kind" value="${v}"><span class="e" aria-hidden="true">${e}</span><span>${esc(t)}</span></label>`).join('');
 const atHome=()=>!!HOME&&document.querySelector('input[name=where]:checked')?.value==='home';
@@ -499,6 +501,6 @@ const ON_SHOW={map:drawMap,news:drawNews,report:()=>drawMyReports()};
 const qid=new URLSearchParams(location.search).get('id');if(qid)addReceipt(qid);
 // 접수번호 링크로 왔거나(가족이 받은 링크 등) 보내지 못한 신고가 있으면 등록 없이도 신고 화면을 바로 연다(내 신고·다시 보내기)
 if(!HH&&(qid||store.get('pendingReport')))GUEST=true;
-loadPub().then(()=>loadHome()).then(()=>{go(location.hash.slice(1)||'report');if(qid)drawMyReports(qid);restoreDraft();showPending();netState();stickyState()});
+loadPub().then(()=>loadHome()).then(()=>{go(location.hash.slice(1)||'report');if(qid)drawMyReports(qid);restoreDraft();if($('reportText').value||document.querySelector('#moreAcc input:checked'))$('moreAcc').open=true;showPending();netState();stickyState()});
 setInterval(loadPub,15000);setInterval(()=>{if(HH)loadHome()},10000);setInterval(()=>{if(location.hash==='#report'&&receipts().length)drawMyReports()},20000);
 </script></body></html>
