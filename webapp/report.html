@@ -181,6 +181,7 @@ body:not(.guest) #menuLogin{display:none}
 <section class="view" data-view="map" hidden>
 <h2>대피소</h2><p class="lead">갈 수 있는 대피소와 지금 남은 자리입니다. <span id="nowUpdated"></span></p>
 <div id="goCard" class="go-card none">불러오는 중…</div>
+<h3>구역 지도 <span class="muted" style="font-weight:500">(대피소·통제 중인 길)</span></h3><div id="shelMap" class="shelmap"></div>
 <h3 id="shelTitle">대피소 목록</h3>
 <ul id="shelters" class="list" data-fold="4"><li class="muted">불러오는 중…</li></ul>
 <h3>통제 중인 길 <span class="muted" style="font-weight:500">(지나가지 마세요)</span></h3><div id="controls" class="muted">불러오는 중…</div>
@@ -228,7 +229,7 @@ body:not(.guest) #menuLogin{display:none}
 </section>
 </main></div>
 <div class="stickysend" id="stickySend" hidden><button type="button" class="big" id="stickyBtn">🆘 신고 보내기</button></div>
-<script src="/static/ui.js"></script>
+<script src="/static/ui.js"></script><script src="/static/zonemap.js"></script>
 <script>
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
@@ -302,6 +303,7 @@ const list=sortedShelters(mine),best=list[0];
 $('goCard').className='go-card'+(best&&best.capacity_left>0?'':' none');
 $('goCard').innerHTML=best?`<div class="muted">${mine?'우리 집에서 가장 가까운':'자리가 많이 남은'} 대피소</div><b class="nm">${esc(best.name)}</b><div>${esc(place(best.zone))} · 남은 자리 <b>${esc(Math.max(0,best.capacity_left))}</b>명${best.amenities.length?' · '+esc(best.amenities.join(', ')):''}</div>${!HOME?'<div class="muted">우리 집 위치를 알려 주시면 가까운 곳부터 보여 드려요. <a href="#home">우리 집 위치 입력</a></div>':mine?'':'<div class="muted">적어 주신 우리 집 위치로는 거리를 알 수 없어 남은 자리가 많은 곳부터 보여 드려요. 가까운 곳은 담당자 안내를 따르세요.</div>'}`:'대피소 정보가 없습니다.';
 $('shelTitle').textContent=mine?'우리 집에서 가까운 순':'남은 자리가 많은 순';
+if(window.renderZoneMap&&d.zone_grid)renderZoneMap($('shelMap'),{zones:d.zone_grid,shelters:d.shelters,controls:d.control_zones,pins:mine?[{zone:mine,label:'🏠 우리 집',kind:'home'}]:[],highlight:new Set(mine&&best?[best.zone]:[])});
 $('shelters').innerHTML=list.map(x=>{const used=Math.round(100*(x.capacity-Math.max(0,x.capacity_left))/x.capacity),near=mine?distTxt(gridDist(mine,x.zone)):'';return `<li class="shel"><span><b>${esc(x.name)}</b>${near?`<span class="here">${esc(near)}</span>`:''}<br><span class="muted">${esc(place(x.zone))}${x.amenities.length?' · '+esc(x.amenities.join(', ')):''}</span></span>${x.capacity_left>0?`<span>남은 자리 <b>${esc(x.capacity_left)}</b>명</span>`:'<span class="full">가득 참</span>'}<span class="meter${x.capacity_left<=0?' full':x.capacity_left<x.capacity*0.2?' tight':''}" title="남은 자리 비율" aria-hidden="true"><span style="width:${Math.max(0,Math.min(100,Math.round(100*x.capacity_left/Math.max(1,x.capacity))))}%"></span></span></li>`}).join('');
 $('controls').className=d.control_zones.length?'':'muted';$('controls').innerHTML=d.control_zones.length?'<ul class="list">'+d.control_zones.map(c=>`<li>⛔ <b>${esc(c.name)}</b>${c.between.length?' <span class="muted">('+esc(c.between.map(place).join(' ↔ '))+' 사이)</span>':''}</li>`).join('')+'</ul>':'지금 통제 중인 길은 없습니다.'}
 

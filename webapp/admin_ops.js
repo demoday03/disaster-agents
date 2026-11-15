@@ -18,7 +18,7 @@
   let current = 'overview', META = null, refreshTimer = null, lastSensorApproval = null;
 
   // ---------------------------------------------------------------- 탭
-  const LOADERS = {overview: () => { loadSituation(); }, notice: loadAnnouncements, supply: loadSupply, volunteer: loadVolunteer, recovery: loadRecovery,
+  const LOADERS = {overview: () => { loadSituation(); loadSitMap(); }, notice: loadAnnouncements, supply: loadSupply, volunteer: loadVolunteer, recovery: loadRecovery,
                    welfare: loadChecks, sensor: () => { loadVerifyDocs(); loadSensorLive(); }, approvals: () => loadApprovals(),
                    dispatch: () => { loadDispatch(); loadControl(); loadShelterOps(); },
                    guidance: loadIncidents, system: () => { loadHealth(); loadAgents(); loadEnvStats(); loadCleanup(); }, telegram: loadTelegram};
@@ -264,6 +264,20 @@
         `<div class="tgbox"><h3>운영체제</h3>${bars(v.os, v.total)}</div><div class="tgbox"><h3>브라우저</h3>${bars(v.browser, v.total)}</div>` +
         `<div class="tgbox"><h3>연 화면</h3>${bars(v.page, v.total)}</div></div>`;
     } catch (e) { showError('envStats', e); }
+  }
+
+  // 상황판 구역 지도: 구역별 신고(색=긴급도)·대피소 남은 자리·통제 구간(해제된 것도 흐리게)
+  async function loadSitMap() {
+    if (!window.renderZoneMap) return;
+    try {
+      const [d, inc] = await Promise.all([api('/api/dispatch'), api('/api/incidents')]);
+      const open = inc.items.map(x => x.output).filter(o => o.state !== '오접수');
+      const known = new Set(d.zones.map(z => z.id));
+      $('sitMap').classList.remove('muted');
+      renderZoneMap($('sitMap'), {zones: d.zones, shelters: d.shelters, controls: d.control_zones, showInactive: true,
+        incidents: open.filter(o => known.has(o.zone)).map(o => ({zone: o.zone, urgency: o.urgency})),
+        unknown: open.filter(o => !known.has(o.zone)).length});
+    } catch (e) { showError('sitMap', e); }
   }
 
   async function loadSituation() {
@@ -762,7 +776,7 @@
       seenSos = new Set(vol.sos.map(s => s.id));
       $('approvalCount').textContent = ap.items.length;
       $('approvalCount').hidden = false;
-      if (current === 'overview' && !editing()) { loadIncidents(); loadSituation(); }
+      if (current === 'overview' && !editing()) { loadIncidents(); loadSituation(); loadSitMap(); }
     } catch (e) { /* 다음 차례에 다시 */ }
   }
 
