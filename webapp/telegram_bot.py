@@ -566,6 +566,8 @@ class TelegramBot:
                  "✅ 신고를 접수했어요",
                  f"접수번호: {iid}", f"종류: {o.get('type') or '확인 중'}" + (f" · {URGENCY[o['urgency']]}" if o.get("urgency") in URGENCY else "")]
         lines += [f"{s['icon']} {s['text']}" for s in info.get("steps", [])]
+        if info.get("tips") and not info.get("cancelled"):
+            lines.append("⚠️ 지금 할 일\n" + "\n".join(f"· {t}" for t in info["tips"]))
         lines.append(f"🏠 우리 집({hid})과 연결된 신고로 보냈어요." if hid else
                      "💡 🏠 우리 집 연결(/code)을 해 두면 담당자가 우리 집을 바로 알 수 있어요.")
         lines.append("담당자가 확인하거나 출동을 승인하면 이 대화방으로 알려 드릴게요. 담당자가 더 물어볼 수도 있어요.")

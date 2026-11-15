@@ -7,7 +7,7 @@
 .top{background:var(--ink);color:#fff;padding:8px max(16px,calc((100vw - 1000px)/2));display:flex;align-items:center;gap:12px}
 .top a.back{color:#C9D5E8;text-decoration:none;font-size:.92rem;white-space:nowrap}.top a.back:hover{color:#fff}.top h1{margin:0;font-size:1.05rem;font-weight:800;flex:1}
 .tel{display:inline-flex;align-items:center;gap:4px;background:var(--s-danger);color:#fff!important;text-decoration:none;font-weight:800;border-radius:10px;padding:6px 12px;min-height:40px;white-space:nowrap}.tel.b{background:#2C3E63}
-.band{padding:10px max(16px,calc((100vw - 1000px)/2));background:var(--s-normal);color:#fff;font-weight:700;display:flex;flex-wrap:wrap;gap:2px 14px;align-items:baseline}
+.band{padding:10px max(16px,calc((100vw - 1000px)/2));background:var(--s-normal);color:#fff;font-weight:700;display:flex;flex-wrap:wrap;gap:2px 14px;align-items:baseline}.band[data-level="미확정"]{background:#3B4A63}
 .band[data-level="주의"]{background:var(--s-caution);color:#2B2100}.band[data-level="경계"]{background:var(--s-alert)}.band[data-level="위험"]{background:var(--s-danger)}
 .band .meta{font-weight:500;font-size:.9rem;opacity:.95}.band .stale{font-weight:700;background:rgba(0,0,0,.2);border-radius:6px;padding:0 6px}
 .todo{background:var(--surface);border-bottom:1px solid var(--line);padding:12px max(16px,calc((100vw - 1000px)/2))}
@@ -262,7 +262,8 @@ document.addEventListener('click',e=>{const a=e.target.closest('a[href^="#"]');i
 let PUB=null,HOME=null,HH=new URLSearchParams(location.search).get('hh')||store.get('hh'),LAST_OK=null,GUEST=false,WANT='report';
 const LEVEL=()=>{if(!PUB)return '정상';const s=PUB.stage;return s.confirmed&&['주의','경계','위험'].includes(s.level)?s.level:'정상'};
 async function loadPub(){try{PUB=await api('/api/public/status');LAST_OK=new Date();const s=PUB.stage,lv=LEVEL();
-$('stageBox').dataset.level=lv;$('stageBox').innerHTML=`<span>지금 우리 지역 위기 단계: ${esc(lv)}${s.confirmed&&s.hazards.length?' · '+esc(s.hazards.join(', ')):''}</span><span class="meta">${s.confirmed?'담당자가 '+esc(fmt(s.at*1000))+'에 확정':'담당자가 확정한 위험 없음'}${PUB.weather&&PUB.weather.available&&PUB.weather.rain?' · 1시간 강수 '+esc(PUB.weather.rain.mm_per_h)+'mm':''}</span>`;
+const ru=PUB.recent_urgent||0;   // 단계를 확정하기 전에는 초록 '정상' 대신 회색 '확정 전'(급한 신고가 들어와 있는데 안전해 보이지 않게)
+$('stageBox').dataset.level=s.confirmed?lv:'미확정';$('stageBox').innerHTML=`<span>${s.confirmed?'지금 우리 지역 위기 단계: '+esc(lv)+(s.hazards.length?' · '+esc(s.hazards.join(', ')):''):'위기 단계: 아직 정해지지 않았어요'}</span><span class="meta">${s.confirmed?'담당자가 '+esc(fmt(s.at*1000))+'에 확정':ru?'최근 1시간 급한 신고 '+esc(ru)+'건 · 위험하면 바로 대피하세요':'지금 확정된 위험은 없어요'}${PUB.weather&&PUB.weather.available&&PUB.weather.rain?' · 1시간 강수 '+esc(PUB.weather.rain.mm_per_h)+'mm':''}</span>`;
 drawAnn();drawTodo();const v=location.hash.slice(1);if(OLD[v]==='map'||v==='map')drawMap();if(v==='news')drawNews()}
 catch(e){$('stageBox').querySelector('.stale')?.remove();$('stageBox').insertAdjacentHTML('beforeend',`<span class="meta stale">연결이 끊겼어요${LAST_OK?' · 마지막 확인 '+esc(hm(LAST_OK)):''} · 다시 연결 중</span>`)}}
 // 위치는 구역 번호 대신 장소 설명('하천 하류 주거지')으로 보여 준다. 구역을 모르면(미상) '위치 확인 중'
@@ -385,6 +386,7 @@ const writtenPlace=t=>((String(t||'').match(/위치\s*[:：]\s*([^·\n(]+)/)||[]
 const STATE_TXT={'접수':'접수되어 담당자가 확인하고 있어요','보완 필요':'정보가 더 필요해요','오접수':'담당자 확인 결과 처리하지 않기로 했어요'};
 async function card(id,dup,open){try{const r=await api('/api/incidents/'+encodeURIComponent(id));const o=r.result?.output||{},need=o.state==='보완 필요',going=(r.progress||[]).some(p=>p.done),cancelled=!!o.cancelled_by_reporter,mine=!!tokens()[id]&&o.state!=='오접수';
 return `<details class="acc" data-rid="${esc(id)}"${open||need?' open':''}><summary><span style="white-space:nowrap">${need?'⚠️':'📨'} 내 신고</span><span class="sum-sub">${esc(id)} · ${esc(o.type||'확인 중')} · ${esc(cancelled?'취소함':need?'정보가 더 필요해요':o.state==='오접수'?'처리 안 함':going?'출동 승인됨':'접수됨')}</span></summary><div class="acc-body">
+${(r.now_tips||[]).length&&!cancelled?`<div class="box bad nowtips" style="margin-top:0"><b>지금 할 일</b><ul style="margin:4px 0 0;padding-left:20px">${r.now_tips.map(t=>`<li>${esc(t)}</li>`).join('')}</ul></div>`:''}
 ${dup?`<div class="box warn" style="margin-top:0">${esc(typeof dup==='string'?dup:'같은 내용이 이미 접수되어 있어 그 신고에 합쳤어요.')}</div>`:''}
 <div class="muted">접수번호 <span class="muted">(처리 상황을 볼 때 필요해요)</span></div><div class="receipt">${esc(id)}</div>
 <dl class="dl" style="margin-top:8px"><dt>처리 상황</dt><dd>${esc(cancelled?'신고를 취소했어요':going?'담당자가 대응 인력 출동을 승인했어요':STATE_TXT[o.state]||o.state||'접수')}</dd><dt>신고 종류</dt><dd>${esc(o.type||'확인 중')}</dd><dt>위치</dt><dd>${esc(writtenPlace(o.text)||(o.zone&&o.zone!=='미상'?place(o.zone):'아직 모름'))}</dd><dt>접수 시각</dt><dd>${esc(fmt(r.created_at))}</dd></dl>
@@ -502,7 +504,7 @@ $('logoutBtn').addEventListener('click',async()=>{if(!await UI.confirm('나갈�
 const ON_SHOW={map:drawMap,news:drawNews,report:()=>drawMyReports()};
 const qid=new URLSearchParams(location.search).get('id');if(qid)addReceipt(qid);
 // 접수번호 링크로 왔거나(가족이 받은 링크 등) 보내지 못한 신고가 있으면 등록 없이도 신고 화면을 바로 연다(내 신고·다시 보내기)
-if(!HH&&(qid||store.get('pendingReport')))GUEST=true;
+if(!HH&&(qid||store.get('pendingReport')||location.hash==='#report'))GUEST=true;   // '바로 신고하기'로 오면 묻지 않고 바로 신고 양식
 loadPub().then(()=>loadHome()).then(()=>{go(location.hash.slice(1)||'report');if(qid)drawMyReports(qid);restoreDraft();if($('reportText').value||document.querySelector('#moreAcc input:checked'))$('moreAcc').open=true;showPending();netState();stickyState()});
 setInterval(loadPub,15000);setInterval(()=>{if(HH)loadHome()},10000);setInterval(()=>{if(location.hash==='#report'&&receipts().length)drawMyReports()},20000);
 </script></body></html>

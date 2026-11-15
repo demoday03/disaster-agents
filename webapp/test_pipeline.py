@@ -452,6 +452,16 @@ class TestPipeline(ServerBase):
         self.assertEqual(staff[r["id"]]["split_from"], host)
         self.assertEqual(self.post(f"/api/incidents/{host}/neighbors/9/split", {})[0], 404)
 
+    def test_now_tips_and_unconfirmed_band(self):
+        """신고 직후 '지금 할 일'(표준 행동요령 문장만)과, 단계 확정 전 최근 급한 신고 수."""
+        anon = Client(self.base)
+        _, r = anon.post("/api/incidents", {"text": "위치: 옥포동 시장 앞 · 물이 차고 있어요(침수) 무릎까지"})
+        d = anon.get(f"/api/incidents/{r['output']['id']}")[1]
+        self.assertIn("집에 물이 들기 시작하면 차단기를 내리세요", " ".join(d["now_tips"]))
+        _, life = anon.post("/api/incidents", {"text": "위치: 가람초 뒤 · 사람이 갇혔거나 다쳤어요(구조 요청). 2명 갇힘"})
+        self.assertTrue(anon.get(f"/api/incidents/{life['output']['id']}")[1]["now_tips"][0].startswith("119에"))
+        self.assertGreaterEqual(anon.get("/api/public/status")[1]["recent_urgent"], 1)
+
     def test_staff_can_delete_test_data(self):
         """시연 전 정리: 주민이 등록한 시험용 집·대결 기록은 담당자가 지우고, 시연용 집은 못 지운다."""
         anon = Client(self.base)

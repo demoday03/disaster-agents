@@ -1134,6 +1134,18 @@ def record_answer(iid, qid, text):
     return 200, {"id": qid}
 
 
+# 신고 직후 신고자에게 보여 줄 '지금 할 일'(종류별 두 줄). 문장은 표준 행동요령 조각(config/guidance.json, 출처 있음)에서만 가져온다
+NOW_TIP_IDS = {"인명구조": ["G-104", "G-107"], "침수": ["G-111", "G-107"], "산사태·토사": ["G-204", "G-205"],
+               "단전·단수": ["G-302", "G-301"], "도로·시설 장애": ["G-402", "G-401"]}
+NOW_TIP_FIRST = {"인명구조": "119에 아직 전화하지 않았다면 지금 바로 전화하세요."}
+
+
+def now_tips(typ):
+    frag = {f["id"]: f["text"] for f in GUIDANCE_CFG.get("fragments", [])}
+    tips = ([NOW_TIP_FIRST[typ]] if typ in NOW_TIP_FIRST else []) + [frag[i] for i in NOW_TIP_IDS.get(typ, []) if i in frag]
+    return tips or ["담당자가 확인하고 있어요. 위험해지면 119·112에 바로 전화하세요."]
+
+
 def report_info(iid):
     """텔레그램 봇이 신고자에게 알려 줄 처리 상황(접수번호 조회와 같은 범위만)."""
     row = incident_output(iid)
@@ -1142,7 +1154,7 @@ def report_info(iid):
     o, g = row["output"], public_guidance(iid)
     return {"id": iid, "type": o.get("type"), "state": o.get("state"), "urgency": o.get("urgency"),
             "missing": o.get("missing") or [], "cancelled": bool(o.get("cancelled_by_reporter")),
-            "steps": public_progress(o), "guidance": g["text"] if g else None}
+            "steps": public_progress(o), "guidance": g["text"] if g else None, "tips": now_tips(o.get("type"))}
 
 
 def tg_household_login(code, chat):
@@ -1436,6 +1448,18 @@ def cleanup_delete(kind, rid, s):
     return {"ok": True, "deleted": rid}
 
 
+def recent_urgent(minutes=60):
+    """최근 minutes분 안에 들어온 급한 신고(긴급도 1~2, 오접수 제외) 수. 신고 내용은 내보내지 않는다."""
+    now, n = time.time(), 0
+    for r in database.list_incidents(100):
+        o = r.get("output") or {}
+        ts = o.get("ts")
+        ts = float(ts) if isinstance(ts, (int, float)) else _epoch(ts)
+        if now - ts <= minutes * 60 and o.get("state") != INVALID and isinstance(o.get("urgency"), int) and o["urgency"] <= 2:
+            n += 1
+    return n
+
+
 def public_status():
     """접수 사이트 첫 화면용 공개 상황(로그인 없음). 담당자 이름·승인 ID·신고 원문은 넣지 않는다."""
     stage = database.get_record("stage", "current") or {}
@@ -1460,6 +1484,7 @@ def public_status():
             "zones": {z["id"]: z["name"] for z in SCENARIO["zones"]},
             "zone_grid": [{k: z[k] for k in ("id", "name", "risk", "row", "col")} for z in SCENARIO["zones"]],
             "weather": WEATHER.status(),
+            "recent_urgent": recent_urgent(),   # 단계를 확정하기 전에도 '정상(안전)'으로 보이지 않게
             "telegram_bot": TELEGRAM.username if TELEGRAM.enabled and TELEGRAM.mode else None,   # 주민 화면의 '텔레그램으로 알림 받기'
             "telegram_channel": TELEGRAM.channel_target()[1] if TELEGRAM.enabled else None}      # 주민 공지 채널 주소(있으면)
 
@@ -1712,7 +1737,8 @@ class Handler(BaseHTTPRequestHandler):
             invalid = incident["result"].get("output", {}).get("state") == INVALID
             return self.send_json(200, {"id": incident_id, **incident, "result": public_row(incident["result"]),
                                         "guidance": None if invalid else public_guidance(incident_id),
-                                        "progress": public_progress(incident["result"].get("output", {}))})
+                                        "progress": public_progress(incident["result"].get("output", {})),
+                                        "now_tips": [] if invalid else now_tips(incident["result"].get("output", {}).get("type"))})
         if path == "/api/approvals":
             if not self.require_staff():
                 return
