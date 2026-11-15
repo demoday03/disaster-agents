@@ -771,15 +771,15 @@ IN_PROCESS = {
 import json
 from webapp import server as s
 code, d = s.submit_report("물이 차고 있어요 (동시 보완 시험)", "t1")
-iid = d["output"]["id"]
+iid, tok = d["output"]["id"], d["edit_token"]
 assert d["output"]["state"] == "보완 필요", d["output"]
 real = s.classify_incident
 def slow(*a, **k):
     s.classify_incident = real
-    assert s.supplement_incident(iid, "Z3 옥포동이에요", "t2")[0] == 200
+    assert s.supplement_incident(iid, "Z3 옥포동이에요", "t2", tok)[0] == 200
     return real(*a, **k)
 s.classify_incident = slow
-first = s.supplement_incident(iid, "Z5 쪽 같아요", "t3")
+first = s.supplement_incident(iid, "Z5 쪽 같아요", "t3", tok)
 o = s.incident_output(iid)["output"]
 print(json.dumps({"code": first[0], "supplements": o["supplements"], "zone": o["zone"]}))
 ''',

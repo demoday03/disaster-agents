@@ -684,7 +684,7 @@ DOC_PARSER = DocumentParser(max_calls=LLM_MAX_CALLS) if MODE == "solar" else Non
 FEATURES = features.Features(database, SCENARIO, travel, DISPATCH_CFG, GUIDANCE_CFG, LLM, VERIFY_LLM, DOC_PARSER)
 SENSORS = sensors.SensorHub(database)
 WEATHER = weather.WeatherFeed()   # 기상청 초단기실황·특보(참고 정보, 키 없으면 표시만 안 함)
-PUBLIC = public_api.PublicAPI(FEATURES, database, scenario_now)   # 시민·봉사자 화면(가상 코드 선택, 로그인 없음)
+PUBLIC = public_api.PublicAPI(FEATURES, database, scenario_now)   # 시민·봉사자 화면(가구 코드, 봉사자는 로그인 토큰)
 TELEGRAM = telegram_bot.TelegramBot(database, PUBLIC, lambda: public_status())   # 주민 알림(TELEGRAM_BOT_TOKEN이 있을 때만)
 FEATURES.notify = TELEGRAM.event   # 위기 단계 확정·안부 확인 시작을 텔레그램으로
 
@@ -958,8 +958,10 @@ def submit_report(text, rate_key, channel=None, household=None, reporter=None, d
     return 201, {**public_row(row), "edit_token": token}
 
 
-def supplement_incident(iid, extra, rate_key):
-    """신고자가 빠진 정보를 보완(접수번호로). 원문 뒤에 붙여 다시 분류한다."""
+def supplement_incident(iid, extra, rate_key, token=None):
+    """신고자가 빠진 정보를 보완한다. 원문 뒤에 붙여 다시 분류한다.
+    신고할 때 그 기기(텔레그램이면 그 대화방)에만 준 비밀 값이 있어야 한다. 접수번호만 아는 사람이 남의 신고의 위치·내용을
+    바꾸지 못하게. 전화 등으로 받은 정보는 담당자가 관리자 화면의 '분류 수정'으로 넣는다."""
     if not isinstance(extra, str) or not extra.strip() or len(extra) > 500:
         return 400, {"error": "보완 내용은 1~500자로 입력해 주세요"}
     if not INCIDENT_LIMIT.allow(rate_key):
@@ -967,6 +969,8 @@ def supplement_incident(iid, extra, rate_key):
     def check(cur):
         if cur is None:
             return 404, {"error": "접수번호를 찾을 수 없습니다"}
+        if not _owner_ok(cur["output"], token):
+            return 403, {"error": "이 기기에서 보낸 신고만 보완할 수 있어요. 다른 기기라면 새로 신고하거나 119·112에 전화해 주세요"}
         if cur["output"].get("state") != "보완 필요":
             return 409, {"error": "보완이 필요한 신고가 아닙니다"}
         if cur["output"].get("supplements", 0) >= MAX_SUPPLEMENTS:
@@ -1215,7 +1219,7 @@ TELEGRAM.hooks = {
     "submit": lambda text, chat, **kw: submit_report(text, f"tg:{chat}", "텔레그램", **kw),
     "login": lambda code, chat: tg_household_login(code, chat),
     "answer": record_answer,
-    "supplement": lambda iid, text, chat: supplement_incident(iid, text, f"tg:{chat}"),
+    "supplement": lambda iid, text, chat, token: supplement_incident(iid, text, f"tg:{chat}", token),
     "cancel": lambda iid, token: reporter_change(iid, "cancel", {"token": token}),
     "info": report_info,
     "seen": mark_seen,              # 담당자 방의 [👀 확인했어요]
@@ -1521,14 +1525,21 @@ class Handler(BaseHTTPRequestHandler):
             ("POST", "volunteers", "*", "tasks", "*", "complete"): lambda: PUBLIC.complete(p[1], p[3]),
             ("POST", "volunteers", "*", "sos"): lambda: PUBLIC.sos(p[1], data),
             ("POST", "volunteers", "*", "donations"): lambda: PUBLIC.donation(p[1], data),
+            ("POST", "volunteers", "*", "logout"): lambda: PUBLIC.logout_volunteer(p[1], vtoken),   # 이 기기 로그인 끝내기
         }
         key = (method, *[x if i % 2 == 0 else "*" for i, x in enumerate(p)])
+        # 봉사자 한 명의 화면·기록(/volunteers/{ID}/…)은 회원가입한 봉사자면 로그인 토큰이 있어야 한다(ID만으로는 안 됨)
+        vtoken = self.headers.get("X-Volunteer-Token", "")
+        one_volunteer = len(p) >= 2 and p[0] == "volunteers" and len(p[1]) <= 40
         if method == "GET" and len(p) == 3 and p[0] == "volunteers" and p[2] == "activity.csv":
             try:
                 with FEATURES.lock:
+                    PUBLIC.check_volunteer(p[1], vtoken)
                     body = PUBLIC.export_csv(p[1]).encode("utf-8")
             except KeyError:
                 return self.send_json(404, {"error": "봉사자를 찾을 수 없습니다"})
+            except public_api.NeedLogin as e:
+                return self.send_json(401, {"error": str(e), "need_login": True})
             self.send_response(200)
             self.send_header("Content-Type", "text/csv; charset=utf-8")
             self.send_header("Content-Disposition", f'attachment; filename="activity_{p[1]}.csv"')
@@ -1542,9 +1553,13 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(404, {"error": "찾을 수 없는 경로입니다"})
         try:
             with FEATURES.lock:
+                if one_volunteer and key != ("POST", "volunteers", "*", "logout"):
+                    PUBLIC.check_volunteer(p[1], vtoken)
                 res = fn()
         except KeyError:
             return self.send_json(404, {"error": "가구·봉사자·요청을 찾을 수 없습니다"})
+        except public_api.NeedLogin as e:   # 화면은 로그인 화면으로 돌아간다
+            return self.send_json(401, {"error": str(e), "need_login": True})
         except PermissionError as e:
             return self.send_json(403, {"error": str(e)})
         except features.Conflict as e:
@@ -2073,11 +2088,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not INCIDENT_LIMIT.allow(self.client_ip()):
                     return self.send_json(429, {"error": "짧은 시간에 요청이 너무 많습니다. 급한 상황이면 119·112에 바로 전화하세요"})
                 return self.send_json(*reporter_change(parts[2], parts[3], data))
-            if path.startswith("/api/incidents/") and path.endswith("/supplement"):   # 신고자가 빠진 정보 보완(접수번호로)
+            if path.startswith("/api/incidents/") and path.endswith("/supplement"):   # 신고자가 빠진 정보 보완(이 기기의 비밀 값으로)
                 parts = path.strip("/").split("/")
                 if len(parts) != 4 or not parts[2] or len(parts[2]) > 40:
                     return self.send_json(404, {"error": "찾을 수 없는 경로입니다"})
-                return self.send_json(*supplement_incident(parts[2], data.get("text"), self.client_ip()))
+                return self.send_json(*supplement_incident(parts[2], data.get("text"), self.client_ip(), data.get("token")))
             if path.startswith("/api/incidents/") and path.endswith("/ask"):   # 담당자: 신고자에게 되묻기(텔레그램)
                 s = self.require_staff(check_csrf=True)
                 if not s:

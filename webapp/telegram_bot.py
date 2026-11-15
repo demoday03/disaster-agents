@@ -570,7 +570,13 @@ class TelegramBot:
 
     def _after_report(self, chat, iid, info):
         """빠진 정보가 있으면 입력창을 열어 바로 묻고, 없으면 연락처를 보낼지 묻는다(선택). 이미 보냈으면 메뉴로."""
-        if info.get("state") == "보완 필요" and info.get("missing"):
+        mine = (self.db.get_record("tg_report", f"{iid}:{chat}") or {}).get("token")
+        if info.get("state") == "보완 필요" and info.get("missing") and not mine:
+            # 다른 사람이 먼저 보낸 같은 신고에 합쳐진 경우: 보완은 처음 보낸 사람만 할 수 있다(남의 신고 위치를 바꾸지 못하게)
+            self.send(chat, f"⚠️ 같은 내용으로 먼저 들어온 신고에 합쳐졌는데, 그 신고에 빠진 정보가 있어요: {', '.join(info['missing'])}\n"
+                            "알고 있는 위치(주소나 근처 건물)를 넣어 🆘 신고하기로 새로 보내 주세요. 급하면 119·112에 바로 전화하세요.",
+                      markup=MENU)
+        elif info.get("state") == "보완 필요" and info.get("missing"):
             with self.flock:
                 self.flows[chat] = {"id": secrets.token_hex(3), "step": "supp", "iid": iid, "at": time.time()}
             need = ", ".join(info["missing"])
@@ -623,7 +629,8 @@ class TelegramBot:
         self.edit(chat, mid, f"🗑 {iid} 신고에서 연락처를 지웠어요." if status < 400 else f"⚠️ {res.get('error', '지우지 못했어요')}")
 
     def _supplement(self, chat, iid, text):
-        code, res = self.hooks["supplement"](iid, text, chat)
+        token = (self.db.get_record("tg_report", f"{iid}:{chat}") or {}).get("token")   # 이 대화방에서 보낸 신고의 비밀 값
+        code, res = self.hooks["supplement"](iid, text, chat, token)
         if code >= 400:
             return self.send(chat, f"⚠️ 보완하지 못했어요: {res.get('error', '오류')}", markup=MENU)
         info = self.hooks["info"](iid) or {}

@@ -238,10 +238,12 @@ class Rehearsal:
         return "생수 12·담요 5 → 승인 2건 → 출고·수령 완료 · 의약품은 담당자 직접 처리"
 
     def s8_supplement(self):
-        o = self.report("생수 6병 보내 주세요")["output"]
+        r = self.report("생수 6병 보내 주세요")
+        o = r["output"]
         check(o["state"] == "보완 필요" and "위치" in o["missing"], f"상태 {o['state']} {o['missing']}")
         check(not o["linked"], "위치 없이 물품 요청이 만들어짐")
-        s = self.ok(self.citizen, f"/api/incidents/{o['id']}/supplement", {"text": "Z8 구역 한빛중학교 앞입니다"})["output"]
+        s = self.ok(self.citizen, f"/api/incidents/{o['id']}/supplement",
+                    {"text": "Z8 구역 한빛중학교 앞입니다", "token": r["edit_token"]})["output"]   # 신고한 기기의 비밀 값
         check(s["state"] == "접수" and s["zone"] == "Z8" and s["linked"].get("supply"), f"보완 후 {s['state']}/{s['zone']}")
         rescue = self.report("사람이 갇혀 있어요 도와주세요")["output"]
         check(rescue["urgency"] == 1 and rescue["state"] == "보완 필요", "위치 없는 인명구조의 긴급도가 낮아짐")
