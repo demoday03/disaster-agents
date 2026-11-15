@@ -134,7 +134,10 @@ class TestSupply(unittest.TestCase):
         self.assertEqual(water["hours_left"], 8.0); self.assertTrue(water["shortage"])  # 기한 경과 재고 제외
         self.assertEqual(water["rate_source"], "기록"); self.assertEqual(water["rate_per_h"], 5.0)
         self.assertNotIn("처방약", [r["item"] for r in rows])
-        self.assertEqual(rows, sorted(rows, key=lambda r: (r["hours_left"], r["item"])))
+        self.assertEqual(rows, sorted(rows, key=lambda r: (r["not_stocked"], r["hours_left"], r["item"])))   # 비축하는 품목이 먼저
+        none = [r for r in rows if r["not_stocked"]]
+        self.assertTrue(none and all(r["qty"] == 0 and not r["shortage"] for r in none))   # 재고·출고가 없는 품목은 '부족'으로 세지 않는다
+        self.assertNotIn(none[0]["item"], S.shortage_notice(rows, None).output.get("draft", ""))
         n = S.shortage_notice(rows, None)
         self.assertTrue(n.needs_approval); self.assertTrue(n.output["requires_verification"])
 

@@ -24,6 +24,7 @@
   "raise_types": {"인명구조": "all", "산사태·토사": ["산사태", "낙석", "옹벽", "축대", "흙이 무너", "무너져"]},
   "merge_window_min": 30,
   "follow_up_window_min": 180,
+  "neighbor_merge_min": 60,
   "subject_types": ["도로·시설 장애", "물품 요청"],
   "generic_keywords": ["도로", "통행", "물품"]
 }

@@ -34,6 +34,21 @@ def _incident_zone(output, sc):
     return zone
 
 
+# 단전·단수는 한 유형이지만 필요한 팀이 다르다: 정전·엘리베이터는 전력 복구, 단수·수도는 급수 지원
+POWER_WORDS = ("정전", "전기", "전력", "엘리베이터", "승강기", "전등", "불이 꺼", "누전", "변압기", "전봇대", "전선")
+WATER_WORDS = ("단수", "수도", "물이 안 나", "물이 끊", "식수", "급수", "물이 나오지")
+
+
+def demand_skills(output, sc):
+    """신고 유형의 기본 역량. 단전·단수는 신고 글로 전기·급수를 나눈다(둘 다 있으면 둘 다)."""
+    typ = output.get("type")
+    if typ != "단전·단수":
+        return sc["type_skills"][typ]
+    text = output.get("text") or ""
+    skills = (["전기"] if any(w in text for w in POWER_WORDS) else []) + (["급수"] if any(w in text for w in WATER_WORDS) else [])
+    return skills or sc["type_skills"][typ]
+
+
 def public_demand(output, sc):
     typ = output.get("type")
     if typ == "물품 요청":
@@ -46,8 +61,8 @@ def public_demand(output, sc):
         # 위치를 글·GPS로만 적은 긴급 신고: 관리 구역을 몰라도 추천을 미리 만들어 둔다(거리는 중간값으로 계산).
         # 위치를 아예 적지 않았으면(보완 필요) 보낼 곳이 없으므로 신고자에게 위치를 먼저 받는다
         # 승인 카드에 '위치 확인 필요'로 보이고, 출동은 신고에 적힌 위치·GPS로 한다
-        return {"id": output["id"], "zone": "미상", "skills": sc["type_skills"][typ], "urgency": output["urgency"]}
-    return {"id": output["id"], "zone": _incident_zone(output, sc), "skills": sc["type_skills"][typ],
+        return {"id": output["id"], "zone": "미상", "skills": demand_skills(output, sc), "urgency": output["urgency"]}
+    return {"id": output["id"], "zone": _incident_zone(output, sc), "skills": demand_skills(output, sc),
             "urgency": output.get("urgency", 4)}
 
 

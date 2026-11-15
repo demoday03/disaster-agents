@@ -17,6 +17,7 @@ import csv, io, re, secrets, time
 
 from agents import supply
 from common import places
+from common.clock import kst_text
 from database import db as DB
 from webapp import features as F
 
@@ -119,6 +120,9 @@ class PublicAPI:
         risks = [RISK_HINT[r] for r in zone.get("risk", []) if r in RISK_HINT]
         risks += [FLOOR_HINT[(h["floor"], r)] for r in zone.get("risk", []) if (h["floor"], r) in FLOOR_HINT]
         risks += [FACTOR_HINT[f] for f in h["factors"] if f in FACTOR_HINT]
+        known = any(z["id"] == h["zone"] for z in self.f.sc["zones"])
+        if not known and (h["floor"], "침수") in FLOOR_HINT:   # 구역을 몰라도 집 층에 맞는 호우 대비는 알려 준다
+            risks.append(FLOOR_HINT[(h["floor"], "침수")])
         if stage.get("confirmed") and set(stage.get("hazards", [])) & set(zone.get("risk", [])):
             risks.insert(0, f"지금 담당자가 확정한 '{stage['level']}' 단계의 위험({', '.join(stage['hazards'])})이 우리 구역 위험과 같습니다")
         check = self.db.get_record("check", hid)
@@ -136,8 +140,10 @@ class PublicAPI:
                 "zone": {"id": zone["id"], "name": zone["name"], "risk": zone.get("risk", [])},
                 "risks": risks or ["비가 많이 오면 가까운 대피소와 가는 길을 미리 확인하고, 담당자 안내를 확인하세요"],
                 "check": check, "requests": sorted(reqs, key=lambda r: -(r["history"][-1]["ts"] if r["history"] else 0)),
+                # 위치에서 구역을 모르면 '가장 가까운 곳'이라고 하지 않는다(화면이 남은 자리가 많은 곳을 보여 준다)
                 "case": case, "nearest_shelter": {"name": shelters[0]["name"], "zone": shelters[0]["zone"], "place": places.describe(shelters[0]["zone"]),
-                                    "near": shelters[0]["zone"] == h["zone"]} if shelters else None,
+                                    "near": shelters[0]["zone"] == h["zone"]} if shelters and known else None,
+                "location_known": known,
                 "catalog": [k for k, v in self.f.catalog["items"].items() if v["category"] != "의약품"],
                 "when": list(F.WHEN)}
 
@@ -324,7 +330,7 @@ class PublicAPI:
         out = io.StringIO()
         w = csv.writer(out)
         w.writerow(["봉사자", "구분", "내용", "장소", "시작", "종료", "시간(분)"])
-        fmt = lambda ts: time.strftime("%Y-%m-%d %H:%M", time.localtime(ts)) if ts else ""
+        fmt = lambda ts: kst_text(ts)
         for t in self.db.list_records("task"):
             if vid in t.get("team", []) and t["state"] == "완료":
                 mins = round((t.get("completed_at", 0) - t.get("checked_in_at", 0)) / 60) if t.get("checked_in_at") else ""

@@ -81,6 +81,9 @@ class Features:
         if p == ["recovery", "parse"]:   # 외부 API를 기다리는 동안 다른 기능이 멈추지 않게 잠금 밖에서
             return self.recovery_parse(data)
         with self.lock:
+            # ① 위기 단계 해제(정상으로): 담당자가 사유를 적고 내린다(감사 기록·주민 알림)
+            if p == ["stage", "clear"]:
+                return 200, self.stage_clear(data)
             # ③ 안부 확인
             if p == ["welfare", "checks", "start"]:
                 return 200, self.checks_start(data)
@@ -143,6 +146,20 @@ class Features:
             except (ValueError, KeyError) as e:
                 return f"출고할 수 없습니다({e}). 반려 후 다시 추천하세요"
         return None
+
+    def stage_clear(self, data):
+        reason, who = data.get("reason"), data.get("_by")
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 300:
+            raise ValueError("단계를 내리는 사유를 300자 이하로 적어 주세요")
+        cur = self.db.get_record("stage", "current") or {}
+        if not cur.get("confirmed"):
+            raise Conflict("확정된 위기 단계가 없어요(이미 정상)")
+        stage = self.db.put_record("stage", "current", {"level": "정상", "hazards": [], "confirmed": False, "cleared_from": cur.get("level"),
+                                                        "cleared_by": who, "cleared_reason": reason.strip(), "at": time.time()})
+        self.db.log_audit("stage_cleared", "stage", "current", {"from": cur.get("level"), "by": who, "reason": reason.strip()})
+        if self.notify:
+            self.notify("stage_clear", {"from": cur.get("level")})
+        return stage
 
     def after_resolve(self, approval, approved, session):
         kind, item, who = approval["kind"], approval["item"], session["username"]

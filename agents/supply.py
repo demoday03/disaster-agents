@@ -277,10 +277,13 @@ def forecast(inventory, catalog, now):
         recent = sum(q for ts, i, q in inventory.outflow if i == item and now - ts <= win)
         rate = recent / win if recent > 0 else meta["rate_per_h"]
         hours = qty / rate if rate > 0 else float("inf")
+        # 재고도 없고 최근에 나간 적도 없는 품목은 비축하지 않는 품목이다: '지금 부족'으로 세면 모든 품목이 부족해 보여
+        # 정말 급한 품목이 묻힌다. 요청이 들어오면 물품 요청 쪽에서 '외부 조달 필요'로 따로 보인다
+        not_stocked = qty == 0 and recent == 0
         rows.append({"item": item, "qty": qty, "rate_per_h": round(rate, 2),
-                     "hours_left": round(hours, 1), "shortage": hours < thr,
-                     "rate_source": "기록" if recent > 0 else "설정값"})
-    return sorted(rows, key=lambda r: (r["hours_left"], r["item"]))
+                     "hours_left": round(hours, 1), "shortage": hours < thr and not not_stocked,
+                     "not_stocked": not_stocked, "rate_source": "기록" if recent > 0 else "설정값"})
+    return sorted(rows, key=lambda r: (r["not_stocked"], r["hours_left"], r["item"]))
 
 
 def when_short(hours):

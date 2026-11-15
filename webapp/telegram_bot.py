@@ -33,7 +33,7 @@ from webapp.telegram_staff import GROUP_COMMANDS, StaffDesk
 LEVEL_TEXT = {"주의": "기상 정보를 자주 확인하고, 하천·계곡·지하 공간에 가까이 가지 마세요.",
               "경계": "대피를 준비하세요. 비상용품(물·약·손전등·충전기)을 챙기고 가족과 만날 곳을 정하세요.",
               "위험": "지금 대피하세요. 가까운 대피소나 높은 곳으로 바로 이동하고, 통제 중인 길은 피하세요."}
-HELP = ("이 봇은 재난 안전 AI 에이전트(교육용 시연)입니다. 실제 신고·출동으로 이어지지 않습니다.\n"
+HELP = ("이 봇은 재난 안전 AI 에이전트예요.\n"
         "· 🆘 신고하기 (/report) : 버튼으로 고르고 입력창에 적으면 신고가 접수돼요\n"
         "· 📍 지금 상황 (/status) : 위기 단계·공지·대피소\n"
         "· 📋 내 신고 (/my) : 보낸 신고의 처리 상황\n"
@@ -130,9 +130,14 @@ class TelegramBot:
             self.call("setMyCommands", {"commands": GROUP_COMMANDS, "scope": {"type": "all_group_chats"}})   # 단체방(담당자 방)
             threading.Thread(target=self._watch, daemon=True).start()
             if self.webhook_url:
-                r = self.call("setWebhook", {"url": self.webhook_url, "secret_token": self.secret,
-                                             "allowed_updates": ["message", "callback_query", "channel_post", "my_chat_member"],
-                                             "drop_pending_updates": False})
+                hook = {"url": self.webhook_url, "secret_token": self.secret,
+                        "allowed_updates": ["message", "callback_query", "channel_post", "my_chat_member"], "drop_pending_updates": False}
+                r = self.call("setWebhook", hook)
+                for _ in range(5):   # 너무 자주 다시 켜져 '잠시 뒤 다시'(429)를 받으면 알려 준 만큼 기다렸다가 다시
+                    if r.get("ok") or r.get("error_code") != 429:
+                        break
+                    time.sleep(min(float((r.get("parameters") or {}).get("retry_after", 1)) + 1, 30))
+                    r = self.call("setWebhook", hook)
                 if not r.get("ok"):
                     raise RuntimeError(f"setWebhook 실패: {r.get('description') or r.get('error_code')}")
                 self.mode = "webhook"
@@ -556,9 +561,13 @@ class TelegramBot:
         rec["sent"] = [s["text"] for s in info.get("steps", [])] + (["guidance"] if info.get("guidance") else [])
         rec["done"] = False
         self.db.put_record("tg_report", key, rec)
-        lines = ["✅ 신고를 접수했어요" if not res.get("duplicate") else "✅ 같은 내용이 이미 접수돼 있어 그 신고에 합쳤어요",
+        lines = ["✅ 같은 내용이 이미 접수돼 있어 그 신고에 합쳤어요" if res.get("duplicate") else
+                 f"✅ 같은 아파트({res.get('building')})에서 먼저 들어온 같은 신고에 합쳤어요. 담당자가 한 번에 처리해요" if res.get("merged") else
+                 "✅ 신고를 접수했어요",
                  f"접수번호: {iid}", f"종류: {o.get('type') or '확인 중'}" + (f" · {URGENCY[o['urgency']]}" if o.get("urgency") in URGENCY else "")]
         lines += [f"{s['icon']} {s['text']}" for s in info.get("steps", [])]
+        if info.get("tips") and not info.get("cancelled"):
+            lines.append("⚠️ 지금 할 일\n" + "\n".join(f"· {t}" for t in info["tips"]))
         lines.append(f"🏠 우리 집({hid})과 연결된 신고로 보냈어요." if hid else
                      "💡 🏠 우리 집 연결(/code)을 해 두면 담당자가 우리 집을 바로 알 수 있어요.")
         lines.append("담당자가 확인하거나 출동을 승인하면 이 대화방으로 알려 드릴게요. 담당자가 더 물어볼 수도 있어요.")
@@ -868,6 +877,9 @@ class TelegramBot:
             haz = ", ".join(data.get("hazards") or [])
             self._broadcast(f"⚠️ 위기 단계 {data['level']}" + (f" ({haz})" if haz else "") + f"\n{LEVEL_TEXT[data['level']]}\n"
                             "다치거나 갇혔다면 119·112에 바로 전화하세요.")
+        elif kind == "stage_clear":
+            self._broadcast(f"✅ 위기 단계({data.get('from') or '경계'})가 해제되어 '정상'이 됐어요.\n"
+                            "대피소에 계신 분은 담당자 안내에 따라 돌아가세요. 위험해지면 119·112에 바로 전화하세요.")
         elif kind == "welfare":
             started = set(data.get("households", []))
             for sub in self.db.list_records("tg_sub"):

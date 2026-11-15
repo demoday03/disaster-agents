@@ -53,7 +53,15 @@ class Rehearsal:
                 and (incident_id is None or a["item"].get("incident_id") == incident_id)]
 
     def report(self, text):
-        return self.ok(self.citizen, "/api/incidents", {"text": text})
+        """주민으로 신고하고, 담당자 목록의 같은 신고를 돌려준다(주민 응답에는 내부 처리 기록이 없다)."""
+        r = self.ok(self.citizen, "/api/incidents", {"text": text})
+        iid = r["output"]["id"]
+        return {**r, **self.staff_item(iid)}
+
+    def staff_item(self, iid):
+        """담당자 목록의 신고 한 건(AI 사용 여부·연결된 에이전트 등 내부 처리 기록 포함)."""
+        item = next(x for x in self.ok(self.staff, "/api/incidents")["items"] if x["output"]["id"] == iid)
+        return {**item, "output": {"linked": {}, **item["output"]}}
 
     def stock_total(self, item):
         s = self.ok(self.staff, "/api/supply")
@@ -241,7 +249,8 @@ class Rehearsal:
         o = self.report("생수 6병 보내 주세요")["output"]
         check(o["state"] == "보완 필요" and "위치" in o["missing"], f"상태 {o['state']} {o['missing']}")
         check(not o["linked"], "위치 없이 물품 요청이 만들어짐")
-        s = self.ok(self.citizen, f"/api/incidents/{o['id']}/supplement", {"text": "Z8 구역 한빛중학교 앞입니다"})["output"]
+        self.ok(self.citizen, f"/api/incidents/{o['id']}/supplement", {"text": "Z8 구역 한빛중학교 앞입니다"})
+        s = self.staff_item(o["id"])["output"]
         check(s["state"] == "접수" and s["zone"] == "Z8" and s["linked"].get("supply"), f"보완 후 {s['state']}/{s['zone']}")
         rescue = self.report("사람이 갇혀 있어요 도와주세요")["output"]
         check(rescue["urgency"] == 1 and rescue["state"] == "보완 필요", "위치 없는 인명구조의 긴급도가 낮아짐")

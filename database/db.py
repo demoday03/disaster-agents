@@ -411,6 +411,13 @@ def list_records(kind: str) -> list[dict]:
     return [json.loads(r["data_json"]) for r in rows]
 
 
+def list_records_with_ids(kind: str) -> list[tuple[str, dict]]:
+    """(ID, 내용) 목록. 내용에 ID를 따로 적지 않은 기록(대결 기록 등)을 지울 때 쓴다."""
+    with connect() as conn:
+        rows = conn.execute("SELECT id, data_json FROM records WHERE kind=? ORDER BY created_at, id", (kind,)).fetchall()
+    return [(r["id"], json.loads(r["data_json"])) for r in rows]
+
+
 def delete_record(kind: str, rid: str) -> bool:
     with connect() as conn:
         return conn.execute("DELETE FROM records WHERE kind=? AND id=?", (kind, rid)).rowcount > 0
