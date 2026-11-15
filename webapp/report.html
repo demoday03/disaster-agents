@@ -238,9 +238,10 @@ const store={get(k){try{return localStorage.getItem(k)||''}catch(e){return ''}},
 // ---- 메뉴: 4개(신고·대피소·알림·우리 집). 예전 주소(#status, #shelters 등)도 알맞은 메뉴로 연다
 const VIEWS=['report','map','news','home'];
 const OLD={status:'report',prepare:'home',supply:'home',notices:'news',shelters:'map',situation:'map'};
-// 우리 집 번호로 들어가야 쓸 수 있다. 등록 없이(급할 때)는 신고·대피소만
-const allowed=v=>!!HH||(GUEST&&(v==='report'||v==='map'));
+// 우리 집 번호로 들어가야 쓸 수 있다. 등록 없이(급할 때)는 신고·대피소만. 대피소는 로그인 화면 없이 바로 연다
+const allowed=v=>!!HH||v==='map'||(GUEST&&v==='report');
 function go(v,opts={}){const sub=v;v=OLD[v]||v;if(!VIEWS.includes(v))v='report';
+if(v==='map'&&!HH)GUEST=true;   // 대피소를 찾는 사람은 묻지 않고 '등록 없이 쓰는 중'으로
 if(!allowed(v))return showGate(v);   // 로그인 없이 쓰는 중에 우리 집·알림을 누르면 로그인 화면
 unlockView();
 document.querySelectorAll('section.view[data-view]').forEach(s=>s.hidden=s.dataset.view!==v);
