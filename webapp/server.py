@@ -461,7 +461,7 @@ BULK_SKIP_KINDS = {"welfare_guidance_review"}   # 검증이 불확실한 안내�
 # household = 가구 코드(로그인용), reporter = 텔레그램 신고자 번호, questions = 담당자 질문(담당자 이름이 들어 있음),
 # classified_by·seen = 담당자 이름, contacts = 신고자가 담당자에게만 보낸 연락처
 PUBLIC_HIDDEN = ("notes", "invalidated_by", "invalid_reason", "invalidated_at", "triage", "owner_hash", "household", "household_place",
-                 "reporter", "questions", "classified_by", "seen", "contacts", "device")
+                 "reporter", "questions", "classified_by", "seen", "contacts", "device", "neighbors", "same_building")
 
 
 def public_row(row):
@@ -864,6 +864,9 @@ def reporter_change(iid, action, data):
         no = new["output"]
         no.update({k: o[k] for k in CARRY_FIELDS if k in o})
         no.update(owner_hash=o["owner_hash"], edits=o.get("edits", 0) + 1, supplements=o.get("supplements", 0), edited_at=time.time())
+        no["building"] = places.building(no.get("text")) or places.building(o.get("household_place"))
+        if not no["building"]:
+            no.pop("building")
         new = database.update_incident(link_incident(new))
         database.log_audit("incident_edited_by_reporter", "incident", iid, {**res, "edits": no["edits"]})
         followup = new["output"].get("state") == "접수"
@@ -873,7 +876,7 @@ def reporter_change(iid, action, data):
 
 
 CARRY_FIELDS = ("owner_hash", "channel", "household", "household_place", "reporter", "questions", "edits", "supplements",
-                "repeats", "repeat_at", "seen", "contacts", "device")   # 다시 분류해도 남겨 둘 신고 정보
+                "repeats", "repeat_at", "seen", "contacts", "device", "neighbors", "building", "same_building")   # 다시 분류해도 남겨 둘 신고 정보
 
 
 def submit_report(text, rate_key, channel=None, household=None, reporter=None, device=None):
@@ -910,11 +913,94 @@ def submit_report(text, rate_key, channel=None, household=None, reporter=None, d
         row["output"]["reporter"] = reporter[:20]
     if isinstance(device, dict):
         row["output"]["device"] = devices.stored(device)   # 보낸 기기(스마트폰·PC 등). User-Agent 원문은 저장하지 않는다
+    out = row["output"]
+    host, related, bld = building_host(out, out.get("household_place"))
+    if bld:
+        out["building"] = bld   # 담당자 화면 '🏢 한빛아파트 101동'
+    if host:   # 같은 아파트 이웃이 먼저 보낸 같은 종류의 신고 → 새로 만들지 않고 그 신고에 합친다
+        with _incident_lock:
+            cur = incident_output(host["output"]["id"]) or host
+            o = cur["output"]
+            norm = lambda t: re.sub(r"\s+", " ", str(t or "")).strip().casefold()
+            if any(norm(n.get("text")) == norm(out.get("text")) for n in o.get("neighbors") or []):
+                o["repeats"], o["repeat_at"] = o.get("repeats", 0) + 1, time.time()   # 같은 이웃이 같은 글을 또 보냄
+            else:
+                o["neighbors"] = (list(o.get("neighbors") or []) + [{k: out[k] for k in NEIGHBOR_KEYS if out.get(k) not in (None, "")}
+                                                                     | {"ts": time.time(), "channel": channel or "웹"}])[-NEIGHBOR_MAX:]
+            cur = database.update_incident(cur)
+        database.log_audit("incident_merged_neighbor", "incident", o["id"],
+                           {"building": (o.get("building") or bld or {}).get("label"), "neighbors": len(o.get("neighbors") or []), "channel": channel or "웹"})
+        label = (bld or o.get("building") or {}).get("label") or "같은 건물(GPS 40m 안)"
+        return 200, {**public_row(cur), "merged": True, "building": label}
+    if related:   # 같은 아파트의 다른 신고가 있지만 합치지 않은 경우(사람이 갇힘·더 급함·다른 종류): 담당자가 함께 보게 표시
+        out["same_building"] = related[:10]
     # Persist only the classifier result (the intake agent applies its configured masking).
     row = database.save_incident(row)
     row = database.update_incident(link_incident(row))
     start_followups(row["output"]["id"])
     return 201, {**public_row(row), "edit_token": token}
+
+
+NEIGHBOR_MERGE_MIN = int(intake.load_cfg().get("neighbor_merge_min", 60))   # 같은 아파트 이웃 신고를 합치는 시간
+NEIGHBOR_MAX = 50
+NEIGHBOR_KEYS = ("text", "type", "urgency", "people", "vulnerable", "household", "household_place", "reporter", "device")
+
+
+def building_host(out, household_place=None):
+    """같은 아파트(단지 이름·동이 겹침) 또는 GPS 40m 안(둘 다 오차 50m 이하)에서 최근 NEIGHBOR_MERGE_MIN분 안에 들어온 신고를 찾는다.
+    (합칠 신고, 같은 건물의 다른 신고 ID들, 이 신고의 건물). 합치는 조건(놓치는 신고가 없게 좁게):
+    - 같은 종류이고, 사람이 갇힌 신고(인명구조)·그 밖의 요청(대민지원)이 아니다(서로 다른 사람·요청일 수 있다).
+    - 새 신고가 더 급하지 않다(취약한 분·사람 수 때문에 더 급하면 따로 올려 먼저 보게 한다).
+    여러 개면 가장 먼저 들어온 신고에 합친다."""
+    b = places.building(out.get("text")) or places.building(household_place)
+    g = places.gps(out.get("text"))
+    if not b and not g:
+        return None, [], None
+    now, host, related = time.time(), None, []
+    for item in database.list_incidents(200):   # 최근 것부터
+        o = item.get("output") or {}
+        if not o.get("id") or o.get("state") == INVALID:
+            continue
+        ts = o.get("ts")
+        if now - (float(ts) if isinstance(ts, (int, float)) else _epoch(ts)) > NEIGHBOR_MERGE_MIN * 60:
+            continue
+        if not (places.same_building(b, o.get("building") or places.building(o.get("text")))
+                or places.near(g, places.gps(o.get("text")))):
+            continue
+        related.append(o["id"])
+        u, hu = out.get("urgency"), o.get("urgency")
+        if (o.get("type") == out.get("type") and out.get("type") not in intake.NO_MERGE_TYPES
+                and isinstance(u, int) and isinstance(hu, int) and u >= hu):
+            host = item   # 더 오래된 것으로 계속 바꾼다(맨 처음 신고에 합치게)
+    return host, [r for r in related if not host or r != host["output"]["id"]], b
+
+
+def split_neighbor(iid, idx, s):
+    """담당자: 잘못 합쳐진 이웃 신고를 따로 떼어 새 신고로 접수한다(다시 분류하고 다음 에이전트로 넘긴다)."""
+    with _incident_lock:
+        row = incident_output(iid)
+        if row is None:
+            return 404, {"error": "접수번호를 찾을 수 없습니다"}
+        o = row["output"]
+        nb = list(o.get("neighbors") or [])
+        if not isinstance(idx, int) or not 0 <= idx < len(nb):
+            return 404, {"error": "합쳐진 이웃 신고를 찾을 수 없어요"}
+        n = nb.pop(idx)
+        o["neighbors"] = nb
+        o["notes"] = list(o.get("notes") or []) + [f"{s['username']}: 합쳐졌던 이웃 신고를 따로 뗌"]
+        database.update_incident(row)
+    rid = "R-" + uuid.uuid4().hex[:8].upper()
+    new = classify_incident(rid, n["text"], time.time())
+    no = new["output"]
+    no.update({k: n[k] for k in ("household", "household_place", "reporter", "device") if n.get(k)})
+    if n.get("channel") and n["channel"] != "웹":
+        no["channel"] = n["channel"]
+    no.update(same_building=[iid], split_from=iid, building=places.building(n["text"]) or o.get("building"),
+              notes=[f"같은 아파트 신고 {iid}에 합쳐져 있다가 {s['username']}가 따로 뗌"])
+    new = database.update_incident(link_incident(database.save_incident(new)))
+    database.log_audit("incident_neighbor_split", "incident", iid, {"new": rid, "by": s["username"]})
+    start_followups(rid)
+    return 200, {"id": rid, "from": iid}
 
 
 def supplement_incident(iid, extra, rate_key):
@@ -1054,7 +1140,7 @@ def staff_view(limit=300):
                     "ts": float(ts) if isinstance(ts, (int, float)) else _epoch(ts),
                     "place": places.describe(o["zone"]) if o.get("zone") not in (None, "미상") else "위치 확인 필요",
                     "text": mask(str(o.get("text") or ""))[:200], "channel": o.get("channel") or "웹",
-                    "repeats": o.get("repeats", 0), "invalid": o.get("state") == INVALID, "seen": o.get("seen"),
+                    "repeats": o.get("repeats", 0) + len(o.get("neighbors") or []), "invalid": o.get("state") == INVALID, "seen": o.get("seen"),
                     "attended": attended(o) if isinstance(u, int) and u <= 2 else False})   # 급한 신고만 따져 본다
     return out
 
@@ -1506,8 +1592,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(200, {"username": s["username"], "role": s["role"], "csrf_token": s["csrf"]})
         if path == "/api/health":
             return self.send_json(200, {"ok": True, "mode": MODE, "llm_enabled": LLM is not None,
-                "llm_calls": LLM.calls if LLM else 0, "llm_max_calls": LLM.max_calls if LLM else 0, "database": database.backend_label(), "telegram": TELEGRAM.status(), "database_ready": True, "prototype": True,
-                "warning": "시뮬레이션/프로토타입입니다. 실제 출동·재난 경보 시스템이 아닙니다."})
+                "llm_calls": LLM.calls if LLM else 0, "llm_max_calls": LLM.max_calls if LLM else 0, "database": database.backend_label(), "telegram": TELEGRAM.status(), "database_ready": True})
         if path == "/api/agents":
             return self.send_json(200, {"items": agents_status()})
         if path == "/api/public/status":   # 접수 사이트 첫 화면: 확정 단계·승인된 안내문·대피소·통제 구간
@@ -1736,6 +1821,14 @@ class Handler(BaseHTTPRequestHandler):
                 if len(parts) != 4 or not parts[2] or len(parts[2]) > 40:
                     return self.send_json(404, {"error": "찾을 수 없는 경로입니다"})
                 return self.send_json(*mark_seen(parts[2], s["username"], "관리자 화면"))
+            if path.startswith("/api/incidents/") and "/neighbors/" in path and path.endswith("/split"):   # 담당자: 합쳐진 이웃 신고 따로 떼기
+                s = self.require_staff(check_csrf=True)
+                if not s:
+                    return
+                parts = path.strip("/").split("/")
+                if len(parts) != 6 or not parts[2] or len(parts[2]) > 40 or not parts[4].isdigit():
+                    return self.send_json(404, {"error": "찾을 수 없는 경로입니다"})
+                return self.send_json(*split_neighbor(parts[2], int(parts[4]), s))
             if path.startswith("/api/incidents/") and path.endswith("/contact"):   # 담당자: 신고자가 보낸 연락처 번호 보기(기록이 남는다)
                 s = self.require_staff(check_csrf=True)
                 if not s:
@@ -2211,7 +2304,7 @@ def main():
         scheme = "https"
     elif HOST not in LOCAL_HOSTS:
         print("경고: 내부망에 HTTP(암호화 없음)로 열었습니다. 같은 네트워크에서 로그인 정보가 노출될 수 있으니 시연에만 쓰세요.")
-    print(f"재난 안전 AI 에이전트 프로토타입: {scheme}://{HOST}:{PORT}")
+    print(f"재난 안전 AI 에이전트: {scheme}://{HOST}:{PORT}")
     print(f"LLM_MODE={MODE}; {'Solar API 사용 설정됨' if LLM else 'LLM은 사용하지 않고 규칙 기반 데모로 실행'}")
     if database.count_users() == 0:
         print("담당자 계정이 없습니다. 관리자 화면을 쓰려면 먼저 실행하세요: python scripts/create_user.py 이름 --role operator")

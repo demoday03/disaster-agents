@@ -405,6 +405,47 @@ class TestPipeline(ServerBase):
         self.assertIn("신고자가 취소함", self.staff_view(iid)["notes"][-1])
         self.assertEqual(anon.post(f"/api/incidents/{iid}/cancel", {"token": token})[0], 409)
 
+    def test_neighbors_in_same_apartment_are_merged(self):
+        """같은 아파트 이웃이 같은 일을 신고하면 한 건으로 합친다. 사람이 갇힌 신고·다른 동·더 급한 신고는 합치지 않는다."""
+        anon = Client(self.base)
+        post = lambda t: anon.post("/api/incidents", {"text": t})
+        c1, a = post("위치: 해솔아파트 101동 302호 · 물이 차고 있어요(침수)")
+        self.assertEqual(c1, 201)
+        host = a["output"]["id"]
+        c2, b = post("위치: 해솔 아파트 101동 504호 · 물이 차고 있어요(침수)")                    # 이웃(띄어 써도)
+        self.assertEqual((c2, b["output"]["id"], b.get("merged"), b.get("building")), (200, host, True, "해솔아파트 101동"))
+        self.assertNotIn("edit_token", b)                                                     # 남의 신고는 취소할 수 없다
+        self.assertEqual(post("위치: 해솔 아파트 101동 504호 · 물이 차고 있어요(침수)")[1]["output"]["id"], host)   # 같은 이웃이 또 보냄
+        c3, c = post("위치: 해솔아파트 지하주차장 · 물이 차고 있어요(침수)")                      # 동을 안 적어도 같은 단지
+        self.assertEqual((c3, c["output"]["id"]), (200, host))
+        c4, d = post("위치: 해솔아파트 105동 · 물이 차고 있어요(침수)")                           # 다른 동
+        self.assertEqual(c4, 201)
+        c5, e = post("위치: 해솔아파트 101동 201호 · 사람이 갇혔거나 다쳤어요(구조 요청). 2명 갇힘")   # 사람이 갇힘: 따로
+        self.assertEqual(c5, 201)
+        staff = {x["output"]["id"]: x["output"] for x in self.get("/api/incidents")[1]["items"]}
+        h = staff[host]
+        self.assertEqual(len(h["neighbors"]), 2)                                              # 같은 이웃의 재전송은 이웃으로 또 세지 않고
+        self.assertEqual(h.get("repeats"), 1)                                                 # '같은 신고 1번 더'로
+        self.assertEqual(h["building"]["label"], "해솔아파트 101동")
+        self.assertIn("504호", h["neighbors"][0]["text"])
+        self.assertIn(host, staff[e["output"]["id"]]["same_building"])                        # 합치지 않아도 같은 아파트라고 표시
+        self.assertNotIn(d["output"]["id"], h.get("same_building") or [])
+        pub = anon.get(f"/api/incidents/{host}")[1]["result"]["output"]
+        self.assertNotIn("neighbors", pub)                                                    # 이웃 정보는 공개 조회에 없다
+        # GPS 40m 안(오차 50m 이하)도 같은 건물
+        g1 = post("위치: GPS 34.80012, 128.70345 (오차 약 12m) · 흙·돌이 무너졌어요(산사태·토사)")[1]["output"]["id"]
+        cg, g2 = post("위치: GPS 34.80025, 128.70355 (오차 약 15m) · 흙·돌이 무너졌어요(산사태·토사)")
+        self.assertEqual((cg, g2["output"]["id"]), (200, g1))
+        # 잘못 합쳐졌으면 담당자가 따로 뗀다 → 새 신고로 접수
+        self.assertEqual(anon.post(f"/api/incidents/{host}/neighbors/0/split", {})[0], 401)
+        cs, r = self.post(f"/api/incidents/{host}/neighbors/0/split", {})
+        self.assertEqual(cs, 200)
+        staff = {x["output"]["id"]: x["output"] for x in self.get("/api/incidents")[1]["items"]}
+        self.assertEqual(len(staff[host]["neighbors"]), 1)
+        self.assertIn("504호", staff[r["id"]]["text"])
+        self.assertEqual(staff[r["id"]]["split_from"], host)
+        self.assertEqual(self.post(f"/api/incidents/{host}/neighbors/9/split", {})[0], 404)
+
     def test_device_is_detected_and_kept_staff_only(self):
         """접속 환경: 화면을 연 기기·신고를 보낸 기기(스마트폰·노트북/PC). 담당자만 보고, 원문 User-Agent는 저장하지 않는다."""
         iphone = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) "

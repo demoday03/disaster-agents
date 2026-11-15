@@ -33,7 +33,7 @@ from webapp.telegram_staff import GROUP_COMMANDS, StaffDesk
 LEVEL_TEXT = {"주의": "기상 정보를 자주 확인하고, 하천·계곡·지하 공간에 가까이 가지 마세요.",
               "경계": "대피를 준비하세요. 비상용품(물·약·손전등·충전기)을 챙기고 가족과 만날 곳을 정하세요.",
               "위험": "지금 대피하세요. 가까운 대피소나 높은 곳으로 바로 이동하고, 통제 중인 길은 피하세요."}
-HELP = ("이 봇은 재난 안전 AI 에이전트(교육용 시연)입니다. 실제 신고·출동으로 이어지지 않습니다.\n"
+HELP = ("이 봇은 재난 안전 AI 에이전트예요.\n"
         "· 🆘 신고하기 (/report) : 버튼으로 고르고 입력창에 적으면 신고가 접수돼요\n"
         "· 📍 지금 상황 (/status) : 위기 단계·공지·대피소\n"
         "· 📋 내 신고 (/my) : 보낸 신고의 처리 상황\n"
@@ -556,7 +556,9 @@ class TelegramBot:
         rec["sent"] = [s["text"] for s in info.get("steps", [])] + (["guidance"] if info.get("guidance") else [])
         rec["done"] = False
         self.db.put_record("tg_report", key, rec)
-        lines = ["✅ 신고를 접수했어요" if not res.get("duplicate") else "✅ 같은 내용이 이미 접수돼 있어 그 신고에 합쳤어요",
+        lines = ["✅ 같은 내용이 이미 접수돼 있어 그 신고에 합쳤어요" if res.get("duplicate") else
+                 f"✅ 같은 아파트({res.get('building')})에서 먼저 들어온 같은 신고에 합쳤어요. 담당자가 한 번에 처리해요" if res.get("merged") else
+                 "✅ 신고를 접수했어요",
                  f"접수번호: {iid}", f"종류: {o.get('type') or '확인 중'}" + (f" · {URGENCY[o['urgency']]}" if o.get("urgency") in URGENCY else "")]
         lines += [f"{s['icon']} {s['text']}" for s in info.get("steps", [])]
         lines.append(f"🏠 우리 집({hid})과 연결된 신고로 보냈어요." if hid else

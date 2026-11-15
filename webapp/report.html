@@ -332,7 +332,7 @@ async function sendReport(text){const b=$('submitIncident'),sb=$('stickyBtn');co
 b.disabled=sb.disabled=true;label('보내는 중…');const slow=setTimeout(()=>label('조금만 기다려 주세요… (연결이 느려요)'),4000);
 const ctl=new AbortController(),limit=setTimeout(()=>ctl.abort(),15000);   // 서버가 깨는 중이거나 느리면 15초에서 멈추고 보관한다
 try{const r=await api('/api/incidents',{method:'POST',body:JSON.stringify({text,...(HH?{household:HH}:{}),...(window.UI&&UI.clientHints?{client:UI.clientHints()}:{})}),signal:ctl.signal});const o=r.output;addReceipt(o.id);saveToken(o.id,r.edit_token);store.set('pendingReport','');showPending();
- await drawMyReports(o.id,r.duplicate);$('myReports').scrollIntoView({block:'start',behavior:'smooth'});return true}
+ await drawMyReports(o.id,r.duplicate?'같은 내용이 이미 접수되어 있어 그 신고에 합쳤어요.':r.merged?`같은 아파트(${r.building})에서 먼저 들어온 같은 신고에 합쳤어요. 담당자가 한 번에 처리해요. 더 급한 일이 생기면 다시 신고하거나 119에 전화하세요.`:'');$('myReports').scrollIntoView({block:'start',behavior:'smooth'});return true}
 catch(err){const late=err.name==='AbortError',offline=late||err instanceof TypeError||!navigator.onLine;
  if(offline){store.set('pendingReport',text);showPending();$('pendingBox').scrollIntoView({block:'center',behavior:'smooth'})}
  $('formErr').textContent=late?'서버가 15초 넘게 답하지 않아 쓴 내용을 이 기기에 보관했어요. 위의 「지금 다시 보내기」를 눌러 주세요. 급하면 지금 119·112에 전화하세요.'
@@ -378,7 +378,7 @@ const writtenPlace=t=>((String(t||'').match(/위치\s*[:：]\s*([^·\n(]+)/)||[]
 const STATE_TXT={'접수':'접수되어 담당자가 확인하고 있어요','보완 필요':'정보가 더 필요해요','오접수':'담당자 확인 결과 처리하지 않기로 했어요'};
 async function card(id,dup,open){try{const r=await api('/api/incidents/'+encodeURIComponent(id));const o=r.result?.output||{},need=o.state==='보완 필요',going=(r.progress||[]).some(p=>p.done),cancelled=!!o.cancelled_by_reporter,mine=!!tokens()[id]&&o.state!=='오접수';
 return `<details class="acc" data-rid="${esc(id)}"${open||need?' open':''}><summary><span style="white-space:nowrap">${need?'⚠️':'📨'} 내 신고</span><span class="sum-sub">${esc(id)} · ${esc(o.type||'확인 중')} · ${esc(cancelled?'취소함':need?'정보가 더 필요해요':o.state==='오접수'?'처리 안 함':going?'출동 승인됨':'접수됨')}</span></summary><div class="acc-body">
-${dup?'<div class="box warn" style="margin-top:0">같은 내용이 이미 접수되어 있어 그 신고에 합쳤어요.</div>':''}
+${dup?`<div class="box warn" style="margin-top:0">${esc(typeof dup==='string'?dup:'같은 내용이 이미 접수되어 있어 그 신고에 합쳤어요.')}</div>`:''}
 <div class="muted">접수번호 <span class="muted">(처리 상황을 볼 때 필요해요)</span></div><div class="receipt">${esc(id)}</div>
 <dl class="dl" style="margin-top:8px"><dt>처리 상황</dt><dd>${esc(cancelled?'신고를 취소했어요':going?'담당자가 대응 인력 출동을 승인했어요':STATE_TXT[o.state]||o.state||'접수')}</dd><dt>신고 종류</dt><dd>${esc(o.type||'확인 중')}</dd><dt>위치</dt><dd>${esc(writtenPlace(o.text)||(o.zone&&o.zone!=='미상'?place(o.zone):'아직 모름'))}</dd><dt>접수 시각</dt><dd>${esc(fmt(r.created_at))}</dd></dl>
 ${(r.progress||[]).length?`<ul class="prog">${r.progress.map(p=>`<li class="${p.done?'done':''}">${esc(p.icon)} ${esc(p.text)}</li>`).join('')}</ul>`:''}
