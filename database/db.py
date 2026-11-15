@@ -277,7 +277,10 @@ def find_duplicate_incident(text: str) -> dict | None:
             submitted_at = float(output.get("ts", 0))
         except (TypeError, ValueError):
             submitted_at = 0
-        if existing == normalized and output.get("id") and 0 <= now - submitted_at <= 600:
+        # 취소·오접수 처리된 신고와는 합치지 않는다. 실수로 취소한 뒤 같은 글로 다시 보낸 신고가
+        # 끝난 신고에 묻혀 사라지지 않게(새 신고로 접수한다)
+        if (existing == normalized and output.get("id") and output.get("state") != "오접수"
+                and 0 <= now - submitted_at <= 600):
             return item
     return None
 

@@ -8,12 +8,14 @@
   주민 화면에는 보여 주지 않는다. 급할 때는 로그인 없이 신고·대피소 보기만 할 수 있다(화면 쪽).
 - 봉사자는 회원가입(별명·비밀번호·활동할 곳·할 수 있는 일·장비·가능한 시간)을 한다. 할 수 있는 일을 미리 받아 두어
   맞는 작업을 바로 보여 주고 추천한다. 봉사자 ID는 기기에만 저장하고, 다른 봉사자에게는 별명만 보인다.
+  가입·로그인하면 그 기기에만 주는 로그인 토큰을 함께 준다. 회원가입한 봉사자의 화면·체크인·완료·SOS·기부·기록 내려받기는
+  ID만으로는 안 되고 이 토큰이 있어야 한다(ID가 새도 비밀번호 없이 그 봉사자로 쓸 수 없게). 서버에는 토큰의 해시만 저장한다.
 - 시연용 가상 가구(H01~H20)·봉사자(V01~V12)는 그대로 둔다(담당자 화면·마이크로비트 D 노드 연동용).
 코드를 아는 사람은 누구나 그 화면을 쓸 수 있으므로(시연 한계) 결정은 여전히 담당자 승인을 거친다:
 안전 확인 응답·물품 요청·수령 확인·체크인·완료 보고·SOS·기부 등록은 '기록'만 하고, 배치·출고·투입은 승인 대기열에서 정한다.
 이 모듈의 기능은 AI를 부르지 않는다. 부르는 쪽(server.py)이 FEATURES.lock 안에서 실행하고 접속 IP당 요청 수를 제한한다.
 """
-import csv, io, re, secrets, time
+import csv, hashlib, hmac, io, re, secrets, time
 
 from agents import supply
 from common import places
@@ -32,6 +34,18 @@ FLOOR_HINT = {("1층", "침수"): "1층은 물이 들어올 수 있습니다. �
 OPEN_TASK = ("대기", "추천")
 FLOORS = ("반지하", "1층", "2층 이상")
 PEOPLE_FACTORS = ("영유아", "고령", "거동 불편", "임신")   # 주민이 고르는 '함께 사는 분'
+VOLUNTEER_SESSION_S = 30 * 86400   # 봉사자 로그인 유지 기간(그 기기에서 30일)
+VOLUNTEER_MAX_SESSIONS = 5         # 봉사자 한 명이 동시에 로그인해 둘 수 있는 기기 수(넘으면 가장 오래된 것부터 끝남)
+
+
+class NeedLogin(PermissionError):
+    """회원가입한 봉사자인데 로그인 토큰이 없거나 끝났다(화면은 로그인 화면으로 돌아간다, 401)."""
+
+
+def _token_hash(token):
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 MAX_REGISTERED = 2000   # 공개 화면에서 등록할 수 있는 가구·봉사자 수(무한정 쌓이지 않게)
 # 봉사자 회원가입 선택지. 할 수 있는 일(역량)은 작업 유형 설정(config/tasks.json)의 역량과 같은 낱말을 쓴다
 SKILL_LABEL = {"토사": "흙·토사 치우기", "청소": "청소·가재도구 세척", "운반": "짐 옮기기·정리"}
@@ -232,7 +246,7 @@ class PublicAPI:
         self.db.put_record("volunteer_auth", vid, {"id": vid, "name": name, "password_hash": DB.hash_password(password)})
         self.db.put_record("volunteer", vid, v)
         self.f.volunteers[vid] = v
-        return {"id": vid, "name": name}
+        return {"id": vid, "name": name, "token": self._new_session(vid)}
 
     def login_volunteer(self, data):
         name, password = data.get("name"), data.get("password")
@@ -242,7 +256,40 @@ class PublicAPI:
         ok = DB._check_password(password, auth["password_hash"] if auth else DB._DUMMY_HASH)   # 없는 별명도 같은 시간
         if not auth or not ok or auth["id"] not in self.f.volunteers:
             raise PermissionError("별명 또는 비밀번호가 맞지 않습니다")
-        return {"id": auth["id"], "name": auth["name"]}
+        return {"id": auth["id"], "name": auth["name"], "token": self._new_session(auth["id"])}
+
+    # ---- 봉사자 로그인 토큰: 그 기기에만 주고 서버에는 해시만(DB의 volunteer_auth 기록에 함께 둔다)
+    def _new_session(self, vid):
+        auth = self.db.get_record("volunteer_auth", vid)
+        now, token = time.time(), secrets.token_urlsafe(24)
+        keep = [s for s in auth.get("sessions", []) if now - s["at"] < VOLUNTEER_SESSION_S][-(VOLUNTEER_MAX_SESSIONS - 1):]
+        self.db.put_record("volunteer_auth", vid, {**auth, "sessions": keep + [{"h": _token_hash(token), "at": now}]})
+        return token
+
+    def _session_index(self, auth, token):
+        if not isinstance(token, str) or not token or not auth:
+            return None
+        h, now = _token_hash(token), time.time()
+        return next((i for i, s in enumerate(auth.get("sessions", []))
+                     if hmac.compare_digest(s["h"], h) and now - s["at"] < VOLUNTEER_SESSION_S), None)
+
+    def check_volunteer(self, vid, token):
+        """봉사자 한 명의 화면·기록 요청 전에 확인한다. 시연용 봉사자(V01~V12)는 누구나 둘러볼 수 있게 그대로 둔다."""
+        v = self._volunteer(vid)
+        if not v.get("registered"):
+            return
+        if self._session_index(self.db.get_record("volunteer_auth", vid), token) is None:
+            raise NeedLogin("다시 로그인해 주세요. 이 기기의 로그인이 끝났거나 로그인하지 않은 기기예요")
+
+    def logout_volunteer(self, vid, token):
+        """이 기기의 로그인만 끝낸다(다른 기기의 로그인은 그대로)."""
+        auth = self.db.get_record("volunteer_auth", vid)
+        i = self._session_index(auth, token)
+        if i is not None:
+            sessions = list(auth["sessions"])
+            sessions.pop(i)
+            self.db.put_record("volunteer_auth", vid, {**auth, "sessions": sessions})
+        return {"ok": True}
 
     def update_volunteer(self, vid, data):
         v = self._volunteer(vid)

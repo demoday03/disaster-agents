@@ -1,6 +1,6 @@
 """신고 → 다음 에이전트 연결과 예외 처리(잘못된 신고·필수 정보 누락·에이전트 오류) 시험. mock 모드, 실제 API 호출 없음.
 실행: python -m unittest webapp.test_pipeline -v"""
-import time, unittest, urllib.request
+import time, unittest, urllib.error, urllib.request
 from pathlib import Path
 from database import db
 from webapp.test_server import Client, ServerBase
@@ -12,7 +12,12 @@ class TestPipeline(ServerBase):
     def report(self, text):
         code, d = Client(self.base).post("/api/incidents", {"text": text})   # 신고는 로그인 없이
         self.assertEqual(code, 201, d)
+        self.tokens = {**getattr(self, "tokens", {}), d["output"]["id"]: d["edit_token"]}   # 보완·고치기에 쓰는 신고자 비밀 값
         return d["output"]
+
+    def supplement(self, iid, text, client=None):
+        """신고한 기기(비밀 값을 가진 쪽)가 보완을 보낸다."""
+        return (client or Client(self.base)).post(f"/api/incidents/{iid}/supplement", {"text": text, "token": self.tokens.get(iid)})
 
     def staff_view(self, iid):
         """담당자용 신고 목록의 한 건(공개 응답에서 빠지는 메모·처리자까지 들어 있음)."""
@@ -61,13 +66,16 @@ class TestPipeline(ServerBase):
         self.assertEqual((o["state"], o["missing"], o["linked"]), ("보완 필요", ["위치"], {}))
         self.assertEqual(self.supply_requests(o["id"]), [])   # 위치 없이 물품을 보내지 않는다
         anon = Client(self.base)
-        code, d = anon.post(f"/api/incidents/{o['id']}/supplement", {"text": "Z5 구역입니다"})
+        self.assertEqual(anon.post(f"/api/incidents/{o['id']}/supplement", {"text": "Z5 구역입니다"})[0], 403)   # 접수번호만으로는 안 됨
+        self.assertEqual(anon.post(f"/api/incidents/{o['id']}/supplement", {"text": "Z5 구역입니다", "token": "남의값"})[0], 403)
+        self.assertNotIn("[보완]", self.staff_view(o["id"])["text"])                       # 막힌 보완은 반영되지 않음
+        code, d = self.supplement(o["id"], "Z5 구역입니다", anon)
         self.assertEqual(code, 200, d)
         o2 = d["output"]
         self.assertEqual((o2["id"], o2["zone"], o2["state"], o2["supplements"]), (o["id"], "Z5", "접수", 1))
         self.assertIn("[보완] Z5 구역입니다", o2["text"])
         self.assertEqual(len(self.supply_requests(o["id"])), 1)
-        code, _ = anon.post(f"/api/incidents/{o['id']}/supplement", {"text": "또 보완"})
+        code, _ = self.supplement(o["id"], "또 보완", anon)
         self.assertEqual(code, 409)
         self.assertEqual(anon.post("/api/incidents/R-NONE/supplement", {"text": "x"})[0], 404)
         self.assertEqual(anon.post(f"/api/incidents/{o['id']}/supplement", {"text": ""})[0], 400)
@@ -157,7 +165,7 @@ class TestPipeline(ServerBase):
         self.assertEqual(self.dispatches(road["id"]), [])                    # 문의(대민지원)는 출동 대상 아님
         o = self.report("어딘지 모르겠는데 사람이 갇혀 있어요")
         self.assertEqual(self.dispatches(o["id"]), [])                       # 위치가 없으면 추천하지 않음
-        code, d = Client(self.base).post(f"/api/incidents/{o['id']}/supplement", {"text": "Z8 구역 마트 지하예요"})
+        code, d = self.supplement(o["id"], "Z8 구역 마트 지하예요")
         self.assertEqual(code, 200, d)
         self.assertEqual(len(self.dispatches(o["id"])), 1)                   # 보완되면 그때 추천
 
@@ -181,11 +189,11 @@ class TestPipeline(ServerBase):
     def test_supplement_resolves_ambiguous_zone_and_long_text(self):
         o = self.report("2구역인지 3구역인지 모르겠는데 반지하에 물이 차고 있어요")
         self.assertEqual((o["state"], o["zone"]), ("보완 필요", "미상"))
-        code, d = Client(self.base).post(f"/api/incidents/{o['id']}/supplement", {"text": "3구역입니다"})
+        code, d = self.supplement(o["id"], "3구역입니다")
         self.assertEqual((code, d["output"]["zone"], d["output"]["state"]), (200, "Z3", "접수"))
         long = self.report("Z5 " + "어제부터 비가 많이 와서 마을 사람들이 다 같이 모여 있어요. " * 20 + "물품이 필요해요")
         self.assertEqual(long["missing"], ["필요한 물품"])
-        code, d = Client(self.base).post(f"/api/incidents/{long['id']}/supplement", {"text": "생수 10병이요"})
+        code, d = self.supplement(long["id"], "생수 10병이요")
         self.assertEqual((code, d["output"]["state"]), (200, "접수"))      # 긴 원문 뒤에 붙은 품목도 읽음
         self.assertEqual([r["item"] for r in self.supply_requests(long["id"])], ["생수"])
 
@@ -451,7 +459,8 @@ class TestPipeline(ServerBase):
         # 보완해도 가구·신고자 권한이 남는다
         _, d3 = anon.post("/api/incidents", {"text": "물이 차고 있어요 (보완 시험)", "household": hid})
         self.assertEqual(d3["output"]["state"], "보완 필요")
-        self.assertEqual(anon.post(f"/api/incidents/{d3['output']['id']}/supplement", {"text": "옥포동 시장 뒤예요"})[0], 200)
+        self.assertEqual(anon.post(f"/api/incidents/{d3['output']['id']}/supplement",
+                                   {"text": "옥포동 시장 뒤예요", "token": d3["edit_token"]})[0], 200)
         self.assertEqual(self.staff_view(d3["output"]["id"])["household"], hid)
         self.assertEqual(anon.post(f"/api/incidents/{d3['output']['id']}/cancel", {"token": d3["edit_token"]})[0], 200)
 
@@ -465,6 +474,26 @@ class TestPipeline(ServerBase):
             self.assertEqual((code, again["duplicate"], again["output"]["id"]), (200, True, d["output"]["id"]))
             self.assertNotIn("edit_token", again)                                        # 남의 신고는 고치거나 취소 못 함
             self.assertEqual(self.staff_view(d["output"]["id"])["repeats"], n)
+
+    def test_resent_after_cancel_is_new_report(self):
+        """실수로 취소한 뒤(또는 오접수 처리된 뒤) 같은 글로 다시 보낸 신고는 끝난 신고에 합치지 않고 새로 접수한다.
+        예전에는 '같은 신고'로 취소된 신고에 묻혀, 사람이 갇혔다는 신고가 아무 처리 없이 사라졌다."""
+        anon, text = Client(self.base), "Z3 반지하 집에 물이 들어와요 할머니가 못 나오세요 (취소 뒤 재신고 시험)"
+        code, d = anon.post("/api/incidents", {"text": text})
+        self.assertEqual(code, 201, d)
+        self.assertEqual(anon.post(f"/api/incidents/{d['output']['id']}/cancel", {"token": d["edit_token"]})[0], 200)
+        code, again = anon.post("/api/incidents", {"text": text})
+        self.assertEqual(code, 201, again)
+        self.assertNotEqual(again["output"]["id"], d["output"]["id"])
+        self.assertNotIn("duplicate", again)
+        self.assertNotEqual(again["output"]["state"], "오접수")
+        self.assertIn("edit_token", again)                                              # 새 신고라 본인이 고치거나 취소할 수 있다
+        # 담당자가 오접수 처리한 신고도 마찬가지
+        code, inv = self.post(f"/api/incidents/{again['output']['id']}/invalidate", {"reason": "시험"})
+        self.assertEqual(code, 200, inv)
+        code, third = anon.post("/api/incidents", {"text": text})
+        self.assertEqual(code, 201, third)
+        self.assertNotIn(third["output"]["id"], (d["output"]["id"], again["output"]["id"]))
 
     def test_human_vs_ai_battle(self):
         """사람 vs AI 분류 대결: 문제에는 정답이 없고, 채점은 서버가 한다. AI 결과는 한 번만 계산해 둔다."""
@@ -499,9 +528,22 @@ class TestPipeline(ServerBase):
         vid = r["id"]
         self.assertEqual(anon.post("/api/public/volunteers", {**body, "name": "동네삽"})[0], 409)  # 같은 별명
         self.assertEqual(anon.post("/api/public/volunteer-login", {"name": "동네삽", "password": "wrong!!"})[0], 403)
-        self.assertEqual(anon.post("/api/public/volunteer-login", {"name": "동네삽", "password": "secret12"})[1]["id"], vid)
+        code, li = anon.post("/api/public/volunteer-login", {"name": "동네삽", "password": "secret12"})
+        self.assertEqual((code, li["id"]), (201, vid))
         self.assertNotIn(vid, [x["id"] for x in anon.get("/api/public/volunteers")[1]["items"]])   # ID는 목록에 안 나옴
-        _, me = anon.get(f"/api/public/volunteers/{vid}")
+        # 회원가입한 봉사자는 ID만으로 못 쓴다: 로그인 토큰이 있어야 내 화면·기록을 본다(가입 때 받은 것·로그인 때 받은 것 모두)
+        status, d, _ = anon.request("GET", f"/api/public/volunteers/{vid}")
+        self.assertEqual((status, d.get("need_login")), (401, True))
+        self.assertEqual(anon.request("GET", f"/api/public/volunteers/{vid}", headers={"X-Volunteer-Token": "someone-elses-token"})[0], 401)
+        self.assertEqual(anon.post(f"/api/public/volunteers/{vid}/sos", {})[0], 401)
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(f"{self.base}/api/public/volunteers/{vid}/activity.csv", timeout=3)
+        self.assertEqual(cm.exception.code, 401)
+        self.assertEqual(anon.request("GET", f"/api/public/volunteers/{vid}", headers={"X-Volunteer-Token": r["token"]})[0], 200)
+        anon.request("POST", f"/api/public/volunteers/{vid}/logout", {}, headers={"X-Volunteer-Token": r["token"]})
+        self.assertEqual(anon.request("GET", f"/api/public/volunteers/{vid}", headers={"X-Volunteer-Token": r["token"]})[0], 401)  # 나가면 끝
+        vh = {"X-Volunteer-Token": li["token"]}                                       # 다른 기기의 로그인은 그대로
+        _, me, _ = anon.request("GET", f"/api/public/volunteers/{vid}", headers=vh)
         self.assertEqual((me["volunteer"]["name"], me["volunteer"]["zone"], me["can_do"]), ("동네삽", "Z1", ["토사 제거"]))
         self.assertNotIn("password_hash", str(me) + str(self.get("/api/volunteer")[1]))
         # 담당자가 작업을 만들면 가입한 봉사자도 추천 후보가 되고, 다른 봉사자에게는 별명만 보인다
@@ -513,8 +555,9 @@ class TestPipeline(ServerBase):
         shown = anon.get(f"/api/public/volunteers/{mate}")[1]["my_tasks"]
         self.assertIn("동네삽", next(x for x in shown if x["id"] == t["id"])["team"])
         self.assertNotIn(vid, str(shown))
-        self.assertEqual(anon.post(f"/api/public/volunteers/{vid}/update", {**body, "skills": ["토사", "청소"]})[0], 201)
-        self.assertEqual(anon.get(f"/api/public/volunteers/{vid}")[1]["can_do"], ["토사 제거", "가재도구 세척"])
+        self.assertEqual(anon.post(f"/api/public/volunteers/{vid}/update", {**body, "skills": ["토사", "청소"]})[0], 401)
+        self.assertEqual(anon.request("POST", f"/api/public/volunteers/{vid}/update", {**body, "skills": ["토사", "청소"]}, headers=vh)[0], 201)
+        self.assertEqual(anon.request("GET", f"/api/public/volunteers/{vid}", headers=vh)[1]["can_do"], ["토사 제거", "가재도구 세척"])
         self.assertEqual(anon.post("/api/public/volunteers/V01/update", body)[0], 403)            # 시연 봉사자는 못 바꿈
 
     def test_labor_request_chains_to_volunteer(self):

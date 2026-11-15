@@ -33,6 +33,9 @@
 - 링크를 열면 **접속 코드** 화면이 나온다 → 코드 입력 → 시민 화면.
 - `링크/admin` → 접속 코드(이미 넣었으면 생략) → 담당자 로그인(`시연담당` / `DEMO_ADMIN_PASSWORD`).
 - `링크/volunteer` → 봉사자 화면.
+- `링크/admin` → 🖥️ 서버·AI 상태 → 📱 접속 환경 맨 아래 **접속 IP를 읽는 곳**이 `True-Client-IP`인지 본다(2026-11-15부터).
+  `X-Forwarded-For`로 나오면 보내는 쪽이 헤더를 바꿔 신고·로그인 횟수 제한을 피할 수 있다. 그때는 Render 앞단이 덮어쓰는
+  헤더 이름을 환경변수 `WEBAPP_CLIENT_IP_HEADERS`(쉼표로 구분, 기본 `True-Client-IP,CF-Connecting-IP`)에 적는다.
 - 문제가 있으면 Render 서비스 화면의 **Logs**를 본다. 서버가 안 뜨는 흔한 이유:
   - `SITE_ACCESS_CODE가 필요` → 접속 코드가 비었거나 6자 미만
   - `DEMO_ADMIN_PASSWORD(8자 이상)` → 비밀번호가 짧음
@@ -60,7 +63,7 @@
 
 ## 6. 코드 쪽 동작(참고)
 
-- `RENDER=true`(Render가 자동 설정) 또는 `WEBAPP_CLOUD=1`이면 클라우드 모드: `0.0.0.0:$PORT`로 열고, Render 주소를 허용 Host에 넣고, 쿠키에 Secure를 붙이고, 접속 IP는 `X-Forwarded-For`로 본다.
+- `RENDER=true`(Render가 자동 설정) 또는 `WEBAPP_CLOUD=1`이면 클라우드 모드: `0.0.0.0:$PORT`로 열고, Render 주소를 허용 Host에 넣고, 쿠키에 Secure를 붙이고, 접속 IP는 앞단(Cloudflare)이 덮어쓰는 `True-Client-IP`·`CF-Connecting-IP`로 보고, 둘 다 없을 때만 `X-Forwarded-For` 맨 앞 값을 쓴다(Render 프록시는 받은 `X-Forwarded-For` 뒤에 덧붙이기만 해서 맨 앞 값은 위조할 수 있다).
 - 클라우드 모드는 접속 코드(6자 이상)와 담당자 계정이 없으면 시작하지 않는다(`check_bind_policy`). 단 `SITE_PUBLIC=1`을 명시하면 접속 코드 없이 시작하고, 설정된 접속 코드도 무시한다.
 - 공개(`SITE_PUBLIC=1`)일 때 보호 장치: 담당자 기능은 로그인·CSRF 필요, 신고는 IP당 분당 제한, Solar 호출은 300회 상한.
 - 접속 코드는 `/access`에서 받고, 맞으면 30일짜리 HttpOnly 쿠키를 준다. `/api/health`(Render 상태 확인)와 게이트웨이 경로만 코드 없이 열린다.

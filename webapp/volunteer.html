@@ -133,11 +133,15 @@ details.acc.order{border-left:6px solid var(--action)}details.acc.order.prog{bor
 </main></div>
 <script src="/static/ui.js"></script>
 <script>
-const $=id=>document.getElementById(id);let VID='',DATA=null,PUB=null,OPT=null;
+const $=id=>document.getElementById(id);let VID='',TOK='',DATA=null,PUB=null,OPT=null;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]);
-async function api(path,options={}){const r=await fetch(path,{...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});const d=await r.json().catch(()=>({error:'서버 응답을 읽을 수 없습니다'}));if(!r.ok)throw new Error(d.error||`HTTP ${r.status}`);return d}
+// 회원가입한 봉사자는 로그인 때 받은 토큰(이 기기에만 저장)을 함께 보낸다. ID만으로는 내 화면을 열 수 없다
+const auth=()=>TOK?{'X-Volunteer-Token':TOK}:{};
+function needLogin(){VID='';TOK='';store.set('');go('');$('loginErr').textContent='다시 로그인해 주세요(이 기기의 로그인이 끝났어요).';tab(false)}
+async function api(path,options={}){const r=await fetch(path,{...options,headers:{'Content-Type':'application/json',...auth(),...(options.headers||{})}});const d=await r.json().catch(()=>({error:'서버 응답을 읽을 수 없습니다'}));if(r.status===401&&d.need_login){needLogin();throw new Error(d.error)}if(!r.ok)throw new Error(d.error||`HTTP ${r.status}`);return d}
 const post=(p,b)=>api(p,{method:'POST',body:JSON.stringify(b||{})});
-const store={get(){try{return localStorage.getItem('vid')||''}catch(e){return ''}},set(v){try{v?localStorage.setItem('vid',v):localStorage.removeItem('vid')}catch(e){}}};
+const store={get(){try{return [localStorage.getItem('vid')||'',localStorage.getItem('vtok')||'']}catch(e){return ['','']}},
+ set(v,t){try{v?localStorage.setItem('vid',v):localStorage.removeItem('vid');t?localStorage.setItem('vtok',t):localStorage.removeItem('vtok')}catch(e){}}};
 const fmt=ts=>ts?new Date(ts*1000).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'}):'';
 const STATE={'투입승인':['투입 승인됨',''],'진행':['작업 중','prog'],'완료':['완료','done']};
 
@@ -182,12 +186,17 @@ function tab(join){$('tabJoin').setAttribute('aria-selected',String(join));$('ta
 $('tabJoin').addEventListener('click',()=>tab(true));$('tabLogin').addEventListener('click',()=>tab(false));
 $('joinForm').addEventListener('submit',async e=>{e.preventDefault();$('joinErr').textContent='';
 if(!$('pSkills').querySelector('input:checked')){$('joinErr').textContent='도울 수 있는 일을 하나 이상 골라 주세요. 현장 작업이 어려우면 \'물품 기부만\'을 고르세요.';$('pSkills').scrollIntoView({block:'center'});return}const b=$('joinBtn');b.disabled=true;
-try{const r=await post('/api/public/volunteers',{name:$('jName').value.trim(),password:$('jPw').value,...readProfile()});await enter(r.id)}catch(err){$('joinErr').textContent=err.message}finally{b.disabled=false}});
-$('loginForm').addEventListener('submit',async e=>{e.preventDefault();$('loginErr').textContent='';try{const r=await post('/api/public/volunteer-login',{name:$('lName').value,password:$('lPw').value});await enter(r.id)}catch(err){$('loginErr').textContent=err.message}});
+try{const r=await post('/api/public/volunteers',{name:$('jName').value.trim(),password:$('jPw').value,...readProfile()});await enter(r.id,r.token)}catch(err){$('joinErr').textContent=err.message}finally{b.disabled=false}});
+$('loginForm').addEventListener('submit',async e=>{e.preventDefault();$('loginErr').textContent='';try{const r=await post('/api/public/volunteer-login',{name:$('lName').value,password:$('lPw').value});await enter(r.id,r.token)}catch(err){$('loginErr').textContent=err.message}});
 $('vList').addEventListener('change',()=>{$('vEnter').disabled=!document.querySelector('input[name=vpick]:checked')});
-$('vEnter').addEventListener('click',()=>{const v=document.querySelector('input[name=vpick]:checked');if(v)enter(v.value)});
-async function enter(id){VID=id;store.set(id);$('jPw').value='';$('lPw').value='';await load();go('tasks')}
-$('logoutBtn').addEventListener('click',()=>{store.set('');location.replace(location.pathname)});   // 이 기기에서 나가기(다시 처음 화면으로)
+$('vEnter').addEventListener('click',()=>{const v=document.querySelector('input[name=vpick]:checked');if(v)enter(v.value,'')});   // 시연용 봉사자는 토큰 없이
+async function enter(id,tok){VID=id;TOK=tok||'';store.set(id,TOK);$('jPw').value='';$('lPw').value='';$('loginErr').textContent='';await load();go('tasks')}
+$('logoutBtn').addEventListener('click',async()=>{   // 이 기기에서 나가기: 서버의 이 기기 로그인도 끝낸다(다시 처음 화면으로)
+ try{if(TOK)await post(`/api/public/volunteers/${encodeURIComponent(VID)}/logout`)}catch(e){}store.set('');location.replace(location.pathname)});
+// 활동 기록 내려받기: 링크로는 로그인 토큰을 보낼 수 없어 받아서 저장한다
+$('csvLink').addEventListener('click',async e=>{e.preventDefault();if(!VID)return;try{const r=await fetch('/api/public/volunteers/'+encodeURIComponent(VID)+'/activity.csv',{headers:auth()});
+ if(r.status===401)return needLogin();if(!r.ok)throw new Error('HTTP '+r.status);const url=URL.createObjectURL(await r.blob()),a=document.createElement('a');a.href=url;a.download='activity_'+VID+'.csv';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000)}
+ catch(err){alert('내려받지 못했습니다: '+err.message)}});
 
 // ---- 작업 카드: 요약 줄에 '무엇 · 어디 · 상태'. 내가 할 일이 있는 카드는 펼쳐 둔다
 function order(t,mine){const [label,cls]=STATE[t.state]||[t.state,''];const act=mine&&(t.state==='투입승인'||t.state==='진행');
@@ -210,10 +219,9 @@ $('needs').className=d.needed_items.length?'':'muted';$('needs').innerHTML=d.nee
 if(!$('gItem').options.length){$('gItem').innerHTML=Object.keys(d.catalog).sort((a,b)=>a.localeCompare(b,'ko')).map(i=>`<option>${esc(i)}</option>`).join('');units()}
 if(!$('gPlace').value)$('gPlace').value=v.address||'';
 $('myGifts').className=d.my_donations.length?'':'muted';$('myGifts').innerHTML=d.my_donations.length?d.my_donations.map(g=>`<div class="need"><span>${esc(g.item)} ${esc(g.qty)} <span class="muted">· ${esc(g.place)}</span></span><span>${esc(g.state)}</span></div>`).join(''):'아직 등록한 기부가 없습니다.';
-$('csvLink').href='/api/public/volunteers/'+encodeURIComponent(VID)+'/activity.csv';
 document.querySelectorAll('button[data-act]').forEach(b=>b.addEventListener('click',async()=>{b.disabled=true;try{await post(`/api/public/volunteers/${encodeURIComponent(VID)}/tasks/${encodeURIComponent(b.dataset.t)}/${b.dataset.act}`);load()}catch(e){alert(e.message);b.disabled=false}}));
 document.querySelectorAll('button[data-sos]').forEach(b=>b.addEventListener('click',()=>sos(b.dataset.sos)))}
-catch(e){if(/찾을 수 없/.test(e.message)){VID='';store.set('');go('')}else $('whoText').textContent='불러오지 못했습니다: '+e.message}}
+catch(e){if(!VID)return;if(/찾을 수 없/.test(e.message)){VID='';TOK='';store.set('');go('')}else $('whoText').textContent='불러오지 못했습니다: '+e.message}}
 function units(){const u=(DATA?.catalog[$('gItem').value]||{}).units||[];$('gUnit').innerHTML=u.map(x=>`<option>${esc(x)}</option>`).join('')}
 $('gItem').addEventListener('change',units);
 async function sos(task){if(!confirm('담당자 화면에 SOS를 보냅니다. 위급하면 119에도 바로 전화하세요.'))return;try{const r=await post(`/api/public/volunteers/${encodeURIComponent(VID)}/sos`,task?{task}:{});go('me');$('sosResult').hidden=false;$('sosResult').textContent=`SOS를 보냈습니다(${r.id}). 담당자 상황판 맨 위에 표시됩니다. 위급하면 119에도 전화하세요.`}catch(e){alert(e.message)}}
@@ -223,6 +231,6 @@ $('giftForm').addEventListener('submit',async e=>{e.preventDefault();const days=
 (async()=>{await band();try{[OPT]=await Promise.all([api('/api/public/volunteer-options')]);fillProfile(null);
 const d=await api('/api/public/volunteers'),lab=Object.fromEntries(OPT.skills.map(x=>[x.id,x.label]));
 $('vList').innerHTML=d.items.map(v=>`<label><input type="radio" name="vpick" value="${esc(v.id)}"><span><b>${esc(v.id)}</b> · ${esc(v.place)}<small>할 수 있는 일: ${esc(v.skills.map(x=>lab[x]||x).join(', ')||'-')} · 장비: ${esc(v.equipment.join(', ')||'없음')} · ${esc(MODE_TXT[v.mode]||v.mode)}</small></span></label>`).join('')}catch(e){$('joinErr').textContent='가입 화면을 불러오지 못했습니다: '+e.message}
-VID=store.get();if(VID)await load();go(location.hash.slice(1))})();
+[VID,TOK]=store.get();if(VID)await load();go(location.hash.slice(1))})();
 setInterval(()=>{band();if(VID&&!document.activeElement?.closest?.('form'))load()},15000);
 </script></body></html>
