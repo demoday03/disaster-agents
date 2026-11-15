@@ -739,3 +739,95 @@ class TestSitePublic(ServerBase):
         self.assertEqual(anon.post("/api/incidents", {"text": "Z1 침수됐어요 (공개 시험)"})[0], 201)
         self.assertEqual(anon.get("/api/incidents")[0], 401)                     # 담당자 기능은 로그인 필요
         self.assertEqual(anon.get("/api/approvals")[0], 401)
+
+
+class TestCloudClientIP(ServerBase):
+    """클라우드(Render) 모드: 속도 제한은 보내는 쪽이 바꿀 수 있는 X-Forwarded-For 맨 앞 값이 아니라
+    앞단(Cloudflare)이 덮어쓰는 True-Client-IP로 센다. 예전에는 X-Forwarded-For만 바꿔 신고 횟수 제한을 피할 수 있었다."""
+    port = 18783
+    extra_env = {"WEBAPP_CLOUD": "1", "WEBAPP_HOST": "127.0.0.1", "SITE_PUBLIC": "1", "WEBAPP_INCIDENT_PER_MIN": "2",
+                 "KMA_API_KEY": ""}
+
+    def send(self, text, real_ip, spoofed):
+        return Client(self.base).request("POST", "/api/incidents", {"text": text},
+                                         headers={"True-Client-IP": real_ip, "X-Forwarded-For": f"{spoofed}, 10.0.0.1"})[0]
+
+    def test_spoofed_forwarded_for_does_not_bypass_limit(self):
+        codes = [self.send(f"Z1 침수 시험 {n}번째 (위조 시험)", "203.0.113.7", f"198.51.100.{n}") for n in range(3)]
+        self.assertEqual(codes, [201, 201, 429])                                 # X-Forwarded-For를 매번 바꿔도 같은 사람
+        self.assertEqual(self.send("Z1 침수 시험 (다른 사람)", "203.0.113.8", "198.51.100.1"), 201)   # 다른 IP는 따로 센다
+        self.assertEqual(self.send("Z1 침수 시험 (IP가 아닌 값)", "not-an-ip", "203.0.113.9"), 201)  # 이상한 값은 무시하고 다음 헤더
+
+    def test_staff_sees_ip_source(self):
+        status, d, _ = self.staff.request("GET", "/api/env-stats", headers={"True-Client-IP": "203.0.113.20"})
+        self.assertEqual((status, d["ip_source"]), (200, "True-Client-IP"))
+        self.assertEqual(self.get("/api/env-stats")[1]["ip_source"], "socket")   # 헤더가 없으면(로컬 시험) 소켓 주소
+
+
+# server 모듈을 불러오면 DB를 건드리므로 아래 시험은 임시 DB를 쓰는 별도 프로세스에서 돌린다
+IN_PROCESS = {
+    # AI 분류가 도는 동안(잠금 밖) 같은 신고에 다른 보완이 먼저 반영되면, 예전 내용으로 분류한 결과로 덮어쓰지 않는다
+    "supplement_conflict": r'''
+import json
+from webapp import server as s
+code, d = s.submit_report("물이 차고 있어요 (동시 보완 시험)", "t1")
+iid = d["output"]["id"]
+assert d["output"]["state"] == "보완 필요", d["output"]
+real = s.classify_incident
+def slow(*a, **k):
+    s.classify_incident = real
+    assert s.supplement_incident(iid, "Z3 옥포동이에요", "t2")[0] == 200
+    return real(*a, **k)
+s.classify_incident = slow
+first = s.supplement_incident(iid, "Z5 쪽 같아요", "t3")
+o = s.incident_output(iid)["output"]
+print(json.dumps({"code": first[0], "supplements": o["supplements"], "zone": o["zone"]}))
+''',
+    # 신고자 고치기도 같다: 그사이 다른 고치기가 먼저 반영되면 409, 먼저 들어온 내용이 남는다
+    "edit_conflict": r'''
+import json
+from webapp import server as s
+code, d = s.submit_report("Z3 침수됐어요 (고치기 동시 시험)", "t1")
+iid, tok = d["output"]["id"], d["edit_token"]
+real = s.classify_incident
+def slow(*a, **k):
+    s.classify_incident = real
+    assert s.reporter_change(iid, "edit", {"token": tok, "text": "Z4 침수됐어요 (먼저 고침)"})[0] == 200
+    return real(*a, **k)
+s.classify_incident = slow
+first = s.reporter_change(iid, "edit", {"token": tok, "text": "Z5 침수됐어요 (나중 고침)"})
+o = s.incident_output(iid)["output"]
+print(json.dumps({"code": first[0], "edits": o["edits"], "zone": o["zone"]}))
+''',
+    # 접속 기록에 가구 코드·봉사자 ID(그것만 알면 그 집·그 봉사자로 쓸 수 있는 값)를 남기지 않는다
+    "log_redaction": r'''
+import contextlib, io, json
+from webapp import server as s
+class H: log_date_time_string = lambda self: "t"
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    s.Handler.log_message(H(), '"%s" %s %s', "GET /api/public/volunteers/V-1A2B3C4D5E/tasks/T-1/checkin?h=H-ABCDEF0123 HTTP/1.1", "200", "-")
+print(json.dumps({"line": buf.getvalue().strip()}))
+''',
+}
+
+
+class TestInProcess(unittest.TestCase):
+    def run_code(self, name):
+        with tempfile.TemporaryDirectory(prefix="disaster-db-test-") as d:
+            env = {**os.environ, "DISASTER_DB_PATH": str(Path(d) / "inproc.db"), "LLM_MODE": "mock", "AUTO_FOLLOWUPS": "0"}
+            out = subprocess.run([sys.executable, "-c", IN_PROCESS[name]], cwd=ROOT, env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr[-2000:])
+        return json.loads(out.stdout.strip().splitlines()[-1])
+
+    def test_supplement_does_not_overwrite_newer_supplement(self):
+        self.assertEqual(self.run_code("supplement_conflict"), {"code": 409, "supplements": 1, "zone": "Z3"})
+
+    def test_edit_does_not_overwrite_newer_edit(self):
+        self.assertEqual(self.run_code("edit_conflict"), {"code": 409, "edits": 1, "zone": "Z4"})
+
+    def test_access_log_hides_household_and_volunteer_ids(self):
+        line = self.run_code("log_redaction")["line"]
+        self.assertNotIn("1A2B3C4D5E", line)
+        self.assertNotIn("ABCDEF0123", line)
+        self.assertIn("/api/public/volunteers/V-…/tasks/T-1/checkin", line)

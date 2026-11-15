@@ -230,7 +230,9 @@
         (v.inapp ? ` · ${chip(`카카오톡 등 앱 안에서 연 것 ${v.inapp}번`, 'warn')}` : '') + '</p>' +
         `<div class="tgcols"><div class="tgbox"><h3>기기</h3>${bars(v.kind, v.total)}</div><div class="tgbox"><h3>신고를 보낸 기기 <span class="muted">(최근 신고 ${E(rtotal)}건)</span></h3>${bars(d.reports, rtotal)}</div>` +
         `<div class="tgbox"><h3>운영체제</h3>${bars(v.os, v.total)}</div><div class="tgbox"><h3>브라우저</h3>${bars(v.browser, v.total)}</div>` +
-        `<div class="tgbox"><h3>연 화면</h3>${bars(v.page, v.total)}</div></div>`;
+        `<div class="tgbox"><h3>연 화면</h3>${bars(v.page, v.total)}</div></div>` +
+        (d.ip_source ? `<p class="muted">접속 IP를 읽는 곳: <b>${E(d.ip_source)}</b>` +
+          (d.ip_source === 'X-Forwarded-For' ? ` ${chip('보내는 쪽이 바꿀 수 있는 헤더예요. 신고·로그인 횟수 제한을 피할 수 있으니 WEBAPP_CLIENT_IP_HEADERS를 확인하세요', 'warn')}` : '') + '</p>' : '');
     } catch (e) { showError('envStats', e); }
   }
 

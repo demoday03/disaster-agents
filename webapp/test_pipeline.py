@@ -466,6 +466,26 @@ class TestPipeline(ServerBase):
             self.assertNotIn("edit_token", again)                                        # 남의 신고는 고치거나 취소 못 함
             self.assertEqual(self.staff_view(d["output"]["id"])["repeats"], n)
 
+    def test_resent_after_cancel_is_new_report(self):
+        """실수로 취소한 뒤(또는 오접수 처리된 뒤) 같은 글로 다시 보낸 신고는 끝난 신고에 합치지 않고 새로 접수한다.
+        예전에는 '같은 신고'로 취소된 신고에 묻혀, 사람이 갇혔다는 신고가 아무 처리 없이 사라졌다."""
+        anon, text = Client(self.base), "Z3 반지하 집에 물이 들어와요 할머니가 못 나오세요 (취소 뒤 재신고 시험)"
+        code, d = anon.post("/api/incidents", {"text": text})
+        self.assertEqual(code, 201, d)
+        self.assertEqual(anon.post(f"/api/incidents/{d['output']['id']}/cancel", {"token": d["edit_token"]})[0], 200)
+        code, again = anon.post("/api/incidents", {"text": text})
+        self.assertEqual(code, 201, again)
+        self.assertNotEqual(again["output"]["id"], d["output"]["id"])
+        self.assertNotIn("duplicate", again)
+        self.assertNotEqual(again["output"]["state"], "오접수")
+        self.assertIn("edit_token", again)                                              # 새 신고라 본인이 고치거나 취소할 수 있다
+        # 담당자가 오접수 처리한 신고도 마찬가지
+        code, inv = self.post(f"/api/incidents/{again['output']['id']}/invalidate", {"reason": "시험"})
+        self.assertEqual(code, 200, inv)
+        code, third = anon.post("/api/incidents", {"text": text})
+        self.assertEqual(code, 201, third)
+        self.assertNotIn(third["output"]["id"], (d["output"]["id"], again["output"]["id"]))
+
     def test_human_vs_ai_battle(self):
         """사람 vs AI 분류 대결: 문제에는 정답이 없고, 채점은 서버가 한다. AI 결과는 한 번만 계산해 둔다."""
         import json as _json

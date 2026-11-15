@@ -3,7 +3,7 @@ Run from project root: python webapp/server.py
 This is a prototype, not a production or emergency-dispatch system.
 """
 from __future__ import annotations
-import collections, hashlib, hmac, json, os, re, secrets, ssl, sys, threading, time, traceback, uuid
+import collections, hashlib, hmac, ipaddress, json, os, re, secrets, ssl, sys, threading, time, traceback, uuid
 from datetime import datetime
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -64,6 +64,19 @@ ALLOWED_HOSTS = ({f"{h}:{PORT}" for h in ("127.0.0.1", "localhost", "[::1]")}
                  | ({"127.0.0.1", "localhost", "[::1]"} if PORT in (80, 443) else set())   # 기본 포트면 브라우저가 포트를 빼고 보낸다
                  | {h.strip().lower() for h in os.getenv("WEBAPP_ALLOWED_HOSTS", "").split(",") if h.strip()}
                  | ({os.getenv("RENDER_EXTERNAL_HOSTNAME", "").lower()} - {""}))   # Render가 알려 주는 배포 주소
+# 클라우드에서 접속 IP를 읽을 헤더(앞에서부터). Render 앞단의 Cloudflare가 True-Client-IP·CF-Connecting-IP를 덮어쓴다.
+# 다른 플랫폼이면 그 플랫폼이 덮어쓰는 헤더 이름을 WEBAPP_CLIENT_IP_HEADERS에 쉼표로 적는다.
+CLIENT_IP_HEADERS = [h.strip() for h in os.getenv("WEBAPP_CLIENT_IP_HEADERS", "True-Client-IP,CF-Connecting-IP").split(",") if h.strip()]
+
+
+def _valid_ip(value):
+    """헤더 값이 IP 주소일 때만 돌려준다(아무 글자나 속도 제한 키가 되지 않게)."""
+    try:
+        return str(ipaddress.ip_address(str(value).strip()))
+    except ValueError:
+        return None
+
+
 LOGIN_MAX_FAILS, LOGIN_WINDOW_S = 5, 600
 _login_fails, _login_lock = {}, threading.Lock()
 
@@ -803,6 +816,12 @@ def generate_guidance(incident_id, level, flags, control_zones, hazard=None):
 REPORTER_EDITS_MAX = 3
 
 
+def _revision(o):
+    """신고 내용이 바뀌었는지 비교하는 값. AI 분류를 잠금 밖에서 하는 동안 다른 보완·고치기·담당자 분류 수정이
+    먼저 반영됐으면, 예전 내용으로 분류한 결과로 덮어쓰지 않으려고 쓴다."""
+    return tuple(o.get(k) for k in ("state", "text", "supplements", "edits", "type", "zone", "urgency", "classified_by"))
+
+
 def _owner_ok(output, token):
     h = output.get("owner_hash")
     return bool(h) and isinstance(token, str) and bool(token) and hmac.compare_digest(h, hashlib.sha256(token.encode()).hexdigest())
@@ -854,13 +873,25 @@ def reporter_change(iid, action, data):
         text = data.get("text")
         if not isinstance(text, str) or not text.strip() or len(text) > 2000:
             return 400, {"error": "고칠 내용을 2000자 이하로 적어 주세요"}
-        if o.get("edits", 0) >= REPORTER_EDITS_MAX:
-            return 409, {"error": "신고는 3번까지 고칠 수 있어요. 더 알릴 내용은 119·112에 전화해 주세요"}
-        moving = [r for r in database.list_records("supply_request") if r.get("incident_id") == iid and r["state"] in ("배치", "이동")]
-        if database.incident_has_approved(iid) or moving:
-            return 409, {"error": "담당자가 이미 출동·출고를 승인해서 내용을 고칠 수 없어요. 더 알릴 내용은 119·112에 전화하거나 새로 신고해 주세요"}
+        problem = _edit_blocked(iid, o)
+        if problem:
+            return problem
+        before = _revision(o)
+    # AI 분류(solar 모드에서 수 초~수십 초)는 잠금 밖에서 한다. 그동안 승인·오접수 처리·다른 신고 보완이 멈추지 않게
+    new = classify_incident(iid, text.strip(), o["ts"])
+    with _incident_lock, _dispatch_lock:
+        row = incident_output(iid)
+        if row is None:
+            return 404, {"error": "접수번호를 찾을 수 없습니다"}
+        o = row["output"]
+        if o.get("state") == INVALID:
+            return 409, {"error": "이미 취소됐거나 처리하지 않기로 한 신고예요"}
+        problem = _edit_blocked(iid, o)
+        if problem:
+            return problem
+        if _revision(o) != before:   # 그사이 다른 고치기·보완·담당자 분류 수정이 먼저 반영됐다
+            return 409, {"error": "그사이 신고 내용이 바뀌었어요. 접수번호로 다시 확인한 뒤 고쳐 주세요"}
         res = withdraw_pending(o, "신고자가 신고 내용을 고침")
-        new = classify_incident(iid, text.strip(), o["ts"])
         no = new["output"]
         no.update({k: o[k] for k in CARRY_FIELDS if k in o})
         no.update(owner_hash=o["owner_hash"], edits=o.get("edits", 0) + 1, supplements=o.get("supplements", 0), edited_at=time.time())
@@ -870,6 +901,16 @@ def reporter_change(iid, action, data):
     if followup:
         start_followups(iid)
     return 200, public_row(new)
+
+
+def _edit_blocked(iid, o):
+    """신고자가 내용을 고칠 수 없는 경우의 (상태 코드, 응답). 고칠 수 있으면 None."""
+    if o.get("edits", 0) >= REPORTER_EDITS_MAX:
+        return 409, {"error": "신고는 3번까지 고칠 수 있어요. 더 알릴 내용은 119·112에 전화해 주세요"}
+    moving = [r for r in database.list_records("supply_request") if r.get("incident_id") == iid and r["state"] in ("배치", "이동")]
+    if database.incident_has_approved(iid) or moving:
+        return 409, {"error": "담당자가 이미 출동·출고를 승인해서 내용을 고칠 수 없어요. 더 알릴 내용은 119·112에 전화하거나 새로 신고해 주세요"}
+    return None
 
 
 CARRY_FIELDS = ("owner_hash", "channel", "household", "household_place", "reporter", "questions", "edits", "supplements",
@@ -923,18 +964,34 @@ def supplement_incident(iid, extra, rate_key):
         return 400, {"error": "보완 내용은 1~500자로 입력해 주세요"}
     if not INCIDENT_LIMIT.allow(rate_key):
         return 429, {"error": "짧은 시간에 요청이 너무 많습니다. 급한 상황이면 119·112에 바로 전화하세요"}
+    def check(cur):
+        if cur is None:
+            return 404, {"error": "접수번호를 찾을 수 없습니다"}
+        if cur["output"].get("state") != "보완 필요":
+            return 409, {"error": "보완이 필요한 신고가 아닙니다"}
+        if cur["output"].get("supplements", 0) >= MAX_SUPPLEMENTS:
+            return 409, {"error": "보완은 3번까지 받습니다. 담당자가 확인할 예정이며, 급한 상황이면 119·112에 바로 전화하세요"}
+        return None
+
     with _incident_lock:
         old = incident_output(iid)
-        if old is None:
-            return 404, {"error": "접수번호를 찾을 수 없습니다"}
+        problem = check(old)
+        if problem:
+            return problem
         o = old["output"]
-        if o.get("state") != "보완 필요":
-            return 409, {"error": "보완이 필요한 신고가 아닙니다"}
-        if o.get("supplements", 0) >= MAX_SUPPLEMENTS:
-            return 409, {"error": "보완은 3번까지 받습니다. 담당자가 확인할 예정이며, 급한 상황이면 119·112에 바로 전화하세요"}
-        # 원문 뒤에 붙이고 자르지 않는다(긴 원문이어도 보완 내용이 빠지지 않게, 최대 3번이라 길이는 제한됨)
-        text = f"{o['text']}\n[보완] {extra.strip()}"
-        row = classify_incident(o["id"], text, o["ts"], max_text=len(text))
+        before = _revision(o)
+    # 원문 뒤에 붙이고 자르지 않는다(긴 원문이어도 보완 내용이 빠지지 않게, 최대 3번이라 길이는 제한됨)
+    text = f"{o['text']}\n[보완] {extra.strip()}"
+    # AI 분류(solar 모드에서 수 초~수십 초)는 잠금 밖에서 한다. 그동안 담당자의 확인·분류 수정·오접수 처리가 멈추지 않게
+    row = classify_incident(o["id"], text, o["ts"], max_text=len(text))
+    with _incident_lock:
+        cur = incident_output(iid)
+        problem = check(cur)
+        if problem:
+            return problem
+        if _revision(cur["output"]) != before:   # 그사이 다른 보완·고치기가 먼저 들어왔다
+            return 409, {"error": "그사이 신고 내용이 바뀌었어요. 접수번호로 다시 확인한 뒤 보내 주세요"}
+        o = cur["output"]
         out = row["output"]
         out.update({k: o[k] for k in CARRY_FIELDS if k in o})   # 보완해도 신고자 취소·고치기 권한이 남게
         zone_given = intake._zones(extra)
@@ -1318,12 +1375,16 @@ SECURITY_HEADERS = {
 }
 
 
+LOG_ID_RE = re.compile(r"\b([HV])-[0-9A-Fa-f]{10}\b")   # 주민이 등록한 가구 코드(H-…), 회원가입한 봉사자 ID(V-…)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "DisasterAgentDemo/0.1"
     timeout = 30   # 요청을 아주 느리게 보내 연결을 붙잡는 클라이언트를 끊는다
     def log_message(self, fmt, *args):
         # Do not log request bodies, reports, or API credentials.
-        print("[%s] %s" % (self.log_date_time_string(), fmt % args))
+        # 가구 코드·봉사자 ID는 그것만 알면 그 집·그 봉사자로 쓸 수 있는 값이라 접속 기록(Render 로그 등)에 남기지 않는다.
+        print("[%s] %s" % (self.log_date_time_string(), LOG_ID_RE.sub(r"\1-…", fmt % args)))
 
     def session(self):
         """(세션 토큰, 세션 정보 또는 None)"""
@@ -1365,11 +1426,22 @@ class Handler(BaseHTTPRequestHandler):
                               self.headers.get("Sec-CH-UA-Platform"), client)
 
     def client_ip(self):
-        if CLOUD:   # 플랫폼 프록시 뒤에서는 모든 요청이 프록시 주소로 온다. 원래 접속 IP는 X-Forwarded-For 맨 앞
-            fwd = self.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-            if fwd:
-                return fwd
-        return self.client_address[0]
+        """속도 제한에 쓰는 접속 IP. 클라우드에서는 플랫폼 프록시가 알려 준 값을 쓴다."""
+        return self.client_ip_source()[0]
+
+    def client_ip_source(self):
+        """(접속 IP, 어디서 읽었는지). 플랫폼 프록시 뒤에서는 모든 요청이 프록시 주소로 오므로 헤더에서 원래 IP를 읽는다.
+        X-Forwarded-For는 보내는 쪽이 마음대로 적을 수 있고 Render 프록시는 그 뒤에 덧붙이기만 해서, 맨 앞 값을 믿으면
+        헤더만 바꿔 신고·로그인 횟수 제한을 피할 수 있다. 그래서 앞단(Cloudflare)이 덮어쓰는 헤더를 먼저 본다."""
+        if CLOUD:
+            for h in CLIENT_IP_HEADERS:
+                ip = _valid_ip(self.headers.get(h, ""))
+                if ip:
+                    return ip, h
+            ip = _valid_ip(self.headers.get("X-Forwarded-For", "").split(",")[0])
+            if ip:
+                return ip, "X-Forwarded-For"
+        return self.client_address[0], "socket"
 
     def site_ok(self):
         """사이트 접속 코드가 켜져 있으면 코드 쿠키가 있는 요청만 통과시킨다."""
@@ -1581,7 +1653,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/env-stats":   # 담당자: 접속 환경 통계
             if not self.require_staff():
                 return
-            return self.send_json(200, env_stats())
+            # 클라우드에서 접속 IP를 어느 헤더에서 읽었는지(배포 뒤 'X-Forwarded-For'로 나오면 속도 제한이 위조에 약하다)
+            return self.send_json(200, {**env_stats(), "ip_source": self.client_ip_source()[1] if CLOUD else None})
         if path.startswith("/api/public/") and path != "/api/public/status":
             return self.public_call("GET", path, {})
         if path == "/api/weather":   # 기상청 실제 강수·특보(참고 정보)와 지금 감시 에이전트가 쓰는 강우 단계
