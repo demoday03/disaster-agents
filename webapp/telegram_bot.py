@@ -130,9 +130,14 @@ class TelegramBot:
             self.call("setMyCommands", {"commands": GROUP_COMMANDS, "scope": {"type": "all_group_chats"}})   # 단체방(담당자 방)
             threading.Thread(target=self._watch, daemon=True).start()
             if self.webhook_url:
-                r = self.call("setWebhook", {"url": self.webhook_url, "secret_token": self.secret,
-                                             "allowed_updates": ["message", "callback_query", "channel_post", "my_chat_member"],
-                                             "drop_pending_updates": False})
+                hook = {"url": self.webhook_url, "secret_token": self.secret,
+                        "allowed_updates": ["message", "callback_query", "channel_post", "my_chat_member"], "drop_pending_updates": False}
+                r = self.call("setWebhook", hook)
+                for _ in range(5):   # 너무 자주 다시 켜져 '잠시 뒤 다시'(429)를 받으면 알려 준 만큼 기다렸다가 다시
+                    if r.get("ok") or r.get("error_code") != 429:
+                        break
+                    time.sleep(min(float((r.get("parameters") or {}).get("retry_after", 1)) + 1, 30))
+                    r = self.call("setWebhook", hook)
                 if not r.get("ok"):
                     raise RuntimeError(f"setWebhook 실패: {r.get('description') or r.get('error_code')}")
                 self.mode = "webhook"
