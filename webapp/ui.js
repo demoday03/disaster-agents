@@ -4,6 +4,8 @@
 //  - details.acc : 접고 펼치는 묶음(아코디언) 모양.
 //  - UI.urgentBar : 긴급 공지 띠. 접으면 한 줄('긴급 공지 N건 · 펼치기')만 남고, 새 긴급 공지가 오면 다시 펼친다.
 //  - 버튼 쿨타임 : 누른 버튼·보낸 양식은 1.5초 동안 다시 눌러도 무시한다(연타로 신고·승인·요청이 겹치지 않게).
+//  - 확인창 : UI.confirm·UI.prompt·UI.alert. 브라우저 기본 팝업(confirm·prompt·alert)은 카카오톡 같은 앱 안 브라우저에서
+//    막히거나 바로 닫혀 버튼이 아무 일도 안 하는 경우가 있어, 페이지 안에 그리는 확인창을 쓴다(alert는 이걸로 바꿔 둔다).
 //  - 접속 환경 : 서버에 기기 종류(스마트폰·태블릿·노트북/PC)를 묻고 <html data-device>에 적는다. 컴퓨터면 '전화는 휴대폰으로',
 //    'GPS가 부정확할 수 있어요'를 보여 주고, 카카오톡 등 앱 안에서 열렸으면 '다른 브라우저로 열기'를 안내한다.
 (function () {
@@ -30,6 +32,12 @@ button.cooling{opacity:.6;cursor:progress}
 [data-urgentbar] .ann-line{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;font-size:1rem}
 .ann-tg{margin:0!important;background:#fff!important;color:#A3182A!important;border:1.5px solid #F0B7BE!important;border-radius:99px!important;min-height:36px!important;padding:4px 14px!important;font:inherit;font-size:.9rem!important;font-weight:700;cursor:pointer;white-space:nowrap}
 
+.ui-dlg{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(15,23,42,.55)}
+.ui-dlg-box{width:min(440px,100%);max-height:90vh;overflow:auto;background:#fff;color:#1A2333;border-radius:14px;padding:20px;box-shadow:0 18px 50px rgba(0,0,0,.3)}
+.ui-dlg-text{margin:0 0 14px;white-space:pre-line;line-height:1.55;font-size:1rem;overflow-wrap:anywhere}
+.ui-dlg-in{display:block;width:100%;box-sizing:border-box;min-height:64px;margin:0 0 14px;padding:10px 12px;border:1.5px solid #BFC9D8;border-radius:10px;font:inherit;font-size:1rem;resize:vertical}
+.ui-dlg-acts{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}.ui-dlg-acts button{margin:0!important;min-height:44px;min-width:88px;padding:8px 16px!important;border-radius:10px;font:inherit;font-weight:700;cursor:pointer}
+.ui-dlg-no{background:#E6EBF2!important;color:#1A2333!important;border:0!important}.ui-dlg-ok{background:#1F5FD1!important;color:#fff!important;border:0!important}.ui-dlg-ok.danger{background:#C62032!important}
 .pc-only{display:none}html[data-device=pc] .pc-only{display:block}html[data-device=pc] .not-pc{display:none}
 .env-note{margin:8px 0 0;padding:8px 12px;border-radius:10px;background:#FFF6E0;color:#6B4A00;font-size:.9rem;line-height:1.45}
 .env-bar{position:sticky;top:0;z-index:50;display:flex;gap:8px 12px;align-items:center;flex-wrap:wrap;padding:10px 14px;background:#FFF6E0;color:#4A3500;border-bottom:1px solid #F0D58A;font-size:.92rem}
@@ -208,7 +216,43 @@ button.cooling{opacity:.6;cursor:progress}
     else applyEnv(d);
   });
 
-  window.UI = {scan, applyFold, urgentBar, env, clientHints};
+  // ---------------------------------------------------------------- 페이지 안 확인창(브라우저 기본 팝업 대신)
+  function dialog({text, input = false, value = '', ok = '확인', cancel = '취소', danger = false}) {
+    return new Promise(resolve => {
+      const prev = document.activeElement;
+      const wrap = document.createElement('div');
+      wrap.className = 'ui-dlg';
+      wrap.setAttribute('role', input || cancel !== null ? 'dialog' : 'alertdialog');
+      wrap.setAttribute('aria-modal', 'true');
+      wrap.innerHTML = '<div class="ui-dlg-box"><p class="ui-dlg-text"></p>' + (input ? '<textarea class="ui-dlg-in" rows="2"></textarea>' : '') +
+        '<div class="ui-dlg-acts">' + (cancel !== null ? '<button type="button" class="ui-dlg-no" data-nocool></button>' : '') +
+        `<button type="button" class="ui-dlg-ok${danger ? ' danger' : ''}" data-nocool></button></div></div>`;
+      wrap.querySelector('.ui-dlg-text').textContent = String(text ?? '');
+      const inp = wrap.querySelector('.ui-dlg-in'), okB = wrap.querySelector('.ui-dlg-ok'), noB = wrap.querySelector('.ui-dlg-no');
+      okB.textContent = ok;
+      if (noB) noB.textContent = cancel;
+      if (inp) { inp.value = value; inp.setAttribute('aria-label', '입력'); }
+      const done = v => { wrap.remove(); document.removeEventListener('keydown', key, true); try { prev && prev.focus && prev.focus(); } catch (e) { /* 없어진 요소 */ } resolve(v); };
+      const yes = () => done(inp ? inp.value : true), no = () => done(inp ? null : cancel === null ? true : false);
+      const key = e => {
+        if (e.key === 'Escape') { e.preventDefault(); no(); }
+        else if (e.key === 'Enter' && (!inp || !e.shiftKey) && document.activeElement !== noB) { e.preventDefault(); yes(); }
+      };
+      okB.addEventListener('click', yes);
+      if (noB) noB.addEventListener('click', no);
+      wrap.addEventListener('click', e => { if (e.target === wrap) no(); });   // 바깥을 누르면 취소
+      document.addEventListener('keydown', key, true);
+      document.body.appendChild(wrap);
+      (inp || okB).focus();
+      if (inp) inp.select();
+    });
+  }
+  const uiConfirm = (text, o = {}) => dialog({text, ...o});
+  const uiPrompt = (text, value = '', o = {}) => dialog({text, input: true, value, ...o});
+  const uiAlert = text => dialog({text, cancel: null});
+  try { window.alert = t => { uiAlert(t); }; } catch (e) { /* 바꿀 수 없는 환경 */ }
+
+  window.UI = {scan, applyFold, urgentBar, env, clientHints, confirm: uiConfirm, prompt: uiPrompt, alert: uiAlert};
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => scan());
   else scan();
 })();

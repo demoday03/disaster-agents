@@ -21,7 +21,7 @@
   const LOADERS = {overview: () => { loadSituation(); }, notice: loadAnnouncements, supply: loadSupply, volunteer: loadVolunteer, recovery: loadRecovery,
                    welfare: loadChecks, sensor: () => { loadVerifyDocs(); loadSensorLive(); }, approvals: () => loadApprovals(),
                    dispatch: () => { loadDispatch(); loadControl(); loadShelterOps(); },
-                   guidance: loadIncidents, system: () => { loadHealth(); loadAgents(); loadEnvStats(); }, telegram: loadTelegram};
+                   guidance: loadIncidents, system: () => { loadHealth(); loadAgents(); loadEnvStats(); loadCleanup(); }, telegram: loadTelegram};
   function go(tab) {
     current = tab;
     document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.go === tab));
@@ -198,8 +198,8 @@
   document.addEventListener('click', async e => {
     const b = e.target.closest('button[data-tgcode],button[data-tgtest],button[data-tgunlink]');
     if (!b) return;
-    if (b.dataset.tgunlink && !confirm(b.dataset.tgkind === 'staff' ? '이 방의 연결을 끊을까요? 이 방으로 더 이상 알림을 보내지 않아요.'
-      : '공지 채널 연결을 끊을까요? 공지를 다시 주민 모두에게 1:1로 보내요.')) return;
+    if (b.dataset.tgunlink && !await UI.confirm(b.dataset.tgkind === 'staff' ? '이 방의 연결을 끊을까요? 이 방으로 더 이상 알림을 보내지 않아요.'
+      : '공지 채널 연결을 끊을까요? 공지를 다시 주민 모두에게 1:1로 보내요.', {ok:'연결 끊기',danger:true})) return;
     b.disabled = true;
     try {
       if (b.dataset.tgcode) {
@@ -216,6 +216,38 @@
       await loadTelegram();
     } catch (err) { alert(err.message); }
     finally { b.disabled = false; }
+  });
+
+  // ---------------------------------------------------------------- 위기 단계 해제(정상으로): 사유를 적고 내린다
+  document.addEventListener('click', async e => {
+    const b = e.target.closest('button[data-stage-clear]');
+    if (!b) return;
+    const reason = await UI.prompt('위기 단계를 내리고 \'정상\'으로 돌립니다. 주민 화면·텔레그램에 해제 소식이 갑니다.\n사유를 적어 주세요.', '비가 그치고 센서 값이 정상으로 돌아옴', {ok: '정상으로 내리기'});
+    if (!reason || !reason.trim()) return;
+    b.disabled = true;
+    try { await post('/api/stage/clear', {reason}); loadSituation(); refreshBand(); }
+    catch (err) { alert(err.message); b.disabled = false; }
+  });
+
+  // ---------------------------------------------------------------- 🧹 시연 전 정리: 시험용 집·대결 기록 지우기
+  async function loadCleanup() {
+    try {
+      const d = await api('/api/cleanup');
+      $('cleanup').classList.remove('muted');
+      $('cleanup').innerHTML = '<h3>주민이 등록한 집</h3>' + table(['우리 집 번호', '위치', '식구', '등록', ''], d.households.map(h =>
+        `<tr><td>${E(h.id)}</td><td>${E(h.address)}</td><td>${E(h.members ?? '')}</td><td>${E(fmtDate(h.created_at))}</td><td><button type="button" class="quiet" data-clean="household" data-id="${E(h.id)}">지우기</button></td></tr>`)) +
+        '<h3>사람 vs AI 대결 기록</h3>' + table(['별명', '맞힌 수', '때', ''], d.battle.map(r =>
+        `<tr><td>${E(r.name)}</td><td>${E(r.correct)}/${E(r.total)}</td><td>${E(fmtDate(r.at))}</td><td><button type="button" class="quiet" data-clean="battle" data-id="${E(r.id)}">지우기</button></td></tr>`));
+    } catch (e) { showError('cleanup', e); }
+  }
+  document.addEventListener('click', async e => {
+    const b = e.target.closest('button[data-clean]');
+    if (!b) return;
+    const what = b.dataset.clean === 'household' ? `우리 집 ${b.dataset.id}` : '이 대결 기록';
+    if (!await UI.confirm(`${what}을(를) 지울까요? 되돌릴 수 없어요(지운 사람은 기록에 남아요).`, {ok: '지우기', danger: true})) return;
+    b.disabled = true;
+    try { await post(`/api/cleanup/${b.dataset.clean}/${encodeURIComponent(b.dataset.id)}/delete`); loadCleanup(); }
+    catch (err) { alert(err.message); b.disabled = false; }
   });
 
   // ---------------------------------------------------------------- 📱 접속 환경(스마트폰·태블릿·노트북/PC)
@@ -243,7 +275,7 @@
       const waiting = sup.requests.filter(r => r.state === '검토').length;
       setBand(stage);
       $('situation').innerHTML = sos + '<dl class="sit">' +
-        `<div><dt>위기 단계</dt><dd>${E(stage.confirmed ? stage.level : '정상')}<small>${stage.confirmed ? '담당자 확정' + (stage.hazards?.length ? ' · ' + E(stage.hazards.join(', ')) : '') : '확정된 단계 없음'}</small></dd></div>` +
+        `<div><dt>위기 단계</dt><dd>${E(stage.confirmed ? stage.level : '정상')}<small>${stage.confirmed ? '담당자 확정' + (stage.hazards?.length ? ' · ' + E(stage.hazards.join(', ')) : '') : '확정된 단계 없음'}</small>${stage.confirmed ? '<button type="button" class="quiet" data-stage-clear style="margin-top:6px">정상으로 내리기</button>' : ''}</dd></div>` +
         `<div><dt>안부 확인</dt><dd>격상 ${esc.length}가구<small>${esc.length ? E(esc.map(c => c.household).join(', ')) + ' · ' : ''}응답 대기 ${checks.counts['대기'] || 0}가구</small></dd></div>` +
         `<div><dt>물품</dt><dd>검토 대기 ${waiting}건<small>부족 예상 ${short.length ? E(short.map(f => f.item).join(', ')) : '없음'}</small></dd></div>` +
         `<div><dt>봉사</dt><dd>진행 중 ${vol.tasks.filter(t => t.state === '진행' || t.state === '투입승인').length}건<small>투입 중 봉사자 ${vol.volunteers.filter(v => v.busy).length}명</small></dd></div></dl>`;
@@ -277,14 +309,16 @@
       }));
       $('supplyRequests').querySelectorAll('button[data-req]').forEach(b => b.addEventListener('click', async () => {
         const body = JSON.parse(b.dataset.body);
-        if (b.dataset.reason) { const r = prompt('사유를 입력하세요'); if (!r) return; body.reason = r; }
+        if (b.dataset.reason) { const r = await UI.prompt('사유를 입력하세요', "", {ok:'확인'}); if (!r) return; body.reason = r; }
         b.disabled = true;
         try { await post(`/api/supply/requests/${encodeURIComponent(b.dataset.req)}/${b.dataset.act}`, body); await loadApprovals(); await loadSupply(); }
         catch (e) { alert(e.message); b.disabled = false; }
       }));
       const n = d.notice;
-      $('supplyForecast').innerHTML = table(['품목', '가용 수량', '시간당 소비', '소진 예상', '근거'], d.forecast.map(f =>
+      const stocked = d.forecast.filter(f => !f.not_stocked), none = d.forecast.filter(f => f.not_stocked);
+      $('supplyForecast').innerHTML = table(['품목', '가용 수량', '시간당 소비', '소진 예상', '근거'], stocked.map(f =>
         `<tr><td>${E(f.item)}</td><td>${E(f.qty)}</td><td>${E(f.rate_per_h)}</td><td>${f.hours_left === Infinity ? '-' : f.hours_left < 1 ? chip('지금 부족', 'bad') : E(f.hours_left) + '시간 뒤'} ${f.shortage && f.hours_left >= 1 ? chip('부족 예상', 'bad') : ''}</td><td>${E(f.rate_source)}</td></tr>`)) +
+        (none.length ? `<p class="muted">비축하지 않는 품목 ${none.length}종(재고도, 최근 출고도 없음): ${E(none.map(f => f.item).join(', '))} · 요청이 들어오면 물품 요청에 '외부 조달 필요'로 보입니다.</p>` : '') +
         (n.draft ? `<p><b>필요 물품 안내 초안</b> · 검증: ${chip(n.verification.verdict, n.verification.displayable ? 'ok' : 'warn')} ${n.verification.displayable ? '' : '<span class="muted">검증 통과 전이라 봉사자 화면에 내보내지 않습니다.</span>'}</p><div class="result">${E(n.draft)}</div>` : '<p class="muted">부족 예상 품목이 없어 안내 초안을 만들지 않았습니다.</p>');
       $('supplyStock').innerHTML = table(['ID', '장소', '품목', '수량', '예약', '유통기한'], d.stock.map(s =>
         `<tr><td>${E(s.id)}</td><td>${E(s.location_name)}</td><td>${E(s.item)} ${s.category === '의약품' ? chip('자동 배치 금지', 'bad') : ''}</td><td>${E(s.qty)}</td><td>${E(s.reserved || 0)}</td><td>${s.days_left == null ? '-' : s.days_left < 0 ? chip('기한 경과', 'bad') : E(s.days_left) + '일'}</td></tr>`));
@@ -499,7 +533,7 @@
     });
     $('annList').addEventListener('click', async e => {   // 공지 내리기
       const b = e.target.closest('button[data-ann-end]');
-      if (!b || !confirm('이 공지를 내릴까요? 주민·봉사자 화면에서 사라집니다.')) return;
+      if (!b || !await UI.confirm('이 공지를 내릴까요? 주민·봉사자 화면에서 사라집니다.', {ok:'내리기'})) return;
       b.disabled = true;
       try { await post(`/api/announcements/${encodeURIComponent(b.dataset.annEnd)}/end`); loadAnnouncements(); }
       catch (err) { alert(err.message); b.disabled = false; }

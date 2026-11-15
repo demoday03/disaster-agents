@@ -15,7 +15,7 @@
     {"id": "P06", "name": "사방·토사 정비팀(가상)",  "zone": "Z5",  "skills": ["토사", "장비"], "max_urgency": 2, "load": 0.2},
     {"id": "P07", "name": "군 지원 인력(가상)",      "zone": "Z7",  "skills": ["토사", "배수", "일반"], "max_urgency": 2, "load": 0.6},
     {"id": "P08", "name": "전력 긴급복구반(가상)",   "zone": "Z9",  "skills": ["전기"],         "max_urgency": 2, "load": 0.3},
-    {"id": "P09", "name": "급수 지원반(가상)",       "zone": "Z6",  "skills": ["전기", "일반"], "max_urgency": 3, "load": 0.2},
+    {"id": "P09", "name": "급수 지원반(가상)",       "zone": "Z6",  "skills": ["급수", "일반"], "max_urgency": 3, "load": 0.2},
     {"id": "P10", "name": "동 행정복지센터 지원반(가상)", "zone": "Z10", "skills": ["일반"],    "max_urgency": 4, "load": 0.0}
   ],
   "shelters": [

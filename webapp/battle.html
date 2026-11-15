@@ -16,9 +16,9 @@ input{font:inherit;padding:11px 12px;border:1px solid #BFC9D8;border-radius:10px
 .bar{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;font-weight:700}
 .timer{font-variant-numeric:tabular-nums;background:var(--human-bg);color:var(--human);border-radius:99px;padding:2px 12px}
 .prog{height:8px;background:var(--line-soft);border-radius:99px;overflow:hidden;margin-bottom:16px}.prog span{display:block;height:100%;background:var(--human);transition:width .2s}
-.report{font-size:1.3rem;font-weight:700;background:#F7F9FC;border:1px solid var(--line-soft);border-radius:12px;padding:18px;margin:0 0 16px;min-height:96px}
-.types{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.types button{background:#fff;color:var(--ink);border:1.5px solid #BFC9D8;text-align:left;display:flex;flex-direction:column;gap:2px;padding:10px 14px}
+.report{font-size:1.2rem;font-weight:700;background:#F7F9FC;border:1px solid var(--line-soft);border-radius:12px;padding:14px 16px;margin:0 0 12px;min-height:72px}
+.types{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px}
+.types button{background:#fff;color:var(--ink);border:1.5px solid #BFC9D8;text-align:left;display:flex;flex-direction:column;gap:2px;padding:8px 12px;margin:0;min-height:0}
 .types button small{color:var(--muted);font-weight:500;font-size:.78rem;line-height:1.35}
 @media(hover:hover){.types button:hover{border-color:var(--human);background:var(--human-bg);filter:none}}
 .types button:active{border-color:var(--human);background:var(--human-bg)}
@@ -29,7 +29,7 @@ table{width:100%;border-collapse:collapse;font-size:.9rem}th,td{text-align:left;
 .pill{display:inline-block;border-radius:99px;padding:0 8px;font-size:.8rem;font-weight:700}.pill.ok{background:var(--ok-bg)}.pill.no{background:var(--bad-bg)}
 .note{background:#FFF6EC;border-left:5px solid #E06A00;border-radius:8px;padding:10px 14px;margin-top:14px}
 [hidden]{display:none!important}
-@media(max-width:640px){.vs{grid-template-columns:1fr}.vsmark{display:none}.types{grid-template-columns:1fr}.report{font-size:1.12rem}.side .big{font-size:2rem}}
+@media(max-width:640px){.vs{grid-template-columns:1fr}.vsmark{display:none}.types{grid-template-columns:1fr 1fr;gap:6px}.types button small{display:none}.report{font-size:1.08rem}.side .big{font-size:2rem}}
 </style></head><body>
 <header class="top"><a href="/">← 처음으로</a><h1>사람 vs AI 신고 분류 대결</h1></header>
 <main class="wrap">

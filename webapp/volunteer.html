@@ -112,7 +112,7 @@ details.acc.order{border-left:6px solid var(--action)}details.acc.order.prog{bor
 <section class="view" data-view="tasks" hidden>
 <h2>내 작업</h2><p class="lead">담당자가 승인한 작업과 내가 할 수 있는 일에 맞는 작업입니다. 현장에 도착하면 '도착', 끝나면 '완료'를 눌러 주세요.</p>
 <div class="box" id="canDoBox" style="margin-top:0"></div>
-<details class="acc" id="safetyAcc"><summary>⚠️ 활동 전 안전 수칙 <span class="sum-sub">4가지 · 꼭 읽어 주세요</span></summary><div class="acc-body"><ul id="safety" class="safety"></ul><p class="muted">활동 시간 상한·휴식·고온 기준 수치는 공식 운영지침을 확인한 뒤 넣습니다(아직 미확인).</p></div></details>
+<details class="acc" id="safetyAcc"><summary>⚠️ 활동 전 안전 수칙 <span class="sum-sub">4가지 · 꼭 읽어 주세요</span></summary><div class="acc-body"><ul id="safety" class="safety"></ul></div></details>
 <h3>승인된 내 작업</h3><div id="myTasks" class="muted" data-fold="3"></div>
 <h3>도움이 필요한 작업</h3><div id="openTasks" class="muted" data-fold="3"></div>
 </section>
@@ -216,7 +216,7 @@ document.querySelectorAll('button[data-sos]').forEach(b=>b.addEventListener('cli
 catch(e){if(/찾을 수 없/.test(e.message)){VID='';store.set('');go('')}else $('whoText').textContent='불러오지 못했습니다: '+e.message}}
 function units(){const u=(DATA?.catalog[$('gItem').value]||{}).units||[];$('gUnit').innerHTML=u.map(x=>`<option>${esc(x)}</option>`).join('')}
 $('gItem').addEventListener('change',units);
-async function sos(task){if(!confirm('담당자 화면에 SOS를 보냅니다. 위급하면 119에도 바로 전화하세요.'))return;try{const r=await post(`/api/public/volunteers/${encodeURIComponent(VID)}/sos`,task?{task}:{});go('me');$('sosResult').hidden=false;$('sosResult').textContent=`SOS를 보냈습니다(${r.id}). 담당자 상황판 맨 위에 표시됩니다. 위급하면 119에도 전화하세요.`}catch(e){alert(e.message)}}
+async function sos(task){if(!await UI.confirm('담당자 화면에 SOS를 보냅니다. 위급하면 119에도 바로 전화하세요.', {ok:'SOS 보내기',danger:true}))return;try{const r=await post(`/api/public/volunteers/${encodeURIComponent(VID)}/sos`,task?{task}:{});go('me');$('sosResult').hidden=false;$('sosResult').textContent=`SOS를 보냈습니다(${r.id}). 담당자 상황판 맨 위에 표시됩니다. 위급하면 119에도 전화하세요.`}catch(e){alert(e.message)}}
 $('sosBtn').addEventListener('click',()=>sos(null));
 $('giftForm').addEventListener('submit',async e=>{e.preventDefault();const days=$('gDays').value;try{const r=await post(`/api/public/volunteers/${encodeURIComponent(VID)}/donations`,{item:$('gItem').value,qty:Number($('gQty').value),unit:$('gUnit').value,condition:$('gCond').value,days_left:days===''?null:Number(days),address:$('gPlace').value.trim()});$('giftResult').hidden=false;$('giftResult').className='box ok';$('giftResult').textContent=`${r.item} ${r.qty} 기부 등록(${r.id}) · ${r.state}. 담당자가 검수하면 필요한 곳에 연결됩니다.`;load()}catch(err){$('giftResult').hidden=false;$('giftResult').className='box err';$('giftResult').textContent='등록하지 못했습니다: '+err.message}});
 

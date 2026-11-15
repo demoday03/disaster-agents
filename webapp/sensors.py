@@ -31,8 +31,13 @@ URGENT_EVENTS = {"SOS", "NEED", "HEAT", "DARK"}
 LINKS = ("USB", "블루투스", "가상")   # G ↔ 노트북 연결 방법
 
 
+NORMAL_HOLD_S = 60   # 센서가 이만큼 계속 정상이면 센서만으로 만든 단계 확정 요청을 거둔다
+
+
 class SensorHub:
     def __init__(self, db, cfg=None, clock=time.time):
+        self.on_normal = self.on_exceed = None   # 서버가 채운다: 정상으로 돌아옴(지난 단계 요청 정리)·다시 넘음
+        self.normal_since, self.normal_done = None, False
         self.db, self.cfg, self.clock = db, cfg or monitor.load_config(), clock
         self.buffer, self.lock = deque(maxlen=MAX_BUFFER), threading.Lock()
         self.last_eval, self.last_seen, self.received, self.rejected = None, {}, 0, 0
@@ -140,6 +145,15 @@ class SensorHub:
             self.buffer.popleft()
         row = monitor.Monitor(self.cfg).evaluate(list(self.buffer), now, self.rain_stage).to_dict()
         approval_id, duplicate_of = None, None
+        if row["output"].get("status") == "정상" and self.buffer:   # 정상이 NORMAL_HOLD_S 이어지면 지난 단계 요청을 한 번 정리
+            self.normal_since = self.normal_since or now
+            if not self.normal_done and now - self.normal_since >= NORMAL_HOLD_S and self.on_normal:
+                self.normal_done = True
+                self.on_normal("gateway")
+        else:
+            if self.normal_since and row["needs_approval"] and self.on_exceed:
+                self.on_exceed()
+            self.normal_since, self.normal_done = None, False
         if row["needs_approval"]:
             duplicate_of = self._same_stage_pending_or_confirmed(row["output"])
             if duplicate_of is None:

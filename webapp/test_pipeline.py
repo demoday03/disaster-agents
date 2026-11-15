@@ -10,9 +10,11 @@ class TestPipeline(ServerBase):
     port = 18775
 
     def report(self, text):
-        code, d = Client(self.base).post("/api/incidents", {"text": text})   # 신고는 로그인 없이
+        """신고는 로그인 없이. 주민 응답에는 내부 처리 기록(linked 등)이 없으므로 담당자 목록의 같은 신고를 돌려준다."""
+        code, d = Client(self.base).post("/api/incidents", {"text": text})
         self.assertEqual(code, 201, d)
-        return d["output"]
+        self.assertNotIn("linked", d["output"])
+        return self.staff_view(d["output"]["id"])
 
     def staff_view(self, iid):
         """담당자용 신고 목록의 한 건(공개 응답에서 빠지는 메모·처리자까지 들어 있음)."""
@@ -54,7 +56,7 @@ class TestPipeline(ServerBase):
         self.assertTrue(all(r["review_reason"] == "수량 미확인" and r["state"] == "검토" for r in reqs))
         self.assertEqual(self.pending(o["id"]), [])
         self.assertIn("물품 담당자 검토 필요", self.staff_view(o["id"])["notes"][0])
-        self.assertNotIn("notes", o)                                         # 내부 메모는 공개 응답에 없음
+        self.assertNotIn("notes", Client(self.base).get(f"/api/incidents/{o['id']}")[1]["result"]["output"])   # 내부 메모는 공개 응답에 없음
 
     def test_missing_location_asks_reporter_then_continues(self):
         o = self.report("생수 10병 보내 주세요")
@@ -175,6 +177,7 @@ class TestPipeline(ServerBase):
         o = self.report("Z99 구역 산사태가 났어요 할머니 혼자 계세요")
         self.assertEqual(o["state"], "보완 필요")
         self.assertIn("위치: 없는 구역 번호", o["missing"])
+        self.assertEqual(o["zone"], "미상")                                           # Z99를 그대로 저장하지 않는다
         _, a = self.get("/api/agents")
         self.assertFalse([x["id"] for x in a["items"] if x["status"] == "manual"])   # 입력 문제로 수동 전환하지 않음
 
@@ -356,7 +359,9 @@ class TestPipeline(ServerBase):
         self.assertEqual(code, 201, r)
         _, h = anon.get(f"/api/public/households/{r['id']}")
         self.assertEqual((h["household"]["zone"], h["household"]["address"]), ("미상", "옥포동 ○○아파트 101동"))
-        self.assertTrue(h["risks"] and h["nearest_shelter"])                   # 구역을 몰라도 안내·대피소는 나온다
+        self.assertTrue(h["risks"])                                           # 구역을 몰라도 집 층에 맞는 안내는 나온다
+        self.assertIn("1층은 물이 들어올 수 있습니다", " ".join(h["risks"]))
+        self.assertEqual((h["nearest_shelter"], h["location_known"]), (None, False))   # 거리를 모르면 '가장 가까운'이라고 하지 않는다
         code, r = anon.post("/api/public/households", {"address": "가람초 뒤 주택 010-1234-5678", "floor": "반지하"})
         _, h = anon.get(f"/api/public/households/{r['id']}")
         self.assertEqual(h["household"]["zone"], "Z2")                        # 가상 장소 이름으로 추정
@@ -395,7 +400,8 @@ class TestPipeline(ServerBase):
         self.assertEqual(code, 200, e)
         self.assertEqual((e["output"]["type"], e["output"]["urgency"], e["output"]["edits"]), ("인명구조", 1, 1))
         self.assertFalse(set(pend_before) & {a["id"] for a in self.pending(iid)})          # 예전 추천은 반려되고 새로 연결
-        [aid] = e["output"]["linked"]["dispatch"]
+        self.assertNotIn("linked", e["output"])                                               # 내부 처리 기록은 주민 응답에 없다
+        [aid] = next(x["output"] for x in self.get("/api/incidents")[1]["items"] if x["output"]["id"] == iid)["linked"]["dispatch"]
         self.assertEqual(self.post(f"/api/approvals/{aid}/resolve", {"approved": True, "reason": "출동"})[0], 200)
         self.assertEqual(anon.post(f"/api/incidents/{iid}/edit", {"token": token, "text": "다시 고침"})[0], 409)   # 승인 뒤에는 못 고침
         code, c = anon.post(f"/api/incidents/{iid}/cancel", {"token": token})
@@ -445,6 +451,19 @@ class TestPipeline(ServerBase):
         self.assertIn("504호", staff[r["id"]]["text"])
         self.assertEqual(staff[r["id"]]["split_from"], host)
         self.assertEqual(self.post(f"/api/incidents/{host}/neighbors/9/split", {})[0], 404)
+
+    def test_staff_can_delete_test_data(self):
+        """시연 전 정리: 주민이 등록한 시험용 집·대결 기록은 담당자가 지우고, 시연용 집은 못 지운다."""
+        anon = Client(self.base)
+        _, h = anon.post("/api/public/households", {"address": "시험용(삭제 가능) 집", "floor": "1층", "members": 2})
+        d = self.get("/api/cleanup")[1]
+        self.assertIn(h["id"], [x["id"] for x in d["households"]])
+        self.assertEqual(anon.post(f"/api/cleanup/household/{h['id']}/delete", {})[0], 401)
+        self.assertEqual(self.post(f"/api/cleanup/household/{h['id']}/delete", {})[0], 200)
+        self.assertEqual(anon.get(f"/api/public/households/{h['id']}")[0], 404)
+        demo = next(iter(anon.get("/api/public/households")[1]["items"]))["id"]
+        self.assertEqual(self.post(f"/api/cleanup/household/{demo}/delete", {})[0], 409)        # 시연용 집은 지우지 않는다
+        self.assertEqual(self.post("/api/cleanup/battle/HB-0/delete", {})[0], 404)
 
     def test_device_is_detected_and_kept_staff_only(self):
         """접속 환경: 화면을 연 기기·신고를 보낸 기기(스마트폰·노트북/PC). 담당자만 보고, 원문 User-Agent는 저장하지 않는다."""

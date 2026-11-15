@@ -870,6 +870,9 @@ class TelegramBot:
             haz = ", ".join(data.get("hazards") or [])
             self._broadcast(f"⚠️ 위기 단계 {data['level']}" + (f" ({haz})" if haz else "") + f"\n{LEVEL_TEXT[data['level']]}\n"
                             "다치거나 갇혔다면 119·112에 바로 전화하세요.")
+        elif kind == "stage_clear":
+            self._broadcast(f"✅ 위기 단계({data.get('from') or '경계'})가 해제되어 '정상'이 됐어요.\n"
+                            "대피소에 계신 분은 담당자 안내에 따라 돌아가세요. 위험해지면 119·112에 바로 전화하세요.")
         elif kind == "welfare":
             started = set(data.get("households", []))
             for sub in self.db.list_records("tg_sub"):

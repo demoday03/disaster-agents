@@ -109,6 +109,33 @@ class ServerBase(unittest.TestCase):
 class TestDashboardServer(ServerBase):
     port = 18765
 
+    def test_staff_can_lower_stage_to_normal(self):
+        """확정한 위기 단계를 담당자가 사유를 적고 '정상'으로 내린다(내릴 단계가 없으면 409)."""
+        if not self.get('/api/stage')[1].get('confirmed'):
+            aid = self._new_approval()
+            self.assertEqual(self.post(f'/api/approvals/{aid}/resolve', {'approved': True, 'reason': '확정'})[0], 200)
+        self.assertEqual(self.post('/api/stage/clear', {'reason': ''})[0], 400)
+        code, st = self.post('/api/stage/clear', {'reason': '비가 그침'})
+        self.assertEqual((code, st['level'], st['confirmed'], st['cleared_by']), (200, '정상', False, '담당자'))
+        self.assertEqual(self.post('/api/stage/clear', {'reason': '또'})[0], 409)
+        self.assertEqual(Client(self.base).post('/api/stage/clear', {'reason': 'x'})[0], 401)
+
+    def test_stage_request_withdrawn_when_sensor_back_to_normal(self):
+        """시뮬레이터로 '경계' 요청을 만든 뒤 센서를 정상으로 돌리면 센서만으로 만든 요청은 거둔다(같은 요청은 또 만들지 않는다)."""
+        if self.get('/api/stage')[1].get('confirmed'):   # 앞 시험에서 확정한 단계가 있으면 담당자가 먼저 내린다
+            self.assertEqual(self.post('/api/stage/clear', {'reason': '시험: 정상으로'})[0], 200)
+        aid = self._new_approval()
+        self.assertEqual(self._new_approval(), aid)                                          # 같은 단계 요청이 대기 중이면 그것을 쓴다
+        now = time.time()
+        calm = [{'node': n, 'sensor': k, 'ts': now - 2 + i, 'value': 0}            # 관리자 화면 시뮬레이터처럼 세 센서 모두 0
+                for i in range(3) for n, k in (('A', 'depth'), ('B', 'tilt'), ('B', 'vibration'))]
+        code, d = self.post('/api/monitor/evaluate', {'readings': calm, 'now': now, 'rain_stage': 0})
+        self.assertEqual((code, d['output']['status']), (200, '정상'))
+        self.assertIn(aid, d['withdrawn'])
+        self.assertNotIn(aid, [a['id'] for a in self.get('/api/approvals')[1]['items']])
+        hist = next(a for a in self.get('/api/approvals/history')[1]['items'] if a['id'] == aid)
+        self.assertEqual(hist['state'], 'rejected')
+
     def test_health_and_dashboard(self):
         status, d=self.get('/api/health'); self.assertEqual(status,200); self.assertTrue(d['ok']); self.assertFalse(d['llm_enabled']); self.assertEqual(d['database'], 'SQLite'); self.assertTrue(d['database_ready'])
         with urllib.request.urlopen(self.base + '/', timeout=2) as r:

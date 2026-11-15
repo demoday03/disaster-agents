@@ -17,6 +17,7 @@ from common.llm import SolarClient
 from common.docparse import DocumentParser
 from common.masking import mask
 from common import device as devices, places, scenario
+from common.clock import now_kst
 from agents import crosscheck, dispatch, intake, monitor, recovery, welfare, verify
 from coordinator import Coordinator
 from database import db as database
@@ -239,6 +240,7 @@ def link_incident(row):
         notes.append(out["triage"])
     if out.get("zone") not in (None, "미상") and out["zone"] not in {z["id"] for z in SCENARIO["zones"]}:
         missing.append("위치: 없는 구역 번호")   # 'Z99'처럼 형식만 맞는 구역은 배치·물품을 보낼 수 없다
+        out["zone"] = "미상"                    # 없는 구역(Z12 등)을 그대로 저장하지 않는다
     if not missing:
         auto_dispatch(out, linked, notes)
     if out.get("route") == "supply" and not missing:
@@ -464,10 +466,16 @@ PUBLIC_HIDDEN = ("notes", "invalidated_by", "invalid_reason", "invalidated_at", 
                  "reporter", "questions", "classified_by", "seen", "contacts", "device", "neighbors", "same_building")
 
 
+# 접수번호만 알면 누구나 보는 응답(신고 접수·조회·고치기·보완)에 내보내는 것. 주민에게 필요한 것만 고른다:
+# 승인 ID·배치·센서 판단·지원금 후보 같은 내부 처리 기록(linked·notes·evidence 등)은 내보내지 않는다.
+PUBLIC_OUTPUT = ("id", "text", "ts", "type", "zone", "people", "people_source", "urgency", "vulnerable", "state", "missing", "label", "channel",
+                 "cancelled_by_reporter", "edits", "supplements", "edited_at", "repeats", "building")
+
+
 def public_row(row):
-    """접수번호만 알면 누구나 보는 응답에서 담당자 이름·처리 사유·내부 메모를 뺀다."""
-    out = {k: v for k, v in row.get("output", {}).items() if k not in PUBLIC_HIDDEN}
-    return {**row, "output": out}
+    """주민에게 보여 줄 신고(접수번호 조회 등). 담당자 이름·처리 사유·내부 메모·연결된 승인은 뺀다."""
+    out = {k: v for k, v in (row.get("output") or {}).items() if k in PUBLIC_OUTPUT and k not in PUBLIC_HIDDEN}
+    return {"output": out}
 
 
 def json_bytes(obj):
@@ -485,6 +493,16 @@ def scenario_now():
     delta = {r["id"]: r["delta"] for r in database.list_records("shelter_occ")}
     return {**SCENARIO, "shelters": [{**s, "occupied": min(s["capacity"], max(0, s["occupied"] + delta.get(s["id"], 0)))}
                                      for s in SCENARIO["shelters"]]}
+
+
+def span_text(minutes):
+    """걸린 시간을 읽기 쉽게: 45분, 2시간 5분, 1일 4시간."""
+    m = round(minutes or 0)
+    if m < 60:
+        return f"{m}분"
+    if m < 24 * 60:
+        return f"{m // 60}시간" + (f" {m % 60}분" if m % 60 else "")
+    return f"{m // 1440}일" + (f" {m % 1440 // 60}시간" if m % 1440 // 60 else "")
 
 
 def daily_report():
@@ -520,14 +538,14 @@ def daily_report():
              "tasks_done": sum(t["state"] == "완료" for t in tasks), "tasks_open": sum(t["state"] != "완료" for t in tasks)}
     kinds = ", ".join(f"{k} {v}건" for k, v in sorted(by_type.items(), key=lambda kv: -kv[1])) or "없음"
     text = "\n".join([
-        f"[일일 상황 보고서 초안 · {datetime.now().strftime('%Y-%m-%d %H:%M')} 기준 · 모의 데이터]",
+        f"[일일 상황 보고서 초안 · {now_kst().strftime('%Y-%m-%d %H:%M')} 기준]",
         f"1. 위기 단계: {stats['stage']}",
         f"2. 신고: {stats['incidents']}건({kinds}). 긴급도 1은 {by_urg.get('1', 0)}건. "
         f"정보 보완 대기 {stats['waiting_info']}건, 오접수 처리 {stats['invalid']}건.",
         f"3. 결정: 승인 {stats['approved']}건, 반려 {stats['rejected']}건, 대기 {stats['pending']}건.",
         f"4. 안부 확인: 무응답 격상 {stats['escalated']}가구.",
         f"5. 물품: 완료 {stats['supply_done']}건, 진행 중 {stats['supply_open']}건. 봉사: 완료 {stats['tasks_done']}건, 진행·대기 {stats['tasks_open']}건.",
-        "6. 사후 평가: 신고 접수부터 첫 승인까지 " + (f"중앙값 {median}분({len(mins)}건 기준)." if mins else "기록 없음."),
+        "6. 사후 평가: 신고 접수부터 첫 승인까지 " + (f"중앙값 {span_text(median)}({len(mins)}건 기준)." if mins else "기록 없음."),
         "※ 규칙으로 집계한 초안입니다. 담당자가 확인한 뒤 사용하세요."])
     return {"stats": stats, "text": text}
 
@@ -675,6 +693,41 @@ PUBLIC = public_api.PublicAPI(FEATURES, database, scenario_now)   # 시민·봉�
 TELEGRAM = telegram_bot.TelegramBot(database, PUBLIC, lambda: public_status())   # 주민 알림(TELEGRAM_BOT_TOKEN이 있을 때만)
 FEATURES.notify = TELEGRAM.event   # 위기 단계 확정·안부 확인 시작을 텔레그램으로
 
+
+def sensor_back_to_normal(source):
+    """센서 판정이 '정상'으로 돌아왔을 때. 센서 값만으로 만든 위기 단계 확정 요청은 자동으로 거두고(감사 기록),
+    신고와 함께 묶인 요청은 거두지 않고 '지금 센서는 정상' 표시만 한다(신고를 보고 담당자가 판단)."""
+    linked = {((o.get("linked") or {}).get("monitor") or {}).get("approval_id")
+              for o in ((r.get("output") or {}) for r in database.list_incidents(200))}
+    withdrawn = []
+    for a in database.list_pending_approvals():
+        if a["kind"] != "monitor_stage":
+            continue
+        try:
+            if a["id"] in linked:
+                if not a["item"].get("sensor_normal_at"):
+                    database.update_pending_approval_item(a["id"], {**a["item"], "sensor_normal_at": time.time()})
+                continue
+            database.resolve_approval(a["id"], False, "자동(센서 정상 복귀)", "센서 값이 정상으로 돌아와 단계 확정 요청을 거둠")
+        except ValueError:   # 그사이 담당자가 처리함
+            continue
+        database.log_audit("stage_request_withdrawn", "approval", a["id"], {"source": source, "level": a["item"].get("level")})
+        withdrawn.append(a["id"])
+    return withdrawn
+
+
+def sensor_exceeded_again():
+    """센서가 다시 기준을 넘으면 '지금 센서는 정상' 표시를 지운다."""
+    for a in database.list_pending_approvals():
+        if a["kind"] == "monitor_stage" and a["item"].get("sensor_normal_at"):
+            try:
+                database.update_pending_approval_item(a["id"], {k: v for k, v in a["item"].items() if k != "sensor_normal_at"})
+            except ValueError:
+                pass
+
+
+
+SENSORS.on_normal, SENSORS.on_exceed = sensor_back_to_normal, sensor_exceeded_again   # 센서가 정상으로 돌아오면 지난 단계 요청 정리
 
 def change_occupancy(sid, delta, by):
     """대피소 입소(+)·퇴소(−) 반영(O6). 담당자 화면과 현장 노드 C가 같이 쓴다. 대피소가 없으면 KeyError, 범위를 넘으면 Conflict."""
@@ -909,6 +962,10 @@ def submit_report(text, rate_key, channel=None, household=None, reporter=None, d
         h = FEATURES.households[household]
         row["output"]["household"] = household   # 로그인한 가구의 신고(로그인 없이 보낸 긴급 신고와 구분)
         row["output"]["household_place"] = h.get("address") or places.describe(h["zone"])
+        members = h.get("members")
+        # 인원을 고르지 않은 우리 집 신고: 등록한 식구 수로 본다(1명으로 잡혀 대피소 자리가 1개만 배정되던 문제)
+        if isinstance(members, int) and members > (row["output"].get("people") or 0) and not re.search(r"\d+\s*명", text):
+            row["output"].update(people=members, people_source="우리 집 등록 정보")
     if isinstance(reporter, str) and reporter:
         row["output"]["reporter"] = reporter[:20]
     if isinstance(device, dict):
@@ -1346,6 +1403,39 @@ def end_announcement(aid, by):
     return row
 
 
+def cleanup_view():
+    """담당자: 시연 전에 지울 수 있는 시험 데이터(주민이 등록한 집, 사람 vs AI 대결 기록)."""
+    hh = [{"id": h["id"], "address": h.get("address") or "", "members": h.get("members"), "created_at": h.get("created_at")}
+          for h in FEATURES.households.values() if h.get("registered")]
+    battle_runs = [{"id": rid, "name": r.get("name"), "correct": r.get("correct"), "total": r.get("total"), "at": r.get("at")}
+                   for rid, r in database.list_records_with_ids("battle_human")]
+    return {"households": sorted(hh, key=lambda h: -(h["created_at"] or 0)), "battle": sorted(battle_runs, key=lambda r: -(r["at"] or 0))}
+
+
+def cleanup_delete(kind, rid, s):
+    """시험 데이터 하나를 지운다(감사 기록에 남긴다). 시연용 집은 지우지 않는다."""
+    if kind == "household":
+        h = FEATURES.households.get(rid)
+        if h is None:
+            raise KeyError(rid)
+        if not h.get("registered"):
+            raise features.Conflict("시연용 집은 지울 수 없어요")
+        with FEATURES.lock:
+            FEATURES.households.pop(rid, None)
+            database.delete_record("household", rid)
+        for sub in database.list_records("tg_sub"):   # 텔레그램 '우리 집 연결'도 끊는다
+            if sub.get("household") == rid:
+                sub.pop("household", None)
+                database.put_record("tg_sub", str(sub["chat_id"]), sub)
+    elif kind == "battle":
+        if not database.delete_record("battle_human", rid):
+            raise KeyError(rid)
+    else:
+        raise KeyError(kind)
+    database.log_audit("test_data_deleted", kind, rid, {"by": s["username"]})
+    return {"ok": True, "deleted": rid}
+
+
 def public_status():
     """접수 사이트 첫 화면용 공개 상황(로그인 없음). 담당자 이름·승인 ID·신고 원문은 넣지 않는다."""
     stage = database.get_record("stage", "current") or {}
@@ -1402,6 +1492,8 @@ SECURITY_HEADERS = {
     "Content-Security-Policy": "default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; "
                                "script-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
 }
+if COOKIE_SECURE:   # HTTPS로 서비스할 때(Render 등): 브라우저가 앞으로 이 사이트를 늘 HTTPS로만 열게
+    SECURITY_HEADERS["Strict-Transport-Security"] = "max-age=31536000"
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1663,6 +1755,10 @@ class Handler(BaseHTTPRequestHandler):
             page = (q.get("p") or [""])[0]
             VISITS.append((time.time(), VISIT_PAGES.get(page, "기타"), d["kind"], d["os"], d["browser"], d["inapp"]))
             return self.send_json(200, {"device": d})
+        if path == "/api/cleanup":   # 담당자: 지울 수 있는 시험 데이터
+            if not self.require_staff():
+                return
+            return self.send_json(200, cleanup_view())
         if path == "/api/env-stats":   # 담당자: 접속 환경 통계
             if not self.require_staff():
                 return
@@ -1821,6 +1917,19 @@ class Handler(BaseHTTPRequestHandler):
                 if len(parts) != 4 or not parts[2] or len(parts[2]) > 40:
                     return self.send_json(404, {"error": "찾을 수 없는 경로입니다"})
                 return self.send_json(*mark_seen(parts[2], s["username"], "관리자 화면"))
+            if path.startswith("/api/cleanup/") and path.endswith("/delete"):   # 담당자: 시험용 집·대결 기록 지우기
+                s = self.require_staff(check_csrf=True)
+                if not s:
+                    return
+                parts = path.strip("/").split("/")
+                if len(parts) != 5:
+                    return self.send_json(404, {"error": "찾을 수 없는 경로입니다"})
+                try:
+                    return self.send_json(200, cleanup_delete(parts[2], parts[3], s))
+                except KeyError:
+                    return self.send_json(404, {"error": "지울 데이터를 찾을 수 없어요"})
+                except features.Conflict as e:
+                    return self.send_json(409, {"error": str(e)})
             if path.startswith("/api/incidents/") and "/neighbors/" in path and path.endswith("/split"):   # 담당자: 합쳐진 이웃 신고 따로 떼기
                 s = self.require_staff(check_csrf=True)
                 if not s:
@@ -2199,7 +2308,14 @@ class Handler(BaseHTTPRequestHandler):
                 result = monitor.Monitor(monitor.load_config()).evaluate(readings, float(now), stage)
                 row = result_dict(result)
                 if row.get("needs_approval"):
-                    row["approval_id"] = database.create_approval("monitor_stage", row["output"])["id"]
+                    sensor_exceeded_again()
+                    same = SENSORS._same_stage_pending_or_confirmed(row["output"])   # 같은 단계 요청이 이미 있으면 또 만들지 않는다
+                    if same and same != "confirmed":
+                        row["approval_id"], row["duplicate_of"] = same, same
+                    elif not same:
+                        row["approval_id"] = database.create_approval("monitor_stage", {**row["output"], "source": "simulator"})["id"]
+                elif row["output"].get("status") == "정상":   # 시뮬레이터로 정상 값을 보냄 → 지난 요청 정리
+                    row["withdrawn"] = sensor_back_to_normal("simulator")
                 return self.send_json(200, row)
             if path.startswith("/api/approvals/") and path.endswith("/resolve"):
                 s = self.require_staff(check_csrf=True)

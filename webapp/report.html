@@ -113,7 +113,7 @@ body:not(.guest) #menuLogin{display:none}
 <div class="todo" id="todo" hidden></div>
 <!-- 들어가기: 처음이면 우리 집 등록(번호를 받음), 번호가 있으면 넣기. 급하면 등록 없이 신고·대피소만 -->
 <div class="gate" id="gate" hidden>
-<div class="box ok" id="gMine" hidden style="margin:0"><b>📨 이 휴대폰에서 보낸 신고가 있어요</b> <span class="muted" id="gMineN"></span><br><button type="button" id="gMineBtn" style="margin-top:8px">처리 상황 보기</button></div>
+<div class="box ok" id="gMine" hidden style="margin:0"><b>📨 이 <span data-dev>휴대폰</span>에서 보낸 신고가 있어요</b> <span class="muted" id="gMineN"></span><br><button type="button" id="gMineBtn" style="margin-top:8px">처리 상황 보기</button></div>
 <section class="view" id="gLogin">
 <h2>주민 화면에 들어가기</h2>
 <p class="lead">우리 집을 한 번 등록해 두면 신고할 때 위치를 다시 적지 않아도 되고, 담당자의 안부 확인과 물품을 우리 집으로 받을 수 있어요. <b>이름·전화번호는 받지 않아요.</b></p>
@@ -127,7 +127,7 @@ body:not(.guest) #menuLogin{display:none}
 <p class="muted" style="margin:0 0 6px">영어와 숫자로 된 번호예요. 대문자·소문자는 상관없고 앞의 <b>H-</b>는 빼고 적어도 돼요.</p>
 <button type="submit" class="big" id="loginBtn">들어가기</button><p class="err" id="loginErr" aria-live="assertive"></p>
 <details class="desc"><summary>❓ 번호를 모르겠어요</summary><p>가족이 먼저 등록했다면 가족 휴대폰의 <b>주민 화면 → 🏠 우리 집</b>에 번호가 있어요. 텔레그램 봇을 연결했다면 봇에서도 볼 수 있어요. 모르면 <b>처음이에요</b>로 새로 등록해도 괜찮아요.</p></details></form>
-<details class="desc gwhat"><summary>❓ 우리 집 번호가 뭐예요?</summary><p>우리 집을 등록하면 받는 번호예요(예: <b>H-3F9A1C2B7D</b>). 비밀번호 대신 이 번호로 들어와요. 한 번 들어오면 이 휴대폰은 번호를 기억해서 다음부터는 바로 들어가요. 담당자는 이 번호로 우리 집 위치를 알고, 안부를 묻거나 물품을 보내요.</p></details>
+<details class="desc gwhat"><summary>❓ 우리 집 번호가 뭐예요?</summary><p>우리 집을 등록하면 받는 번호예요(예: <b>H-3F9A1C2B7D</b>). 비밀번호 대신 이 번호로 들어와요. 한 번 들어오면 이 <span data-dev>휴대폰</span>은 번호를 기억해서 다음부터는 바로 들어가요. 담당자는 이 번호로 우리 집 위치를 알고, 안부를 묻거나 물품을 보내요.</p></details>
 <details class="acc" id="gDemo"><summary>시연용 집으로 둘러보기 <span class="sum-sub">발표·심사용으로 미리 만든 가상의 집</span></summary><div class="acc-body">
 <p class="muted" style="margin-top:0">한 집을 고르고 아래 버튼을 누르면 그 집으로 들어갑니다.</p>
 <div class="vlist" id="gDemoList" role="radiogroup" aria-label="시연용 집" data-fold="6"></div>
@@ -166,8 +166,8 @@ body:not(.guest) #menuLogin{display:none}
 <p class="q"><span class="n">3</span>몇 명인가요? <span class="opt">(모르면 넘어가세요)</span></p>
 <div class="choices" id="people"><label><input type="radio" name="ppl" value="1"> 1명</label><label><input type="radio" name="ppl" value="2"> 2명</label><label><input type="radio" name="ppl" value="3"> 3명</label><label><input type="radio" name="ppl" value="4"> 4명</label><label><input type="radio" name="ppl" value="5명 이상"> 5명 이상</label></div>
 <div class="choices" id="vuln" style="margin-top:8px" aria-label="도움이 더 필요한 분"><label><input type="checkbox" value="어르신"> 어르신</label><label><input type="checkbox" value="영유아"> 영유아</label><label><input type="checkbox" value="거동 불편"> 거동이 불편한 분</label><label><input type="checkbox" value="임산부"> 임산부</label></div>
-<p class="q"><span class="n">4</span>더 알려 주실 내용 <span class="opt">(선택)</span></p>
-<textarea id="reportText" maxlength="1500" placeholder="예: 반지하 현관까지 물이 들어왔어요. 할머니가 2층으로 못 올라가세요."></textarea>
+<p class="q" id="qDetail"><span class="n">4</span>더 알려 주실 내용 <span class="opt">(선택)</span></p>
+<textarea id="reportText" aria-labelledby="qDetail" maxlength="1500" placeholder="예: 반지하 현관까지 물이 들어왔어요. 할머니가 2층으로 못 올라가세요."></textarea>
 <div class="preview" id="preview" aria-live="polite">위에서 고르면 보낼 내용이 여기에 보여요.</div>
 <button id="submitIncident" type="submit" class="big">신고 보내기</button>
 <p class="muted" id="formErr" aria-live="assertive"></p>
@@ -211,7 +211,7 @@ body:not(.guest) #menuLogin{display:none}
 </div>
 </div></details>
 <div class="hasHome" hidden>
-<details class="acc" id="accPrep" open><summary>⚠️ 우리 집 대비 안내</summary><div class="acc-body"><ul class="tips" id="tips" data-fold="3"></ul><p><b>가장 가까운 대피소</b><br><span id="nearShelter" class="muted"></span></p><p><b>안전 확인</b><br><span id="checkState" class="muted"></span></p></div></details>
+<details class="acc" id="accPrep" open><summary>⚠️ 우리 집 대비 안내</summary><div class="acc-body"><ul class="tips" id="tips" data-fold="3"></ul><p><b id="nearTitle">가장 가까운 대피소</b><br><span id="nearShelter" class="muted"></span></p><p><b>안전 확인</b><br><span id="checkState" class="muted"></span></p></div></details>
 <details class="acc" id="accSupply"><summary>📦 물품 요청 <span class="sum-sub" id="supplySub"></span></summary><div class="acc-body">
 <p class="muted" style="margin-top:0">물, 식료품 같은 급한 물품을 요청합니다. 담당자가 확인한 뒤 우리 집으로 보내 드려요. 의약품은 담당자에게 직접 문의하세요.</p>
 <form id="needForm"><div class="row2"><div><label for="needItem">필요한 물품</label><select id="needItem" required></select></div><div><label for="needQty">수량</label><input id="needQty" type="number" min="1" max="1000" value="1" required></div><div><label for="needWhen">언제까지</label><select id="needWhen"></select></div></div>
@@ -233,6 +233,9 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 async function api(path,options={}){const r=await fetch(path,{...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});const data=await r.json().catch(()=>({error:'서버 응답을 읽을 수 없습니다'}));if(!r.ok)throw new Error(data.error||`HTTP ${r.status}`);return data}
 const fmt=s=>{if(!s)return '';const d=new Date(s);return Number.isNaN(d.getTime())?s:d.toLocaleString('ko-KR')};
 const hm=d=>d.toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'});
+// 기기에 맞는 낱말(컴퓨터로 열었으면 '이 휴대폰' 대신 '이 컴퓨터')
+const devWord=()=>({pc:'컴퓨터',tablet:'태블릿'})[document.documentElement.dataset.device]||'휴대폰';
+if(window.UI&&UI.env)UI.env.then(()=>document.querySelectorAll('[data-dev]').forEach(e=>e.textContent=devWord()));
 const store={get(k){try{return localStorage.getItem(k)||''}catch(e){return ''}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
 
 // ---- 메뉴: 4개(신고·대피소·알림·우리 집). 예전 주소(#status, #shelters 등)도 알맞은 메뉴로 연다
@@ -297,7 +300,7 @@ const list=sortedShelters(mine),best=list[0];
 $('goCard').className='go-card'+(best&&best.capacity_left>0?'':' none');
 $('goCard').innerHTML=best?`<div class="muted">${mine?'우리 집에서 가장 가까운':'자리가 많이 남은'} 대피소</div><b class="nm">${esc(best.name)}</b><div>${esc(place(best.zone))} · 남은 자리 <b>${esc(Math.max(0,best.capacity_left))}</b>명${best.amenities.length?' · '+esc(best.amenities.join(', ')):''}</div>${!HOME?'<div class="muted">우리 집 위치를 알려 주시면 가까운 곳부터 보여 드려요. <a href="#home">우리 집 위치 입력</a></div>':mine?'':'<div class="muted">적어 주신 우리 집 위치로는 거리를 알 수 없어 남은 자리가 많은 곳부터 보여 드려요. 가까운 곳은 담당자 안내를 따르세요.</div>'}`:'대피소 정보가 없습니다.';
 $('shelTitle').textContent=mine?'우리 집에서 가까운 순':'남은 자리가 많은 순';
-$('shelters').innerHTML=list.map(x=>{const used=Math.round(100*(x.capacity-Math.max(0,x.capacity_left))/x.capacity),near=mine?distTxt(gridDist(mine,x.zone)):'';return `<li class="shel"><span><b>${esc(x.name)}</b>${near?`<span class="here">${esc(near)}</span>`:''}<br><span class="muted">${esc(place(x.zone))}${x.amenities.length?' · '+esc(x.amenities.join(', ')):''}</span></span>${x.capacity_left>0?`<span>남은 자리 <b>${esc(x.capacity_left)}</b>명</span>`:'<span class="full">가득 참</span>'}<span class="meter${x.capacity_left<=0?' full':x.capacity_left<x.capacity*0.2?' tight':''}"><span style="width:${Math.min(100,used)}%"></span></span></li>`}).join('');
+$('shelters').innerHTML=list.map(x=>{const used=Math.round(100*(x.capacity-Math.max(0,x.capacity_left))/x.capacity),near=mine?distTxt(gridDist(mine,x.zone)):'';return `<li class="shel"><span><b>${esc(x.name)}</b>${near?`<span class="here">${esc(near)}</span>`:''}<br><span class="muted">${esc(place(x.zone))}${x.amenities.length?' · '+esc(x.amenities.join(', ')):''}</span></span>${x.capacity_left>0?`<span>남은 자리 <b>${esc(x.capacity_left)}</b>명</span>`:'<span class="full">가득 참</span>'}<span class="meter${x.capacity_left<=0?' full':x.capacity_left<x.capacity*0.2?' tight':''}" title="남은 자리 비율" aria-hidden="true"><span style="width:${Math.max(0,Math.min(100,Math.round(100*x.capacity_left/Math.max(1,x.capacity))))}%"></span></span></li>`}).join('');
 $('controls').className=d.control_zones.length?'':'muted';$('controls').innerHTML=d.control_zones.length?'<ul class="list">'+d.control_zones.map(c=>`<li>⛔ <b>${esc(c.name)}</b>${c.between.length?' <span class="muted">('+esc(c.between.map(place).join(' ↔ '))+' 사이)</span>':''}</li>`).join('')+'</ul>':'지금 통제 중인 길은 없습니다.'}
 
 // ---- 신고 만들기: 고른 것을 한 문장으로 합쳐 보낸다(접수 에이전트가 알아듣는 말로)
@@ -398,7 +401,7 @@ try{await api('/api/incidents/'+encodeURIComponent(id)+'/supplement',{method:'PO
 $('myReports').addEventListener('click',async e=>{const ed=e.target.closest('[data-edit]'),ca=e.target.closest('[data-cancel]'),cl=e.target.closest('[data-editclose]');
  if(ed){const f=$('myReports').querySelector(`.editForm[data-id="${CSS.escape(ed.dataset.edit)}"]`);f.hidden=false;f.querySelector('textarea').focus()}
  if(cl){cl.closest('form').hidden=true}
- if(ca){const id=ca.dataset.cancel;if(!confirm('이 신고를 취소할까요?\n잘못 보냈거나 이미 해결됐을 때만 취소해 주세요. 위험하면 119·112에 바로 전화하세요.'))return;
+ if(ca){const id=ca.dataset.cancel;if(!await UI.confirm('이 신고를 취소할까요?\n잘못 보냈거나 이미 해결됐을 때만 취소해 주세요. 위험하면 119·112에 바로 전화하세요.', {ok:'예, 취소할게요',cancel:'아니요',danger:true}))return;
   try{const r=await api('/api/incidents/'+encodeURIComponent(id)+'/cancel',{method:'POST',body:JSON.stringify({token:tokens()[id]})});
    alert(r.already_acting?'신고를 취소했어요. 이미 출동이 승인돼 있어 담당자에게 취소를 알렸어요.':'신고를 취소했어요.');drawMyReports(id)}catch(err){alert('취소하지 못했어요: '+err.message)}}});
 $('myReports').addEventListener('submit',async e=>{const f=e.target.closest('.editForm');if(!f)return;e.preventDefault();const id=f.dataset.id;
@@ -416,7 +419,9 @@ if(!$('hAddress').value.trim()){$('homeResult').textContent='우리 집 위치�
 const body={address:$('hAddress').value.trim(),floor:floor&&floor.value,members:Number($('hMembers').value),consent:$('hConsent').checked,people_factors:[...$('hPeople').querySelectorAll('input:checked')].map(c=>c.value).filter(Boolean)};
 $('homeSave').disabled=true;try{const editing=HOME&&HOME.household.registered;const r=await api(editing?`/api/public/households/${encodeURIComponent(HH)}/update`:'/api/public/households',{method:'POST',body:JSON.stringify(body)});
 HH=r.id;store.set('hh',HH);
-if(!editing){$('homeForm').hidden=true;$('homeResult').innerHTML=`<div class="codebox"><div class="muted">우리 집 번호</div><div class="code">${esc(HH)}</div><p class="muted">다음에 들어올 때와 가족 휴대폰에서 이 번호를 넣어요. 적어 두거나 사진으로 남겨 두세요.</p><button type="button" class="big" id="enterNew">이 코드로 들어가기</button></div>`;
+if(!editing){$('homeForm').hidden=true;$('homeResult').innerHTML=`<div class="codebox"><div class="muted">우리 집 번호</div><div class="code">${esc(HH)}</div><p class="muted">다음에 들어올 때와 가족 휴대폰에서 이 번호를 넣어요. 적어 두거나 사진으로 남겨 두세요.</p><button type="button" class="sub" id="copyCode">📋 번호 복사</button> <span class="muted" id="copyMsg" aria-live="polite"></span><button type="button" class="big" id="enterNew">이 코드로 들어가기</button></div>`;
+ $('homeResult').scrollIntoView({block:'center'});   // 번호가 화면 위로 지나가 버리지 않게
+ $('copyCode').addEventListener('click',async()=>{try{await navigator.clipboard.writeText(HH);$('copyMsg').textContent='복사했어요'}catch(e){const r=document.createRange();r.selectNodeContents($('homeResult').querySelector('.code'));const sel=getSelection();sel.removeAllRanges();sel.addRange(r);$('copyMsg').textContent='번호를 골라 두었어요. 길게 눌러 복사하세요'}});
  await loadHome();$('enterNew').addEventListener('click',()=>{$('homeResult').textContent='';$('homeForm').hidden=false;enterAs(WANT==='report'?'home':WANT)});return}
 $('homeResult').textContent='저장했습니다. 이제 신고할 때 위치를 다시 적지 않아도 되고, 대비 안내와 물품 요청을 쓸 수 있어요.';await loadHome();$('accHome').open=false;$('accPrep').open=true}catch(err){$('homeResult').textContent='저장하지 못했습니다: '+err.message}finally{$('homeSave').disabled=false}});
 function fillHomeForm(h){$('hAddress').value=h.address||'';const f=$('homeForm').querySelector(`input[name=floor][value="${h.floor}"]`);if(f)f.checked=true;
@@ -425,7 +430,7 @@ function homeText(h){const ppl=h.factors.filter(x=>PEOPLE_TXT[x]).map(x=>PEOPLE_
 let homeFilled=false;
 async function loadHome(){if(!HH){HOME=null;showHomeParts();return}
 try{HOME=await api('/api/public/households/'+encodeURIComponent(HH))}catch(e){HOME=null;if(/찾을 수 없/.test(e.message)){HH='';store.set('hh','');
- $('loginErr').textContent='이 휴대폰에 저장된 우리 집 번호를 찾을 수 없어요. 번호를 다시 넣거나 새로 등록해 주세요.';gShow('code');showHomeParts();return go(location.hash.slice(1))}}
+ $('loginErr').textContent='이 '+devWord()+'에 저장된 우리 집 번호를 찾을 수 없어요. 번호를 다시 넣거나 새로 등록해 주세요.';gShow('code');showHomeParts();return go(location.hash.slice(1))}}
 showHomeParts()}
 const STEPS=['검토','승인','배치','이동','완료'];
 function showHomeParts(){const has=!!HOME;drawAnn();drawTodo();syncWhere();document.querySelectorAll('.needhome').forEach(x=>x.hidden=has);document.querySelectorAll('.hasHome').forEach(x=>x.hidden=!has);
@@ -437,7 +442,7 @@ const h=HOME.household;$('homeSummary').innerHTML=`<b>우리 집</b> · ${homeTe
  `<div class="codeline"><span class="muted">우리 집 번호</span><b class="code">${esc(h.id)}</b><button type="button" class="sub" data-nocool id="copyCode">복사</button></div>`;
 $('copyCode').addEventListener('click',()=>{navigator.clipboard?.writeText(h.id).then(()=>{$('copyCode').textContent='복사했어요'},()=>{});});$('homeSumSub').textContent=h.registered?'고칠 때만 펼치세요':'';
 if(!homeFilled&&document.activeElement?.closest?.('#homeForm')==null){fillHomeForm(h);homeFilled=true;$('accHome').open=false}
-$('tips').innerHTML=HOME.risks.map(r=>`<li>${esc(r)}</li>`).join('');$('nearShelter').textContent=HOME.nearest_shelter?`${HOME.nearest_shelter.name} (${HOME.nearest_shelter.place}) · 남은 자리는 '대피소' 메뉴에서 확인하세요`:'정보 없음';
+$('tips').innerHTML=HOME.risks.map(r=>`<li>${esc(r)}</li>`).join('');{const roomy=PUB&&sortedShelters(null)[0];$('nearTitle').textContent=HOME.nearest_shelter?'가장 가까운 대피소':'대피소';$('nearShelter').textContent=HOME.nearest_shelter?`${HOME.nearest_shelter.name} (${HOME.nearest_shelter.place}) · 남은 자리는 '대피소' 메뉴에서 확인하세요`:`적어 주신 우리 집 위치로는 거리를 알 수 없어요.${roomy?` 지금 자리가 많이 남은 곳: ${roomy.name}(남은 자리 ${Math.max(0,roomy.capacity_left)}명).`:''} 가까운 대피소는 담당자 안내나 '대피소' 메뉴에서 확인하세요.`}
 $('checkState').textContent=!c?'지금 담당자가 안전을 묻고 있지 않습니다. 물어보면 화면 위에 버튼이 나타나요.':asking?'담당자가 묻고 있어요. 화면 위의 \'안전합니다\'를 눌러 주세요.':'안전하다고 알렸습니다.';
 if(!$('needItem').options.length){$('needItem').innerHTML=HOME.catalog.map(i=>`<option>${esc(i)}</option>`).join('');$('needWhen').innerHTML=HOME.when.map(w=>`<option${w==='오늘 중'?' selected':''}>${esc(w)}</option>`).join('')}
 const active=HOME.requests.filter(r=>r.state!=='완료').length;$('supplySub').textContent=HOME.requests.length?`진행 중 ${active}건`:'';
@@ -486,7 +491,7 @@ $('gDemoEnter').addEventListener('click',async()=>{const v=$('gDemoList').queryS
 $('guestReport').addEventListener('click',()=>{GUEST=true;goForm()});
 $('guestMap').addEventListener('click',()=>{GUEST=true;go('map')});
 document.addEventListener('click',e=>{if(e.target.closest('[data-login]'))showGate(location.hash.slice(1)||'report',{login:true})});
-$('logoutBtn').addEventListener('click',()=>{if(!confirm('나갈까요?\n이 휴대폰에 저장된 우리 집 번호와 내 신고 기록을 지워요. 다시 들어오려면 우리 집 번호가 필요해요.'))return;
+$('logoutBtn').addEventListener('click',async()=>{if(!await UI.confirm('나갈까요?\n이 '+devWord()+'에 저장된 우리 집 번호와 내 신고 기록을 지워요. 다시 들어오려면 우리 집 번호가 필요해요.', {ok:'나가기',danger:true}))return;
  ['hh','receipts','rtokens','lastReceipt','draft'].forEach(k=>store.set(k,''));HH='';HOME=null;GUEST=false;homeFilled=false;
  $('homeForm').reset();$('homeResult').textContent='';$('myReports').innerHTML='';showHomeParts();showGate('report')});
 

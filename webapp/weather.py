@@ -8,6 +8,8 @@
 import json, math, os, threading, time, urllib.parse, urllib.request
 from datetime import datetime, timedelta
 
+from common.clock import now_kst
+
 BASE = "http://apis.data.go.kr/1360000"
 GEOJE = (34.8806, 128.6211)   # 거제시청(격자 변환용)
 AREA_WORDS = ("거제", "경상남도", "경남")
@@ -68,7 +70,7 @@ def _fetch(url):
 
 
 class WeatherFeed:
-    def __init__(self, key=None, fetch=_fetch, clock=time.time, now=datetime.now):
+    def __init__(self, key=None, fetch=_fetch, clock=time.time, now=now_kst):   # 기상청 기준 시각은 한국 시각
         self.key = os.getenv("KMA_API_KEY", "") if key is None else key
         self.fetch, self.clock, self.now = fetch, clock, now
         self.lock, self.cache = threading.Lock(), None
