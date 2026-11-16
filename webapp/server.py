@@ -1393,11 +1393,21 @@ def post_announcement(data, by):
         raise ValueError("구역은 전체 또는 구역 ID여야 합니다")
     if not isinstance(urgent, bool):
         raise ValueError("긴급 여부는 예/아니오여야 합니다")
+    # 연결이 끊겨 화면이 같은 공지를 다시 보낼 때(같은 요청 번호) 두 번 게시·발송하지 않는다
+    req = data.get("request_id")
+    if req is not None and (not isinstance(req, str) or not re.fullmatch(r"[A-Za-z0-9-]{8,40}", req)):
+        raise ValueError("요청 번호 형식이 맞지 않습니다")
+    if req:
+        for a in database.list_records("announcement"):
+            if a.get("request_id") == req and a.get("by") == by:
+                return a
     if sum(a["active"] for a in database.list_records("announcement")) >= ANNOUNCE_MAX_ACTIVE:
         raise features.Conflict(f"게시 중인 공지가 {ANNOUNCE_MAX_ACTIVE}개입니다. 지난 공지를 내린 뒤 올려 주세요")
     aid = "AN-" + uuid.uuid4().hex[:6].upper()
     row = {"id": aid, "text": text.strip(), "audience": audience, "zone": zone, "urgent": urgent,
            "at": time.time(), "by": by, "active": True}
+    if req:
+        row["request_id"] = req
     database.put_record("announcement", aid, row)
     database.log_audit("announcement_posted", "announcement", aid, {"by": by, "audience": audience, "zone": zone, "urgent": urgent})
     TELEGRAM.announcement(row)   # 주민 대상이면 텔레그램 구독자에게도

@@ -541,7 +541,9 @@
       e.preventDefault();
       const b = e.submitter; if (b) b.disabled = true;
       try {
-        await post('/api/announcements', {text: $('annText').value, audience: $('annAudience').value, zone: 'all', urgent: $('annUrgent').value === '1'});
+        // 요청 번호를 붙여 보내면, 연결이 끊겨 다시 보내도 서버가 같은 공지로 알아본다(두 번 게시·발송 안 됨)
+        const rid = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+        await api('/api/announcements', {method: 'POST', retry: true, body: JSON.stringify({text: $('annText').value, audience: $('annAudience').value, zone: 'all', urgent: $('annUrgent').value === '1', request_id: rid})});
         $('annText').value = ''; show('annResult', '공지를 올렸습니다. 주민·봉사자 화면에 15초 안에 나타납니다.'); loadAnnouncements();
       } catch (err) { fail('annResult', err); } finally { if (b) b.disabled = false; }
     });

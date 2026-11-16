@@ -694,6 +694,17 @@ class TestPublicStatus(ServerBase):
         self.assertEqual(next(x for x in listing if x["id"] == a["id"])["ended_by"], "담당자")
         self.assertEqual(self.post("/api/announcements/AN-NONE/end", {})[0], 404)
 
+    def test_announcement_resent_after_dropped_connection_is_posted_once(self):
+        """연결이 끊겨 화면이 같은 요청 번호로 다시 보내면 같은 공지를 돌려준다(두 번 게시·발송 안 됨)."""
+        body = {"text": "재전송 시험 공지", "audience": "all", "zone": "all", "urgent": False, "request_id": "rid-1234abcd"}
+        code1, a1 = self.post("/api/announcements", body)
+        code2, a2 = self.post("/api/announcements", body)
+        self.assertEqual((code1, code2, a1["id"]), (201, 201, a2["id"]))
+        same = [x for x in self.get("/api/announcements")[1]["items"] if x["text"] == "재전송 시험 공지"]
+        self.assertEqual(len(same), 1)
+        self.assertEqual(self.post("/api/announcements", dict(body, request_id="bad id!"))[0], 400)
+        self.post(f"/api/announcements/{a1['id']}/end", {})
+
     def test_anonymous_sees_stage_shelters_without_staff_names(self):
         anon = Client(self.base)
         status, d = anon.get("/api/public/status")
