@@ -113,3 +113,14 @@ class TestIntake(unittest.TestCase):
              ("Z2 대피소에 담요가 모자라요", 20), ("Z2 대피소 담요 아직 안 왔어요", 90), ("Z2 담요 보내 주세요", 200)])]
         groups = sorted(sorted(g["members"]) for g in I.build_inbox(recs, CFG))
         self.assertEqual(groups, [["M0", "M1"], ["M2"], ["M3", "M4"], ["M5"]])   # 대상이 다르면 따로, '아직'은 3시간 안이면 묶음
+
+    def test_place_written_in_plain_text_is_not_asked_again(self):
+        """텔레그램처럼 '위치:' 칸 없이 글로만 보낸 신고도 주소·동 이름·건물 이름이 있으면 위치를 다시 묻지 않는다."""
+        for text in ("옥포동 ○○빌라 반지하에 할머니가 갇혀 있어요", "거제대로 3512 앞 도로가 잠겼어요",
+                     "하청면 석포리 123 마을 뒤에서 흙이 무너져요", "가람초등학교 정문 앞 맨홀이 열렸어요",
+                     "물이 차요 GPS 34.88, 128.62 (오차 약 12m)", "위치: 시장 근처 · 물이 차요"):
+            self.assertTrue(I.has_place(text), text)
+            self.assertEqual(I.classify("P", text, 0, CFG).output["missing"], [], text)
+        for text in ("물이 차서 지하 주차장이 잠기고 있어요", "차가 이동을 못 해요 사람이 갇혔어요", "우리 아파트에 물이 들어와요"):
+            self.assertFalse(I.has_place(text), text)
+            self.assertEqual(I.classify("P", text, 0, CFG).output["missing"], ["위치"], text)
