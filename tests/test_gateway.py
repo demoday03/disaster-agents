@@ -231,9 +231,9 @@ class TestSensorHub(unittest.TestCase):
         w = self.hub.window(25)                                                 # 마지막 25초: 320(20초 전)·90(10초 전)
         self.assertEqual((w["A.depth"]["max"], w["A.depth"]["age_s"]), (320, 10))
         self.assertEqual(self.hub.window(5), {})
-        self.assertEqual((self.hub.thresholds()["A.depth"], self.hub.cautions()), (400, {"A.depth": 150}))
+        self.assertEqual((self.hub.thresholds()["A.depth"], self.hub.cautions()), (400, {"A.depth": 355}))
         st = next(x for x in self.hub.status()["sensors"] if x["key"] == "A.depth")
-        self.assertEqual((st["caution"], st["over_caution"], st["over"]), (150, False, False))   # 마지막 값 90
+        self.assertEqual((st["caution"], st["over_caution"], st["over"]), (355, False, False))   # 마지막 값 90
 
     def test_downlink_only_confirmed_stage_and_safety_check(self):
         self.assertEqual(self.hub.downlink(), {"level": 0, "level_name": "정상", "safety_check": False})
