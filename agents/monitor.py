@@ -4,6 +4,8 @@
   (센서 키가 여러 개인 규칙은 예전처럼 모두 함께 넘어야 후보, 하나만 넘으면 보류)
 - 사면: 기울기와 진동이 짧은 시간 안에 함께 반응 → 확정 후보
 - 단독 반응은 '보류', 일시 튐은 '정상'(로그만). 단계 확정은 담당자.
+- optional_nodes(설정)에 있는 노드는 설치하지 않았을 수 있다. 최근 값이 하나도 없으면 '끊김'으로 보지 않고
+  그 노드의 규칙(예: 사면)만 건너뛴다. 값이 들어오면(실제 기기·센서 시뮬레이터) 평소처럼 판정한다.
 """
 import json
 from collections import defaultdict
@@ -37,12 +39,16 @@ class Monitor:
                 continue
         for samples in by.values(): samples.sort(key=lambda r: r["ts"])
 
+        # 설치하지 않은 선택 노드(최근 값이 하나도 없음)는 끊김·판단 보류로 치지 않는다.
+        absent = {nd for nd in cfg.get("optional_nodes", []) if not any(k.split(".")[0] == nd for k in by)}
         # 노드 연결 상태와 개별 센서 데이터 신선도를 따로 검사한다.
         faults, stale_sensors = [], []
         for node in cfg["nodes"]:
+            if node in absent: continue
             ts = [r["ts"] for k, values in by.items() if k.startswith(node + ".") for r in values]
             if not ts or now - max(ts) > cfg["stale_sec"]: faults.append(node)
         for key in cfg["sensors"]:
+            if key.split(".")[0] in absent: continue
             samples = by.get(key, [])
             if not samples or now - samples[-1]["ts"] > cfg["stale_sec"]: stale_sensors.append(key)
 
@@ -64,6 +70,7 @@ class Monitor:
             log.append(f"센서 {sensor} 최신 데이터 없음/오래됨 → 판단 보류")
         for name, rule in cfg["rules"].items():
             keys = rule["keys"]
+            if any(k.split(".")[0] in absent for k in keys): continue   # 설치 안 한 노드의 규칙
             test = sustained if rule["mode"] == "sustained" else in_window
             hits = [k for k in keys if test(k)]
             label = {"flood": "침수", "slope": "사면"}.get(name, name)

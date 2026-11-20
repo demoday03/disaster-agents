@@ -15,6 +15,21 @@ class TestMonitor(unittest.TestCase):
         res = mon().evaluate(calm(), NOW)
         self.assertEqual(res.output["status"], "정상"); self.assertFalse(res.needs_approval)
 
+    def test_only_node_a_installed(self):
+        """노드 B(선택 노드)를 설치하지 않아 값이 하나도 없으면 끊김·보류로 보지 않는다. 수심만으로 판정."""
+        a_only = [x for x in calm() if x["node"] == "A"]
+        res = mon().evaluate(a_only, NOW)
+        self.assertEqual((res.output["status"], res.output["sensor_faults"], res.output["stale_sensors"]), ("정상", [], []))
+        flood = [r("A", "depth", 400, NOW - i) for i in range(5)]
+        res = mon().evaluate(flood, NOW)
+        self.assertEqual((res.output["status"], res.output["hazards"]), ("확정후보", ["침수"])); self.assertTrue(res.needs_approval)
+
+    def test_node_a_missing_is_still_a_fault(self):
+        """필수 노드 A가 끊기면 예전처럼 센서 이상(보류)."""
+        b_only = [x for x in calm() if x["node"] == "B"]
+        res = mon().evaluate(b_only, NOW)
+        self.assertEqual((res.output["status"], res.output["sensor_faults"]), ("보류", ["A"]))
+
     def test_depth_over_caution_only_is_watch(self):
         """수심이 주의 기준(330)만 연속으로 넘으면 '보류(주의)', 승인 요청은 없다."""
         d = [x for x in calm() if x["node"] != "A"] + [r("A", "depth", 345, NOW - i) for i in range(5)]
