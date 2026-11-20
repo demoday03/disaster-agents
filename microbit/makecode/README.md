@@ -14,7 +14,7 @@ disaster-agents 서버(`gateway/microbit_gateway.py`)에 맞춘 MakeCode 코드.
 
 | 장치 | 파일 | 핀 | 버튼 | 지금 서버 연결 |
 |---|---|---|---|---|
-| A 침수 | `A_침수.ts` | P0 수심 센서 1개 | A: 수심 값 표시(설치 점검) | ✅ |
+| A 침수 | `A_침수.ts` | P4 수심 센서, LED P5·P8·P9, P2 릴레이(배수 모터) | B: 수심 값 표시(설치 점검) | ✅ (위험이면 모터 켬 + FLOOD 신호) |
 | B 사면 | `B_사면.ts` | P0 진동, P9 기울기(S), P8 모듈 LED(L) | A: 진동 최댓값, B: 기울기 핀 값 | ✅ |
 | G 게이트웨이 | `G_게이트웨이.ts` | P1 TX → 블루투스 모듈 RXD, P2 RX ← 모듈 TXD | – | ✅ (받기·내려보내기, 블루투스 또는 USB) |
 | C 대피소 | `C_대피소.ts` | (내장 온도) | A 입소, B 퇴소, 로고 물품 도착 | ✅ (보드에는 아직 안 올림) |
@@ -32,10 +32,10 @@ disaster-agents 서버(`gateway/microbit_gateway.py`)에 맞춘 MakeCode 코드.
 | `Q,노드` | G → 노드 | 안전 확인 요청 | `Q,D` |
 | `X` | G → 전체 | 상황 해제 | `X` |
 
-이벤트 코드: C `+1` `-1` `GOT` / D `SAFE` `SOS` `NEED` `DARK` `LIGHT` / E `IN` `SOS` `DONE` `HEAT` `COOL`
+이벤트 코드: A `FLOOD` `DRAIN` / C `+1` `-1` `GOT` / D `SAFE` `SOS` `NEED` `DARK` `LIGHT` / E `IN` `SOS` `DONE` `HEAT` `COOL`
 
 ## 설치 점검 때 맞출 값
-- A `CAUTION`·`DANGER`(수심 주의·위험), B `VIBRATION_THRESHOLD`: 화면 표시용. 서버 `config/monitor.json` 과 같은 값으로
+- A `CAUTION`·`DANGER`(수심 주의·위험, 지금 330·360), B `VIBRATION_THRESHOLD`: 화면 표시용. 서버 `config/monitor.json` 과 같은 값으로
 - B 기울기 모듈에 저항이 있으면 `PinPullMode.PullNone`
 - D `DARK_THRESHOLD`, E `HEAT_THRESHOLD`·`INVERTED`
 - 같은 교실 다른 팀과 그룹 23 이 겹치면 6개 파일과 서버 쪽 모두 바꾼다
