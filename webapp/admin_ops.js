@@ -488,7 +488,7 @@
       const d = await api('/api/sensor/status');
       if (!d.gateway_enabled) {
         $('sensorLive').innerHTML = d.cloud
-          ? '센서 게이트웨이가 꺼져 있습니다. Render → Environment에 SENSOR_GATEWAY_TOKEN을 넣고, 노트북에서 같은 토큰으로 <code>python gateway/microbit_gateway.py --server 이 사이트 주소 --port COM5 --bt</code>를 켜면 블루투스로 받은 센서 값이 이 사이트에 들어옵니다(docs/마이크로비트_게이트웨이.md).'
+          ? '센서 게이트웨이가 꺼져 있습니다. Render → Environment에 SENSOR_GATEWAY_TOKEN을 넣고, 노트북에서 같은 토큰으로 <code>python gateway/microbit_gateway.py --server 이 사이트 주소 --port COM3</code>을 켜면 수신기(G) 마이크로비트가 무선으로 받은 센서 값이 이 사이트에 들어옵니다(docs/마이크로비트_게이트웨이.md).'
           : '게이트웨이가 꺼져 있습니다. 서버를 SENSOR_GATEWAY_TOKEN 환경변수와 함께 실행하고 <code>python gateway/microbit_gateway.py</code>를 켜세요(docs/마이크로비트_게이트웨이.md).';
         return;
       }

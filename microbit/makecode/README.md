@@ -5,10 +5,10 @@ disaster-agents 서버(`gateway/microbit_gateway.py`)에 맞춘 MakeCode 코드.
 ## 올리는 법
 1. https://makecode.microbit.org 에서 새 프로젝트 → 위쪽 **JavaScript** 탭
 2. 파일 내용을 전부 붙여 넣기 → 다운로드 → 마이크로비트에 복사
-3. **G 는 외부 블루투스 모듈(HC-05/HC-06)로 노트북과 잇는다**(P1 → 모듈 RXD, P2 ← 모듈 TXD, 9600, 노트북에서 페어링 후
-   `python gateway/microbit_gateway.py --port COM5 --bt`). USB로 쓰려면 `G_게이트웨이.ts` 의 `USE_BLUETOOTH = false`.
-   A~E 와 블루투스 모드의 G 는 배터리(보조배터리 권장)로 전원. 자세한 배선: 프로젝트 `docs/마이크로비트_게이트웨이.md` 1-2
-   (`hex/G_게이트웨이.hex` 는 예전 USB 버전, `hex/A_침수.hex` 는 예전 수위 센서 2개 버전. 둘 다 .ts 를 붙여 넣어 새로 받는다)
+3. **노드끼리는 무선(radio, 그룹 23), G 와 노트북은 USB 케이블**로 잇는다(데이터 케이블, 속도 115200).
+   노트북에서 `python gateway/microbit_gateway.py --port COM3` (`--list-ports` 로 포트 확인). 외부 블루투스 모듈은 쓰지 않는다
+   (필요하면 `G_게이트웨이.ts` 의 `USE_BLUETOOTH = true` 와 `--bt`). A~E 는 배터리(보조배터리 권장)로 전원.
+   (`hex/` 의 파일은 예전 버전이므로 .ts 를 붙여 넣어 새로 받는다)
 
 ## 장치별 요약
 
@@ -16,7 +16,7 @@ disaster-agents 서버(`gateway/microbit_gateway.py`)에 맞춘 MakeCode 코드.
 |---|---|---|---|---|
 | A 침수 | `A_침수.ts` | P4 수심 센서, LED P5·P8·P9, P2 릴레이(배수 모터) | B: 수심 값 표시(설치 점검) | ✅ (위험이면 모터 켬 + FLOOD 신호) |
 | B 사면 | `B_사면.ts` | P0 진동, P9 기울기(S), P8 모듈 LED(L) | A: 진동 최댓값, B: 기울기 핀 값 | ✅ |
-| G 게이트웨이 | `G_게이트웨이.ts` | P1 TX → 블루투스 모듈 RXD, P2 RX ← 모듈 TXD | – | ✅ (받기·내려보내기, 블루투스 또는 USB) |
+| G 게이트웨이 | `G_게이트웨이.ts` | USB 케이블로 노트북 (블루투스 모듈은 선택) | – | ✅ (받기·내려보내기) |
 | C 대피소 | `C_대피소.ts` | (내장 온도) | A 입소, B 퇴소, 로고 물품 도착 | ✅ (보드에는 아직 안 올림) |
 | D 가구 | `D_가구.ts` | P1 조도 | A 안전 확인, B SOS, A+B 물품 요청 | ✅ (보드에는 아직 안 올림) |
 | E 봉사자 | `E_봉사자.ts` | P0 온도 | A 체크인, B SOS, 로고 전달 완료, A+B 값 표시 | ✅ |
