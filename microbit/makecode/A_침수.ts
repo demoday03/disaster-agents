@@ -9,7 +9,7 @@
  */
 const GROUP = 23
 // 화면 표시용 기준. 서버 config/monitor.json 의 A.depth caution·threshold 와 맞춘다
-const CAUTION = 355
+const CAUTION = 150
 const DANGER = 400
 
 radio.setGroup(GROUP)

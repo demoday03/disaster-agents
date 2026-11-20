@@ -1,7 +1,7 @@
 # 노드 A(침수): 수심 센서 1개를 1초마다 읽어 G로 무선 전송한다(S,A,depth,값).
 # G는 받은 값을 외부 블루투스 모듈로 노트북 게이트웨이에 넘긴다.
 # 배선: 수심 센서 신호(S) → P0 (아날로그 0~1023, 깊이 잠길수록 큼), 센서 전원 3V·GND.
-# 서버 기준(config/monitor.json): 주의 355 · 위험 400(실제 센서 3V 전원 기준 임시값). 화면 막대로 현재 값을 확인한다.
+# 서버 기준(config/monitor.json): 주의 150 · 위험 400(설치 점검 전 임시값). 화면 막대로 현재 값을 확인한다.
 from microbit import display, pin0, sleep, button_a
 import radio
 

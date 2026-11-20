@@ -66,12 +66,12 @@ class Simulator:
     def tick(self):
         s, n, r = self.scenario, self.n, self.rng
         self.n += 1
-        depth = r.randint(20, 120)   # 수심(주의 355 · 위험 400 기준, config/monitor.json)
+        depth = r.randint(20, 120)   # 수심(주의 150 · 위험 400 기준, config/monitor.json)
         tilt, vib = 0, r.randint(10, 120)
         if s == "flood":
             depth = r.randint(500, 750)
         elif s == "single":
-            depth = r.randint(360, 395)
+            depth = r.randint(200, 350)
         elif s == "spike" and n == 2:
             depth = 900
         elif s == "slope":

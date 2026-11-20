@@ -1,7 +1,7 @@
 {
   "calibrated": false,
   "_note": "임계값은 임시값. 제안서 8.6의 설치 점검에서 측정해 확정하고 D14에 기록한다.",
-  "_depth_note": "A.depth: 노드 A의 수심 센서 1개(아날로그 0~1023, 깊을수록 큼). 실제 센서(3V 전원)는 물에 닿자마자 약 355까지 올라가므로 주의 355·위험 400(LED 기준과 같음). caution을 연속 sustain_n회 넘으면 주의(지켜봄), threshold를 연속 sustain_n회 넘으면 침수 확정 후보(담당자 승인). 한 번 튀는 값은 무시.",
+  "_depth_note": "A.depth: 노드 A의 수심 센서 1개(아날로그 0~1023, 깊을수록 큼). caution을 연속 sustain_n회 넘으면 주의(지켜봄), threshold를 연속 sustain_n회 넘으면 침수 확정 후보(담당자 승인). 한 번 튀는 값은 무시.",
   "sustain_n": 3,
   "window_sec": 10,
   "stale_sec": 30,
@@ -13,7 +13,7 @@
   "sensors": {
     "A.depth": {
       "threshold": 400,
-      "caution": 355,
+      "caution": 150,
       "label": "수심"
     },
     "B.tilt": {
