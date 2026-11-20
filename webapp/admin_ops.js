@@ -498,7 +498,7 @@
       const via = d.link === '블루투스' ? '🔵 외부 블루투스 모듈' : d.link === 'USB' ? 'USB 케이블' : d.link === '가상' ? '가상 센서(시험)' : null;
       $('sensorLive').innerHTML =
         (via ? `<div class="sensor-path">경로: 노드 A·B(·C·D·E) ─무선─▶ <b>G 마이크로비트</b> ─${E(via)}─▶ 노트북 게이트웨이 ─▶ 서버 ${chip('G 연결: ' + via, d.last_batch_age_s != null && d.last_batch_age_s <= 30 ? 'ok' : 'bad')}</div>` : '') +
-        `<div>노드: ${d.nodes.map(n => chip(`${n.node} ${n.online ? '연결' : '끊김'} · ${age(n.last_seen_age_s)}`, n.online ? 'ok' : 'bad')).join(' ')}` +
+        `<div>노드: ${d.nodes.map(n => n.online ? chip(`${n.node} 연결 · ${age(n.last_seen_age_s)}`, 'ok') : n.optional ? chip(`${n.node} 설치 안 함(선택)`) : chip(`${n.node} 끊김 · ${age(n.last_seen_age_s)}`, 'bad')).join(' ')}` +
         ` · 받은 값 ${E(d.received)}개${d.rejected ? ` · 버린 값 ${E(d.rejected)}개` : ''} · 강우 단계 ${E(d.rain_stage)}</div>` +
         table(['센서', '최근 값', '임계값', '받은 때'], d.sensors.map(s =>
           `<tr><td>${E(s.key)}${s.key === 'A.depth' ? ' <span class="muted">(수심)</span>' : ''}</td><td>${s.value == null ? '-' : chip(s.value, s.over ? 'bad' : s.over_caution ? 'warn' : 'ok')}</td>` +

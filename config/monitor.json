@@ -10,6 +10,10 @@
     "A",
     "B"
   ],
+  "_optional_note": "optional_nodes: 설치하지 않았을 수 있는 노드. 최근 값이 없으면 끊김·판단 보류로 보지 않고 그 노드 규칙만 건너뛴다(2026-11-20: 노드 B 사면 센서는 지금 설치 안 함). 값이 들어오면 평소처럼 판정.",
+  "optional_nodes": [
+    "B"
+  ],
   "sensors": {
     "A.depth": {
       "threshold": 360,

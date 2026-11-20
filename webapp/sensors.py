@@ -213,7 +213,8 @@ class SensorHub:
                             for k, r in latest.items() if k not in self.cfg["sensors"]), key=lambda x: x["key"])[:60]
             names = list(self.cfg["nodes"]) + sorted(n for n in self.last_seen if n not in self.cfg["nodes"])
             nodes = [{"node": n, "last_seen_age_s": round(now - self.last_seen[n], 1) if n in self.last_seen else None,
-                      "online": n in self.last_seen and now - self.last_seen[n] <= self.cfg["stale_sec"]}
+                      "online": n in self.last_seen and now - self.last_seen[n] <= self.cfg["stale_sec"],
+                      "optional": n in self.cfg.get("optional_nodes", [])}   # 설치 안 했을 수 있는 노드(끊김으로 보지 않음)
                      for n in names]
             events = [dict(e) for e in reversed(self.events)]
             return {"sensors": sensors, "extra": extra, "nodes": nodes, "last_eval": self.last_eval, "received": self.received,
