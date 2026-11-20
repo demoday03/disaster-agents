@@ -796,9 +796,55 @@ def apply_field_event(ev):
     return None
 
 
+FLOOD_REMIND_S = 600   # 위험이 계속되면 이 간격으로 담당자 방에 한 번 더 알린다
+FLOOD_ALERT = {"active": False, "last": 0.0}
+FLOOD_LOCK = threading.Lock()
+
+
+def flood_alert(res):
+    """침수 위험을 담당자 텔레그램 단체방에 알린다(사람 승인 없이 담당자에게만. 주민 알림은 단계 확정 때).
+    - 위험 시작: 노드 A가 FLOOD 신호(위험 기준을 넘어 배수 모터를 켬)를 보냈거나, 감시 판정이 침수 확정 후보
+      (위험 기준을 연속으로 넘음. 무선 신호가 유실돼도 알리게)
+    - 한 번 알리면 FLOOD_REMIND_S 동안은 다시 보내지 않는다. DRAIN 신호가 오거나 수심이 주의 기준 아래로 내려가면
+      끝(내려갔다고 한 번 알림). 노드 B가 없으면 판정이 '정상'이 되지 않으므로 수심 값으로 본다.
+    보냈으면 설명 문자열, 아니면 None."""
+    out = res.get("output") or {}
+    codes = {(e["node"], e["code"]) for e in res.get("events", [])}
+    a = next((x for x in SENSORS.status()["sensors"] if x["key"] == "A.depth"), {})
+    start = ("A", "FLOOD") in codes or (out.get("status") == "확정후보" and "침수" in (out.get("hazards") or []))
+    end = ("A", "DRAIN") in codes or (a.get("value") is not None and not a.get("over_caution"))
+    depth = f"수심 {a['value']:.0f} (위험 기준 {a['threshold']:g})" if a.get("value") is not None else "수심 값 확인 필요"
+    now = time.time()
+    with FLOOD_LOCK:
+        if start and (not FLOOD_ALERT["active"] or now - FLOOD_ALERT["last"] >= FLOOD_REMIND_S):
+            again = FLOOD_ALERT["active"]
+            FLOOD_ALERT.update(active=True, last=now)
+            lines = [f"🚨 침수 센서 위험{' (계속)' if again else ''} · 노드 A", depth,
+                     "현장 배수 모터가 켜졌어요. 현장을 확인해 주세요.",
+                     "위기 단계 확정·주민 알림은 관리자 화면 승인 대기열에서 해 주세요."]
+        elif end and not start and FLOOD_ALERT["active"]:
+            FLOOD_ALERT.update(active=False)
+            lines = ["✅ 침수 센서: 수위가 내려갔어요 · 노드 A", depth, "배수 모터가 꺼졌어요."]
+        else:
+            return None
+    sent = TELEGRAM.staff.sensor_alert("\n".join(lines + [now_kst().strftime("%H:%M:%S")]))
+    database.log_audit("flood_alert", "node", "A", {"text": lines[0], "telegram": sent})
+    return "담당자 텔레그램 방에 알림" if sent else "텔레그램 담당자 방이 연결돼 있지 않아 못 보냄(📨 텔레그램 탭에서 연결)"
+
+
 def ingest_sensor_batch(data):
     """게이트웨이 묶음: 측정값 판정 + 새 현장 신호를 웹 기능에 반영해 결과를 신호에 붙인다."""
     res = SENSORS.ingest(data.get("readings"), data.get("rain_stage"), data.get("events"), data.get("link"))
+    try:
+        tg_note = flood_alert(res)
+    except Exception:   # 알림이 실패해도 센서 판정·신호 기록은 그대로
+        traceback.print_exc()
+        tg_note = None
+    if tg_note:
+        res["flood_alert"] = tg_note
+        for ev in res["events"]:
+            if ev["node"] == "A" and ev["code"] in ("FLOOD", "DRAIN"):
+                SENSORS.annotate(ev["id"], applied=True, note=tg_note)
     for ev in res["events"]:
         try:
             outcome = apply_field_event(ev)

@@ -26,8 +26,9 @@ EVENT_LABELS = {"SOS": "SOS 요청", "IN": "봉사자 도착 체크인", "DONE":
                 "HEAT": "폭염 경고(온도 기준 넘음)", "COOL": "온도 정상으로 돌아옴",
                 "+1": "대피소 입소 +1", "-1": "대피소 퇴소 -1", "GOT": "대피소 물품 도착",
                 "SAFE": "가구 안전 확인 응답", "NEED": "가구 급한 물품 요청",
-                "DARK": "가구 정전(어두워짐)", "LIGHT": "가구 전기 돌아옴"}
-URGENT_EVENTS = {"SOS", "NEED", "HEAT", "DARK"}
+                "DARK": "가구 정전(어두워짐)", "LIGHT": "가구 전기 돌아옴",
+                "FLOOD": "침수 위험 · 배수 모터 켬", "DRAIN": "수위 내려감 · 배수 모터 끔"}
+URGENT_EVENTS = {"SOS", "NEED", "HEAT", "DARK", "FLOOD"}
 LINKS = ("USB", "블루투스", "가상")   # G ↔ 노트북 연결 방법
 
 
