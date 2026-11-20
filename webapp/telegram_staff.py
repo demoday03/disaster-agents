@@ -302,6 +302,16 @@ class StaffDesk:
             time.sleep(0.05)
         return sent
 
+    def sensor_alert(self, text):
+        """현장 센서 위험(침수 노드 A 등)을 담당자 단체방에 바로 알린다. 보낼 방이 있으면 True.
+        주민에게는 보내지 않는다(주민 알림은 담당자가 위기 단계를 확정할 때 event('stage')로 간다)."""
+        rooms = self.rooms("staff")
+        if not self.bot.enabled or not rooms:
+            return False
+        btn = self._admin_button()
+        self._run(self._post, rooms, text, [btn] if btn else None)
+        return True
+
     def _alert(self, rooms, items, kind, now):
         """kind: new(새 매우 급한 신고) / remind(아무도 확인하지 않은 급한 신고). 많으면 한 메시지로 묶는다."""
         head = {"new": "🚨 매우 급한 신고", "remind": f"⏰ {round(self.remind_s / 60)}분 넘게 아무도 확인하지 않은 급한 신고"}[kind]
