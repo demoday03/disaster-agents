@@ -24,6 +24,13 @@ class TestSQLitePersistence(unittest.TestCase):
         self.assertEqual(versions.count("001_initial.sql"), 1)
         self.assertTrue({"incidents", "ai_analyses", "approvals", "resources", "audit_logs"}.issubset(tables))
 
+    def test_put_records_in_one_statement_upserts(self):
+        db.put_record("check", "H01", {"state": "안전"})
+        db.put_records("check", [("H01", {"state": "대기"}), ("H02", {"state": "대기"})])   # 있던 것은 바꾸고 없던 것은 넣는다
+        self.assertEqual({r["state"] for r in db.list_records("check")}, {"대기"})
+        self.assertEqual(len(db.list_records("check")), 2)
+        db.put_records("check", [])
+
     def test_incident_and_approval_persist(self):
         result = {"agent": "intake", "ai_used": False,
                   "output": {"id": "R-TEST1234", "type": "침수", "zone": "Z2", "urgency": 2, "text": "테스트"}}

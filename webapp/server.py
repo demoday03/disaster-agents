@@ -1368,6 +1368,7 @@ TELEGRAM.hooks = {
     "contact": attach_contact,      # 📞 내 연락처 보내기
     "forget": forget_contact,       # 🗑 연락처 지우기
     "sweep": sweep_contacts,        # 기한 지난 연락처 지우기
+    "brief": lambda iid: ((incident_output(iid) or {}).get("output") or None),   # 안부 확인 대상 고르기(구역·상태만, 빠르게)
     "safe": lambda iid, rep: reporter_safe(iid, rep),   # 안부 확인에 신고자가 '안전합니다'
 }
 

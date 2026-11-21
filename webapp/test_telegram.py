@@ -288,8 +288,10 @@ class TestTelegramBot(ServerBase):
         name = d["output"]["top"]["name"]
         self.sent_to(556, lambda p: iid in p["text"] and f"대피소가 정해졌어요: {name}" in p["text"], "대피소 배정 알림")
         # 안부 확인(그 구역) → 우리 집을 연결하지 않은 신고자에게도 '안전합니다' 버튼, 누르면 신고에 남는다
+        t0 = time.time()
         self.post("/api/welfare/checks/start", {"zone": "Z1", "timeout_s": 600})
         ask = self.sent_to(556, lambda p: "안전한지 확인" in p["text"], "신고자 안부 확인")
+        self.assertLess(time.time() - t0, 5)                                                   # 안부 확인은 5초 안에
         self.assertEqual(ask["reply_markup"]["inline_keyboard"][0][0]["callback_data"], "safer:" + iid)
         self.press(557, "safer:" + iid)                                                         # 남의 신고에는 답 못 함
         self.press(556, "safer:" + iid)
