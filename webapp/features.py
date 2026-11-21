@@ -212,6 +212,7 @@ class Features:
         timeout = _int(data.get("timeout_s", self.gcfg["timeout_s"]), "응답 대기 시간(초)", 5, 3600)
         cfg = {**self.gcfg, "timeout_s": timeout}
         sc, now, started, skipped = welfare.SafetyChecker(cfg), time.time(), [], []
+        rows = []
         for h in self.households.values():
             if zone != "all" and h["zone"] != zone:
                 continue
@@ -219,13 +220,19 @@ class Features:
                 skipped.append(h["id"]); continue   # 동의하지 않은 가구는 안부 확인 대상이 아니다
             sc.start(h["id"], now, vulnerable=bool(h["factors"]))
             row = sc.rows[h["id"]]
-            self.db.put_record("check", h["id"], {"household": h["id"], "zone": h["zone"], "factors": h["factors"],
-                                                  "vulnerable": row["vulnerable"], "deadline": row["deadline"],
-                                                  "state": row["state"], "started_at": now})
+            rows.append((h["id"], {"household": h["id"], "zone": h["zone"], "factors": h["factors"],
+                                   "vulnerable": row["vulnerable"], "deadline": row["deadline"],
+                                   "state": row["state"], "started_at": now}))
             started.append(h["id"])
-        self.db.log_audit("welfare_check_started", "zone", zone, {"households": started, "timeout_s": timeout})
+        # 가구마다 따로 저장하면 Turso 왕복·동기화를 가구 수만큼 기다려 텔레그램 안부 알림이 늦게 간다 → 한 문장으로 저장한 뒤 바로 알린다
+        if hasattr(self.db, "put_records"):
+            self.db.put_records("check", rows)
+        else:
+            for hid, rec in rows:
+                self.db.put_record("check", hid, rec)
         if self.notify:   # 가구가 없어도 그 구역에서 텔레그램으로 신고한 사람에게는 묻는다
             self.notify("welfare", {"households": started, "timeout_s": timeout, "zone": zone})
+        self.db.log_audit("welfare_check_started", "zone", zone, {"households": started, "timeout_s": timeout})
         return {"started": started, "skipped_no_consent": skipped}
 
     def checks_respond(self, hid):

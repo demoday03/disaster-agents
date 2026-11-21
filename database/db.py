@@ -407,6 +407,19 @@ def put_record(kind: str, rid: str, data: dict) -> dict:
     return data
 
 
+def put_records(kind: str, items: list[tuple[str, dict]]) -> None:
+    """여러 문서를 SQL 한 문장으로 저장한다(Turso는 문장마다 원격 왕복이라, 안부 확인처럼 한꺼번에 쓸 때 빠르게)."""
+    for i in range(0, len(items), 200):
+        part = items[i:i + 200]
+        if not part:
+            continue
+        args = [v for rid, data in part for v in (kind, rid, json.dumps(data, ensure_ascii=False, default=str))]
+        with connect() as conn:
+            conn.execute("INSERT INTO records(kind, id, data_json) VALUES " + ", ".join(["(?, ?, ?)"] * len(part)) + """
+                ON CONFLICT(kind, id) DO UPDATE SET data_json=excluded.data_json,
+                  updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')""", args)
+
+
 def get_record(kind: str, rid: str) -> dict | None:
     with connect() as conn:
         row = conn.execute("SELECT data_json FROM records WHERE kind=? AND id=?", (kind, rid)).fetchone()

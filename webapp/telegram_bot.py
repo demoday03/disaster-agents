@@ -890,15 +890,15 @@ class TelegramBot:
 
     def _welfare_reporters(self, zone, asked):
         """안부 확인을 시작한 구역에서 하루 안에 텔레그램으로 신고한 사람에게도 안전한지 묻는다(우리 집을 연결하지 않았어도)."""
-        if "info" not in self.hooks:
+        if "brief" not in self.hooks:
             return
         now, done = time.time(), set(asked)
         for rec in sorted(self.db.list_records("tg_report"), key=lambda r: -r.get("at", 0)):
             chat = rec.get("chat_id")
             if chat in done or rec.get("done") or now - rec.get("at", 0) > 86400:
                 continue
-            info = self.hooks["info"](rec["iid"])
-            if not info or info["cancelled"] or info["state"] == "오접수" or (zone != "all" and info.get("zone") != zone):
+            o = self.hooks["brief"](rec["iid"])   # 진행 상황 전체(승인 조회)까지는 필요 없다: 구역·상태만
+            if not o or o.get("cancelled_by_reporter") or o.get("state") == "오접수" or (zone != "all" and o.get("zone") != zone):
                 continue
             done.add(chat)
             self.send(chat, f"🙋 담당자가 신고하신 곳({rec['iid']}) 주변 사람들이 안전한지 확인하고 있어요.\n"
@@ -924,7 +924,8 @@ class TelegramBot:
                     self.send(sub["chat_id"], "🙋 담당자가 우리 집이 안전한지 확인하고 있어요.\n안전하면 아래 버튼을 눌러 주세요. "
                               "도움이 필요하면 119에 전화하거나 주민 화면에서 신고해 주세요.",
                               [[{"text": "✅ 안전합니다", "callback_data": "safe:" + sub["household"]}]], bulk=True)
-            self._welfare_reporters(data.get("zone") or "all", asked)
+            # 신고자 찾기는 신고마다 DB를 읽어 시간이 걸릴 수 있다: 연결된 집 알림을 막지 않게 따로
+            threading.Thread(target=self._welfare_reporters, args=(data.get("zone") or "all", asked), daemon=True).start()
         elif kind == "supply_review":
             self.household_note(data.get("household"), f"📦 물품 요청({data.get('item')} {data.get('qty')}개)이 승인됐어요. "
                                                        "보낼 곳을 정하는 대로 다시 알려 드릴게요.")
