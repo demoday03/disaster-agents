@@ -5,6 +5,11 @@
   const E = escapeHtml;
   const post = (path, body) => api(path, {method: 'POST', body: JSON.stringify(body || {})});
   const chip = (text, cls = '') => `<span class="chip ${cls}">${E(text)}</span>`;
+  // 봉사자가 적은 활동 날짜(지난 날 빼고)·시간대 → '11/22(토)·11/23(일) · 오전·오후'
+  const volWhen = v => { const today = new Intl.DateTimeFormat('en-CA', {timeZone: 'Asia/Seoul'}).format(new Date());
+    const wd = ['일', '월', '화', '수', '목', '금', '토'];
+    const ds = (v.dates || []).filter(d => d >= today).map(d => { const [y, m, dd] = d.split('-').map(Number); return `${m}/${dd}(${wd[new Date(y, m - 1, dd).getDay()]})`; });
+    const parts = [ds.join('·'), (v.slots || []).join('·')].filter(Boolean); return parts.join(' · ') || '정하지 않음'; };
   const fmtTime = ts => ts ? new Date(ts * 1000).toLocaleTimeString('ko-KR') : '';
   const fmtDate = ts => ts ? new Date(ts * 1000).toLocaleString('ko-KR', {month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : '';
   const table = (heads, rows) => rows.length
@@ -373,8 +378,8 @@
       $('volSos').querySelectorAll('button[data-ack]').forEach(b => b.addEventListener('click', async () => {
         try { await post(`/api/volunteer/sos/${encodeURIComponent(b.dataset.ack)}/ack`); loadVolunteer(); } catch (e) { alert(e.message); }
       }));
-      $('volList').innerHTML = table(['봉사자', '활동할 곳', '역량', '장비', '가능 시간', '참여 방식', '상태'], d.volunteers.map(v =>
-        `<tr><td>${E(v.name || v.id)}</td><td>${E(v.address || place(v.zone))}</td><td>${E(v.skills.join(', '))}</td><td>${E(v.equipment.join(', ') || '-')}</td><td>${E(v.available_min)}분</td><td>${E(v.mode)}</td><td>${v.busy ? chip('투입 중', 'warn') : chip('대기', 'ok')}</td></tr>`));
+      $('volList').innerHTML = table(['봉사자', '활동할 곳', '역량', '장비', '가능 시간', '활동 날짜·시간대', '참여 방식', '상태'], d.volunteers.map(v =>
+        `<tr><td>${E(v.name || v.id)}</td><td>${E(v.address || place(v.zone))}</td><td>${E(v.skills.join(', '))}</td><td>${E(v.equipment.join(', ') || '-')}</td><td>${E(v.available_min)}분</td><td>${E(volWhen(v))}</td><td>${E(v.mode)}</td><td>${v.busy ? chip('투입 중', 'warn') : chip('대기', 'ok')}</td></tr>`));
     } catch (e) { showError('volTasks', e); }
   }
 
