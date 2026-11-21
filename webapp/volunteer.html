@@ -25,7 +25,11 @@ button.sub{background:#E3E8F0;color:var(--ink)}button.big{width:100%;font-size:1
 .muted{color:var(--muted);font-size:.92rem}.err{color:var(--bad-ink)}
 .q{font-weight:800;margin:20px 0 8px;display:flex;align-items:center;gap:8px}.q .n{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--ink);color:#fff;font-size:.8rem;flex:none}.q .opt{font-weight:500;color:var(--muted);font-size:.88rem}
 .sumlist{display:grid;grid-template-columns:96px 1fr;gap:8px 10px;margin:0}.sumlist dt{font-weight:800;color:var(--ink-2);font-size:.9rem;padding-top:3px}.sumlist dd{margin:0}
-.elist{list-style:none;margin:0 0 12px;padding:0}.esec{margin:0 0 16px}.esec>.q{margin:0 0 8px}#editBody .esec .q .n{display:inline-grid}
+.elist{list-style:none;margin:0 0 12px;padding:0}.esec{margin:0 0 8px}#editBody .esec .q .n{display:inline-grid}
+.esec summary.q{margin:0;cursor:pointer;list-style:none;border:1.5px solid #BFC9D8;border-radius:12px;padding:11px 40px 11px 14px;background:#fff;position:relative;display:grid;grid-template-columns:24px 1fr;column-gap:8px;row-gap:2px;align-items:start}.esec summary.q .n{margin-top:1px}
+.esec summary.q::-webkit-details-marker{display:none}.esec summary.q::after{content:'▾';position:absolute;right:14px;top:12px;color:var(--muted)}.esec details[open]>summary.q::after{content:'▴'}
+.esec details[open]>summary.q{border-color:var(--action);margin-bottom:8px}.esec .cur{grid-column:2;color:var(--muted);font-weight:600;font-size:.88rem}
+.ebar{display:flex;gap:8px;justify-content:flex-end;margin:0 0 8px}.ebar button{margin:0;padding:6px 12px;font-size:.88rem;min-height:36px;width:auto;background:#fff;color:var(--action);border:1.5px solid var(--action);border-radius:10px;font-weight:700}
 .editmode .skills,.editmode .choices{display:block;border:1.5px solid #BFC9D8;border-radius:12px;overflow:hidden;background:#fff}
 .editmode .skills label,.editmode .choices label{display:flex;align-items:center;gap:10px;margin:0;border:0;border-radius:0;border-top:1px solid var(--line);padding:10px 14px;min-height:46px;background:#fff;font-size:.95rem}
 .editmode .skills label:first-child,.editmode .choices label:first-child{border-top:0}.editmode .skills input{margin:0}.editmode .skills small{display:inline;margin-left:6px}.editmode .skills b{display:inline}
@@ -188,9 +192,17 @@ previewProfile()}
 // 내 작업의 '고치기': 왼쪽 위부터 1~6번 질문을 차례로, 선택지는 한 줄에 하나씩(목록) 보여 준다
 let EDIT_FIRST=false;
 function editList(){const pf=$('profileFields');pf.classList.add('editmode');const list=document.createElement('ol');list.className='elist';
+ const bar=document.createElement('div');bar.className='ebar';bar.innerHTML='<button type="button" class="ghost" data-eall="1">모두 펼치기</button><button type="button" class="ghost" data-eall="0">모두 접기</button>';
  [['어디에서 활동할 수 있나요?','pAddress'],['무엇을 도울 수 있나요?','pSkills','여러 개 골라도 돼요'],['언제 활동할 수 있나요? · 날짜','pDates','선택'],['언제 활동할 수 있나요? · 시간대','pSlots','선택'],['가진 장비','pEquip','있는 것만'],['한 번에 얼마나 도울 수 있나요?','pTime']].forEach(([t,id,opt],i)=>{
-  const li=document.createElement('li');li.className='esec';const h=document.createElement('p');h.className='q';h.innerHTML=`<span class="n">${i+1}</span>${esc(t)}${opt?` <span class="opt">(${esc(opt)})</span>`:''}`;li.append(h,$(id));list.append(li)});
- pf.querySelectorAll(':scope>p.q,:scope>p.muted').forEach(x=>x.hidden=true);$('extraFields').hidden=true;pf.prepend(list)}
+  const li=document.createElement('li');li.className='esec';const d=document.createElement('details');d.dataset.for=id;const h=document.createElement('summary');h.className='q';
+  h.innerHTML=`<span class="n">${i+1}</span><span class="et">${esc(t)}${opt?` <span class="opt">(${esc(opt)})</span>`:''}</span><span class="cur"></span>`;d.append(h,$(id));li.append(d);list.append(li)});
+ bar.addEventListener('click',e=>{const b=e.target.closest('[data-eall]');if(b)list.querySelectorAll('details').forEach(d=>d.open=b.dataset.eall==='1')});
+ pf.querySelectorAll(':scope>p.q,:scope>p.muted').forEach(x=>x.hidden=true);$('extraFields').hidden=true;pf.prepend(bar,list);
+ pf.addEventListener('change',editCur);pf.addEventListener('input',editCur)}
+// 접힌 질문 줄에 지금 고른 것을 보여 준다(펼치지 않아도 한눈에)
+function editCur(){document.querySelectorAll('.elist details').forEach(d=>{const el=$(d.dataset.for);let v;
+ if(el.tagName==='INPUT')v=el.value.trim();else v=[...el.querySelectorAll('input:checked')].map(c=>{const l=c.closest('label');return (l.querySelector('b')||l).textContent.trim()}).join(', ');
+ d.querySelector('.cur').textContent=v?'→ '+v:'→ 고르지 않음'})}
 function readProfile(){const picked=[...$('pSkills').querySelectorAll('input:checked')].map(c=>c.value),donate=picked.includes('__donate');
  return {address:$('pAddress').value.trim(),skills:donate?[]:picked,equipment:[...$('pEquip').querySelectorAll('input:checked')].map(c=>c.value),
  available_min:Number(document.querySelector('input[name=ptime]:checked')?.value||120),mode:donate?'기부':'둘 다',
@@ -223,7 +235,7 @@ $('canDoBox').innerHTML=v.mode==='기부'?'물품 기부로 참여하고 있어�
 $('meInfo').innerHTML=`<dt>별명</dt><dd>${esc(v.name)}</dd><dt>활동할 곳</dt><dd>${esc(v.place)}</dd><dt>할 수 있는 일</dt><dd class="chips">${v.skills.map(s=>`<span>${esc(d.skill_labels[s]||s)}</span>`).join('')||'-'}</dd><dt>장비</dt><dd>${esc(v.equipment.join(', ')||'없음')}</dd><dt>시간</dt><dd>한 번에 ${esc(Math.round(v.available_min/60))}시간</dd><dt>활동 날짜</dt><dd>${esc((v.dates||[]).map(DAYTXT).join(', ')||'정하지 않음')}</dd><dt>시간대</dt><dd>${esc((v.slots||[]).join(', ')||'정하지 않음')}</dd><dt>참여</dt><dd>${esc(MODE_TXT[v.mode]||v.mode)}</dd>`;
 $('editAcc').hidden=!v.registered;$('editLinkWrap').hidden=!v.registered;if(v.registered&&!$('editBody').firstChild){$('editBody').append($('profileFields'));const sv=document.createElement('button');sv.type='submit';sv.id='saveProfile';sv.textContent='고친 내용 저장하기';const msg=document.createElement('p');msg.className='muted';msg.id='saveMsg';const f=document.createElement('form');f.id='editForm';f.append($('profileFields'),sv,msg);$('editBody').append(f);editList();EDIT_FIRST=true;
  f.addEventListener('submit',async e=>{e.preventDefault();try{await post(`/api/public/volunteers/${encodeURIComponent(VID)}/update`,readProfile());$('saveMsg').textContent='저장했습니다.';load()}catch(err){$('saveMsg').textContent='저장하지 못했습니다: '+err.message}})}
-if(v.registered&&(!$('editAcc').open||EDIT_FIRST)){fillProfile(v);if(EDIT_FIRST){EDIT_FIRST=false;$('editAcc').open=true}}   // 처음에는 펼쳐 둔다
+if(v.registered&&(!$('editAcc').open||EDIT_FIRST)){fillProfile(v);editCur();if(EDIT_FIRST){EDIT_FIRST=false;$('editAcc').open=true}}   // 처음에는 펼쳐 둔다
 const opened=new Set([...document.querySelectorAll('#myTasks details[open],#openTasks details[open]')].map(x=>x.dataset.tid));
 const active=d.my_tasks.filter(t=>t.state!=='완료').length;$('taskCount').hidden=!active;$('taskCount').textContent=active;
 $('myTasks').className=d.my_tasks.length?'':'muted';$('myTasks').innerHTML=d.my_tasks.length?[...d.my_tasks].sort((a,b)=>(a.state==='완료')-(b.state==='완료')).map(t=>order(t,true)).join(''):'담당자가 투입을 승인한 작업이 아직 없습니다.';
