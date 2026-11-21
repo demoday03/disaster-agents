@@ -252,6 +252,14 @@ def list_pending_approvals_for(incident_id: str) -> list[dict]:
     return [get_approval(r["id"]) for r in rows]
 
 
+def list_approved_for(incident_id: str) -> list[dict]:
+    """한 신고에 걸린 승인된 대응(대피소 배정·물품 출고·출동 등). 신고자에게 진행 상황으로 알린다."""
+    with connect() as conn:
+        rows = conn.execute("SELECT id, kind, item_json FROM approvals WHERE state='approved' AND incident_id=? ORDER BY resolved_at",
+                            (incident_id,)).fetchall()
+    return [{"id": r["id"], "kind": r["kind"], "item": json.loads(r["item_json"])} for r in rows]
+
+
 def list_incidents(limit: int = 100) -> list[dict]:
     with connect() as conn:
         rows = conn.execute("SELECT result_json FROM incidents ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()

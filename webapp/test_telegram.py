@@ -269,6 +269,44 @@ class TestTelegramBot(ServerBase):
         health = anon.get("/api/health")[1]["telegram"]
         self.assertEqual((health["enabled"], health["mode"], health["subscribers"]), (True, "webhook", 1))
         self.assertNotIn("123:TEST", json.dumps(health))                                             # 토큰은 내보내지 않음
+    def test_zone_fix_shelter_supply_and_welfare_reach_telegram(self):
+        """실제 주소로 보낸 텔레그램 신고 → 담당자가 구역을 정함 → 대피소 배정 승인·안부 확인이 신고자에게,
+        물품 요청 승인·출고 승인이 우리 집과 연결된 대화방에 간다."""
+        secret, anon = self.secret(), Client(self.base)
+        self.update(self.msg(556, "옥포동 시장 뒤 골목에 물이 무릎까지 찼어요"), secret)
+        q = self.sent_to(556, lambda p: "바로 신고할까요" in p["text"], "바로 신고 묻기")
+        self.press(556, q["reply_markup"]["inline_keyboard"][0][0]["callback_data"], mid=61)
+        rec = self.sent_to(556, lambda p: "접수번호" in p["text"] and p["message_id"] == 61, "접수 결과", "editMessageText")
+        iid = re.search(r"R-[0-9A-F]{8}", rec["text"]).group(0)
+        o = next(x["output"] for x in self.get("/api/incidents")[1]["items"] if x["output"]["id"] == iid)
+        self.assertEqual((o["zone"], o.get("linked") or {}), ("미상", {}))       # 실제 주소라 구역을 몰라 다음 단계로 못 감 → 대기열 '구역 정하기'
+        self.assertEqual(self.post(f"/api/incidents/{iid}/classify", {"type": "침수", "zone": "Z1", "urgency": 2})[0], 200)
+        # 대피소 배정 승인 → 신고자 텔레그램
+        st, d = self.post(f"/api/incidents/{iid}/dispatch", {"kind": "shelter", "people": 2})
+        self.assertEqual(st, 200, d)
+        self.assertEqual(self.post(f"/api/approvals/{d['approval_id']}/resolve", {"approved": True, "reason": "확인함"})[0], 200)
+        name = d["output"]["top"]["name"]
+        self.sent_to(556, lambda p: iid in p["text"] and f"대피소가 정해졌어요: {name}" in p["text"], "대피소 배정 알림")
+        # 안부 확인(그 구역) → 우리 집을 연결하지 않은 신고자에게도 '안전합니다' 버튼, 누르면 신고에 남는다
+        self.post("/api/welfare/checks/start", {"zone": "Z1", "timeout_s": 600})
+        ask = self.sent_to(556, lambda p: "안전한지 확인" in p["text"], "신고자 안부 확인")
+        self.assertEqual(ask["reply_markup"]["inline_keyboard"][0][0]["callback_data"], "safer:" + iid)
+        self.press(557, "safer:" + iid)                                                         # 남의 신고에는 답 못 함
+        self.press(556, "safer:" + iid)
+        self.sent_to(556, lambda p: "안전하다고 담당자에게 알렸어요" in p["text"], "안전 답 확인")
+        o = next(x["output"] for x in self.get("/api/incidents")[1]["items"] if x["output"]["id"] == iid)
+        self.assertIn("at", o["safe_reply"])
+        self.assertNotIn("safe_reply", anon.get(f"/api/incidents/{iid}")[1]["result"]["output"])   # 공개 조회에는 안 보임
+        # 물품: 우리 집과 연결한 대화방에 '요청 승인' → '출고 승인'
+        self.update(self.msg(558, "/start H08"), secret)
+        self.sent_to(558, lambda p: "연결했어요" in p["text"], "우리 집 연결")
+        st, r = self.post("/api/supply/requests", {"household": "H08", "item": "생수", "qty": 3})
+        self.assertEqual(st, 200, r)
+        st, req = self.post(f"/api/supply/requests/{r['requests'][0]['id']}/review", {"decision": "승인"})
+        self.sent_to(558, lambda p: "물품 요청(생수 3개)이 승인됐어요" in p["text"], "물품 요청 승인 알림")
+        self.assertEqual(self.post(f"/api/approvals/{req['pending_approval']}/resolve", {"approved": True, "reason": "확인함"})[0], 200)
+        self.sent_to(558, lambda p: "물품(생수 3개)을 보내기로 승인됐어요" in p["text"], "출고 승인 알림")
+
 
 
 class FakeDB:

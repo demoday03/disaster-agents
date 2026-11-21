@@ -654,7 +654,8 @@ class TelegramBot:
         if not info:
             return f"{iid}: 신고를 찾을 수 없어요."
         state = "신고를 취소했어요" if info["cancelled"] else (
-            "담당자가 대응 인력 출동을 승인했어요" if any(s.get("done") for s in info["steps"]) else STATE_TXT.get(info["state"], info["state"]))
+            "담당자가 대응 인력 출동을 승인했어요" if any(s.get("done") and s.get("icon") == "🚒" for s in info["steps"]) else
+            "담당자가 대응을 승인했어요" if any(s.get("done") for s in info["steps"]) else STATE_TXT.get(info["state"], info["state"]))
         lines = [f"📨 {iid} · {info.get('type') or '확인 중'}", f"처리 상황: {state}"]
         lines += [f"{s['icon']} {s['text']}" for s in info["steps"]]
         if info.get("missing") and info["state"] == "보완 필요":
@@ -747,6 +748,15 @@ class TelegramBot:
                 self.send(chat, "✅ 안전하다고 담당자에게 알렸어요.")
             except Exception as e:   # 이미 답했거나 진행 중인 확인이 없음
                 answer = str(e)[:150] or "지금 진행 중인 안전 확인이 없습니다"
+        elif data.startswith("safer:") and chat is not None:   # 신고자 안부 답(이 대화방에서 보낸 신고만)
+            iid = data[6:]
+            if self.db.get_record("tg_report", f"{iid}:{chat}") and "safe" in self.hooks:
+                status, _ = self.hooks["safe"](iid, self.pseudonym(chat))
+                answer = "안전하다고 알렸어요. 고맙습니다." if status < 400 else "신고를 찾지 못했어요"
+                if status < 400:
+                    self.send(chat, f"✅ 안전하다고 담당자에게 알렸어요 ({iid} 신고).", markup=MENU)
+            else:
+                answer = "이 대화방에서 보낸 신고만 답할 수 있어요"
         elif chat is not None and data[:3] in ("rk:", "rn:", "rx:", "rs:", "rr:", "rq:", "rf:"):
             answer, alert = self._report_button(chat, mid, data)
         elif chat is not None and data.startswith("pg:"):
@@ -869,8 +879,34 @@ class TelegramBot:
             return
         self._broadcast(("🚨 긴급 공지\n" if row.get("urgent") else "📢 공지\n") + row["text"], row.get("zone", "all"))
 
+    def household_note(self, hid, text, skip_iid=None):
+        """'우리 집'으로 연결된 대화방에 알림(대피소 배정·물품 승인). 그 신고로 이미 소식을 받는 대화방은 뺀다."""
+        if not self.enabled or not hid:
+            return
+        skip = set(self.report_chats(skip_iid)) if skip_iid else set()
+        for sub in self.db.list_records("tg_sub"):
+            if sub.get("household") == hid and sub["chat_id"] not in skip:
+                self.send(sub["chat_id"], text, markup=MENU)
+
+    def _welfare_reporters(self, zone, asked):
+        """안부 확인을 시작한 구역에서 하루 안에 텔레그램으로 신고한 사람에게도 안전한지 묻는다(우리 집을 연결하지 않았어도)."""
+        if "info" not in self.hooks:
+            return
+        now, done = time.time(), set(asked)
+        for rec in sorted(self.db.list_records("tg_report"), key=lambda r: -r.get("at", 0)):
+            chat = rec.get("chat_id")
+            if chat in done or rec.get("done") or now - rec.get("at", 0) > 86400:
+                continue
+            info = self.hooks["info"](rec["iid"])
+            if not info or info["cancelled"] or info["state"] == "오접수" or (zone != "all" and info.get("zone") != zone):
+                continue
+            done.add(chat)
+            self.send(chat, f"🙋 담당자가 신고하신 곳({rec['iid']}) 주변 사람들이 안전한지 확인하고 있어요.\n"
+                            "안전하면 아래 버튼을 눌러 주세요. 다쳤거나 갇혔다면 119에 바로 전화하세요.",
+                      [[{"text": "✅ 안전합니다", "callback_data": "safer:" + rec["iid"]}]], bulk=True)
+
     def event(self, kind, data):
-        """features.py가 부른다: stage(위기 단계 확정), welfare(안부 확인 시작)."""
+        """features.py가 부른다: stage(위기 단계 확정), welfare(안부 확인 시작), supply_review(물품 요청 승인)."""
         if not self.enabled:
             return
         if kind == "stage" and data.get("level") in LEVEL_TEXT:
@@ -881,9 +917,14 @@ class TelegramBot:
             self._broadcast(f"✅ 위기 단계({data.get('from') or '경계'})가 해제되어 '정상'이 됐어요.\n"
                             "대피소에 계신 분은 담당자 안내에 따라 돌아가세요. 위험해지면 119·112에 바로 전화하세요.")
         elif kind == "welfare":
-            started = set(data.get("households", []))
+            started, asked = set(data.get("households", [])), set()
             for sub in self.db.list_records("tg_sub"):
                 if sub.get("household") in started:   # 구역 전체라 많을 수 있다: 신고 답장보다 뒤에서
+                    asked.add(sub["chat_id"])
                     self.send(sub["chat_id"], "🙋 담당자가 우리 집이 안전한지 확인하고 있어요.\n안전하면 아래 버튼을 눌러 주세요. "
                               "도움이 필요하면 119에 전화하거나 주민 화면에서 신고해 주세요.",
                               [[{"text": "✅ 안전합니다", "callback_data": "safe:" + sub["household"]}]], bulk=True)
+            self._welfare_reporters(data.get("zone") or "all", asked)
+        elif kind == "supply_review":
+            self.household_note(data.get("household"), f"📦 물품 요청({data.get('item')} {data.get('qty')}개)이 승인됐어요. "
+                                                       "보낼 곳을 정하는 대로 다시 알려 드릴게요.")
