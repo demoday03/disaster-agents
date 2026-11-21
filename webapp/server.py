@@ -454,6 +454,7 @@ def approve_one(current, s, reason):
     database.resolve_approval(current["id"], True, s["username"], reason, s["user_id"])
     with FEATURES.lock:
         FEATURES.after_resolve(current, True, s)
+    notify_approved(current)
     return None
 
 
@@ -1198,7 +1199,7 @@ def report_info(iid):
     if row is None:
         return None
     o, g = row["output"], public_guidance(iid)
-    return {"id": iid, "type": o.get("type"), "state": o.get("state"), "urgency": o.get("urgency"),
+    return {"id": iid, "type": o.get("type"), "state": o.get("state"), "urgency": o.get("urgency"), "zone": o.get("zone"),
             "missing": o.get("missing") or [], "cancelled": bool(o.get("cancelled_by_reporter")),
             "steps": public_progress(o), "guidance": g["text"] if g else None, "tips": now_tips(o.get("type"))}
 
@@ -1367,6 +1368,7 @@ TELEGRAM.hooks = {
     "contact": attach_contact,      # 📞 내 연락처 보내기
     "forget": forget_contact,       # 🗑 연락처 지우기
     "sweep": sweep_contacts,        # 기한 지난 연락처 지우기
+    "safe": lambda iid, rep: reporter_safe(iid, rep),   # 안부 확인에 신고자가 '안전합니다'
 }
 
 
@@ -1396,15 +1398,61 @@ def public_progress(output):
     if output.get("classified_by") or output.get("seen"):   # 관리자 화면·담당자 텔레그램 방의 [👀 확인했어요] 포함
         steps.append({"icon": "👤", "text": "담당자가 신고 내용을 확인했어요"})
     states = [a["state"] for a in (database.get_approval(x) for x in linked.get("dispatch", []) if isinstance(x, str)) if a]
-    if "approved" in states:
+    done = database.list_approved_for(output["id"]) if output.get("id") else []   # 배치 보드에서 직접 올린 것까지
+    kinds = {a["kind"] for a in done}
+    if "approved" in states or "dispatch_public" in kinds:
         steps.append({"icon": "🚒", "text": "대응 인력 출동이 승인됐어요", "done": True})
     elif states:
         steps.append({"icon": "🚒", "text": "대응 인력 출동을 담당자가 검토하고 있어요"})
-    if linked.get("supply"):
+    notes = [approval_note(a) for a in done if a["kind"] != "dispatch_public"]
+    steps += [{"icon": icon, "text": text, "done": True} for icon, text in notes if text]
+    if linked.get("supply") and "supply_dispatch" not in kinds:
         steps.append({"icon": "📦", "text": "물품 요청을 담당자가 검토하고 있어요"})
     if linked.get("volunteer"):
         steps.append({"icon": "🙋", "text": "봉사자를 찾고 있어요"})
     return steps
+
+
+def approval_note(a):
+    """승인된 대응을 주민에게 알릴 한 줄(아이콘, 글). 알릴 것이 없으면 글이 None."""
+    kind, item = a.get("kind"), a.get("item") or {}
+    if kind == "dispatch_shelter":
+        top = (item.get("recommendation") or {}).get("top") or {}
+        people = (item.get("demand") or {}).get("people")
+        return "🏫", (f"대피소가 정해졌어요: {top.get('name') or top.get('id') or '대피소'}"
+                     + (f" ({people}명)" if isinstance(people, int) else "") + ". 담당자 안내에 따라 안전하게 이동하세요")
+    if kind == "supply_dispatch":
+        return "📦", f"물품({item.get('item', '요청 물품')} {item.get('qty', '')}개)을 보내기로 승인됐어요"
+    if kind == "welfare_check":
+        return "🙋", "담당자가 신고한 곳 주변 안부 확인을 시작했어요"
+    if kind == "dispatch_public":
+        return "🚒", "대응 인력 출동이 승인됐어요"
+    return None, None
+
+
+def notify_approved(a):
+    """승인된 대피소 배정·물품 출고를 '우리 집'으로 연결된 텔레그램에도 알린다(신고한 대화방은 진행 소식으로 따로 받는다)."""
+    if not TELEGRAM.enabled or not a or a.get("kind") not in ("dispatch_shelter", "supply_dispatch"):
+        return
+    item, iid = a.get("item") or {}, a.get("incident_id") or (a.get("item") or {}).get("incident_id")
+    hid = item.get("household")
+    if not hid and iid:
+        hid = ((incident_output(iid) or {}).get("output") or {}).get("household")
+    icon, text = approval_note(a)
+    if hid and text:
+        TELEGRAM.household_note(hid, f"{icon} {text}", skip_iid=iid)
+
+
+def reporter_safe(iid, reporter):
+    """텔레그램 신고자가 안부 확인에 '안전합니다'로 답함 → 신고 카드에 남긴다(담당자 화면)."""
+    with _incident_lock:
+        row = incident_output(iid)
+        if row is None:
+            return 404, {"error": "신고를 찾을 수 없어요"}
+        row["output"]["safe_reply"] = {"reporter": str(reporter or "")[:20], "at": time.time()}
+        database.update_incident(row)
+    database.log_audit("reporter_safe", "incident", iid, {"reporter": reporter})
+    return 200, {"id": iid}
 
 
 def public_guidance(incident_id):
@@ -2432,6 +2480,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(404, {"error": "승인 요청을 찾을 수 없습니다"})
                 except ValueError as e:
                     return self.send_json(409, {"error": str(e)})
+                if approved:
+                    notify_approved(current)   # 대피소 배정·물품 출고 → 우리 집과 연결된 텔레그램
                 iid = current and (current.get("incident_id") or (current.get("item") or {}).get("incident_id"))
                 if iid:   # 신고의 대응안을 승인·거절했으면 그 신고를 본 것
                     mark_seen(iid, s["username"], "관리자 화면")

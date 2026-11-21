@@ -224,8 +224,8 @@ class Features:
                                                   "state": row["state"], "started_at": now})
             started.append(h["id"])
         self.db.log_audit("welfare_check_started", "zone", zone, {"households": started, "timeout_s": timeout})
-        if self.notify and started:
-            self.notify("welfare", {"households": started, "timeout_s": timeout})
+        if self.notify:   # 가구가 없어도 그 구역에서 텔레그램으로 신고한 사람에게는 묻는다
+            self.notify("welfare", {"households": started, "timeout_s": timeout, "zone": zone})
         return {"started": started, "skipped_no_consent": skipped}
 
     def checks_respond(self, hid):
@@ -601,6 +601,8 @@ class Features:
             raise Conflict(f"승인 대기열의 배치 승인({req['pending_approval']})에서 처리하세요")
         self._move(req, to, "staff", data.get("_by"), reason)
         self.db.put_record("supply_request", rid, req)
+        if to == "승인" and self.notify:   # 우리 집과 연결된 텔레그램에 '물품 요청이 승인됐어요'
+            self.notify("supply_review", {"household": req["household"], "item": req["item"], "qty": req["qty"]})
         if to == "승인" and req["route"] == "matching":
             return self.request_propose(rid, {})
         return req

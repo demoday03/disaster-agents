@@ -71,7 +71,8 @@
     await baseLoadApprovals();
     await addDispatchControls();
     try {   // 첫 응답 전에는 숨겨 둔다(0이 잠깐 보였다가 바뀌지 않게)
-      $('approvalCount').textContent = (await api('/api/approvals')).items.length;
+      const [ap, inc] = await Promise.all([api('/api/approvals'), api('/api/incidents')]);   // 구역을 정해야 하는 신고도 셈한다
+      $('approvalCount').textContent = ap.items.length + inc.items.filter(x => needsZone(x.output)).length;
       $('approvalCount').hidden = false;
     } catch (e) { /* 배지만 */ }
     if (current !== 'approvals' && LOADERS[current] && current !== 'dispatch') LOADERS[current]();
@@ -729,7 +730,7 @@
   // ---------------------------------------------------------------- 새 긴급 신고·SOS 알림
   // 담당자가 새로고침을 누르지 않아도 주민의 긴급 신고(긴급도 1)와 봉사자 SOS가 15초 안에 보이게 한다.
   // 새로 들어오면 화면 맨 위 빨간 띠·탭 제목·짧은 소리로 알린다. 입력 중일 때는 목록을 다시 그리지 않는다
-  let seenUrgent = null, seenSos = null, seenAns = null, seenRep = null, alertCount = 0, lastAlertId = null;
+  let seenUrgent = null, seenZone = new Set(), seenSos = null, seenAns = null, seenRep = null, alertCount = 0, lastAlertId = null;
   const TITLE = document.title;
   const editing = () => !!document.activeElement?.closest?.('#incidents, #approvals, form') || !!document.querySelector('#incidents details.fix[open]');
   function beep() {
@@ -763,35 +764,45 @@
       const urgent = inc.items.map(x => x.output).filter(o => o.urgency === 1 && o.state !== '오접수');
       // 담당자가 되물은 질문에 신고자가 텔레그램으로 답하면 함께 알린다
       const answers = inc.items.flatMap(x => (x.output.questions || []).flatMap(q => (q.answers || []).map(a => ({id: `${x.output.id}:${q.id}:${a.at}`, iid: x.output.id, text: a.text}))));
+      const zfix = inc.items.map(x => x.output).filter(needsZone);   // 구역을 몰라 다음 단계로 못 넘어간 새 신고(텔레그램 등)
       // 급한 신고(긴급도 1~2)에 같은 신고가 또 들어오면(여러 사람이 알림) 함께 알린다
       const reps = new Map(inc.items.map(x => x.output).filter(o => o.urgency <= 2 && o.state !== '오접수' && o.repeats).map(o => [o.id, o]));
       if (seenUrgent) {
         const fresh = urgent.filter(o => !seenUrgent.has(o.id)), freshAns = answers.filter(a => !seenAns.has(a.id));
         const moreRep = [...reps.values()].filter(o => o.repeats > (seenRep.get(o.id) || 0));
+        const freshZone = zfix.filter(o => !seenZone.has(o.id) && o.urgency !== 1);   // 긴급도 1은 위에서 이미 알린다
         if (fresh.length) lastAlertId = fresh[0].id;
         else if (moreRep.length) lastAlertId = moreRep[0].id;
         else if (freshAns.length) lastAlertId = freshAns[0].iid;
+        else if (freshZone.length) lastAlertId = freshZone[0].id;
         const lines = [...fresh.map(o => `${o.type} ${o.id}: ${String(o.text || '').slice(0, 40)}`),
                        ...vol.sos.filter(s => !seenSos.has(s.id)).map(s => `봉사자 SOS(${s.name || vn(s.volunteer)})`),
                        ...freshAns.map(a => `💬 ${a.iid} 신고자 답: ${String(a.text).slice(0, 40)}`),
+                       ...freshZone.map(o => `📍 ${o.channel || '웹'} 신고 ${o.id}: 구역을 정해 주세요(승인 대기열)`),
                        ...moreRep.map(o => `🔁 ${o.type} ${o.id}: 같은 신고가 또 들어옴(모두 ${o.repeats + 1}번)`)];
         if (lines.length) raiseAlert(lines);
       }
       seenUrgent = new Set(urgent.map(o => o.id));
+      seenZone = new Set(zfix.map(o => o.id));
       seenAns = new Set(answers.map(a => a.id));
       seenRep = new Map([...reps.values()].map(o => [o.id, o.repeats]));
       seenSos = new Set(vol.sos.map(s => s.id));
-      $('approvalCount').textContent = ap.items.length;
+      $('approvalCount').textContent = ap.items.length + inc.items.filter(x => needsZone(x.output)).length;
       $('approvalCount').hidden = false;
+      if (current === 'approvals' && !editing()) loadApprovals();
       if (current === 'overview' && !editing()) { loadIncidents(); loadSituation(); loadSitMap(); }
     } catch (e) { /* 다음 차례에 다시 */ }
   }
 
   window.opsInit = async () => {
     bind();
+    // 텔레그램 메뉴는 숨겼다(기능은 그대로). 서버·AI 상태 화면의 버튼이나 /admin#telegram 으로 연다
+    $('openTelegram')?.addEventListener('click', () => go('telegram'));
     try { await loadMeta(); loadIncidents(); } catch (e) { /* 메타 정보 없이도 화면은 쓴다 */ }
     let saved = 'overview';
     try { saved = localStorage.getItem('adminTab') || 'overview'; } catch (e) { /* 저장 불가 환경 */ }
+    if (saved === 'telegram') saved = 'overview';   // 숨긴 메뉴로 다시 열리지 않게
+    if (location.hash === '#telegram') saved = 'telegram';
     go(document.querySelector(`#tabs button[data-go="${saved}"]`) ? saved : 'overview');
     loadApprovals();
     refreshBand();
