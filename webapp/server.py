@@ -1013,6 +1013,10 @@ def submit_report(text, rate_key, channel=None, household=None, reporter=None, d
         # 인원을 고르지 않은 우리 집 신고: 등록한 식구 수로 본다(1명으로 잡혀 대피소 자리가 1개만 배정되던 문제)
         if isinstance(members, int) and members > (row["output"].get("people") or 0) and not re.search(r"\d+\s*명", text):
             row["output"].update(people=members, people_source="우리 집 등록 정보")
+        # 글에서 구역을 못 찾은 우리 집 신고(텔레그램에서 우리 집을 연결한 사람 등): 등록한 집의 구역으로 본다
+        if row["output"].get("zone") in (None, places.UNKNOWN) and h.get("zone") in {z["id"] for z in SCENARIO["zones"]}:
+            row["output"].update(zone=h["zone"], zone_source="우리 집 등록 정보")
+            row["output"]["missing"] = [m for m in (row["output"].get("missing") or []) if not str(m).startswith("위치")]
     if isinstance(reporter, str) and reporter:
         row["output"]["reporter"] = reporter[:20]
     if isinstance(device, dict):

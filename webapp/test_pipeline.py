@@ -355,10 +355,10 @@ class TestPipeline(ServerBase):
         """위치는 구역을 고르지 않고 글로 쓴다. 관리 구역은 가상 장소 이름이 있을 때만 추정하고, 모르면 담당자가 확인한다."""
         anon = Client(self.base)
         self.assertEqual(anon.post("/api/public/households", {"floor": "1층"})[0], 400)            # 위치는 꼭 필요
-        code, r = anon.post("/api/public/households", {"address": "옥포동 ○○아파트 101동", "floor": "1층", "members": 2})
+        code, r = anon.post("/api/public/households", {"address": "거제중학교 앞 ○○아파트 101동", "floor": "1층", "members": 2})
         self.assertEqual(code, 201, r)
         _, h = anon.get(f"/api/public/households/{r['id']}")
-        self.assertEqual((h["household"]["zone"], h["household"]["address"]), ("미상", "옥포동 ○○아파트 101동"))
+        self.assertEqual((h["household"]["zone"], h["household"]["address"]), ("미상", "거제중학교 앞 ○○아파트 101동"))
         self.assertTrue(h["risks"])                                           # 구역을 몰라도 집 층에 맞는 안내는 나온다
         self.assertIn("1층은 물이 들어올 수 있습니다", " ".join(h["risks"]))
         self.assertEqual((h["nearest_shelter"], h["location_known"]), (None, False))   # 거리를 모르면 '가장 가까운'이라고 하지 않는다
@@ -366,8 +366,10 @@ class TestPipeline(ServerBase):
         _, h = anon.get(f"/api/public/households/{r['id']}")
         self.assertEqual(h["household"]["zone"], "Z2")                        # 가상 장소 이름으로 추정
         self.assertNotIn("1234", h["household"]["address"])                   # 전화번호는 가린다
-        o = self.report("위치: 옥포동 ○○아파트 앞 · 물이 차고 있어요(침수) · 2명")
+        o = self.report("위치: 거제중학교 앞 ○○아파트 · 물이 차고 있어요(침수) · 2명")
         self.assertEqual((o["zone"], o["missing"], o["state"]), ("미상", [], "접수"))   # 위치를 적었으면 다시 묻지 않음
+        o = self.report("옥포동 시장 뒤 골목에 물이 차고 있어요(침수)")                  # '위치:' 없이 글로만(텔레그램): 동 이름으로 구역
+        self.assertEqual((o["zone"], o["missing"]), ("Z3", []))
         o = self.report("위치: 한빛중 근처 · 흙·돌이 무너졌어요(산사태·토사)")
         self.assertEqual(o["zone"], "Z8")
         # 위치를 GPS로만 보낸 긴급 신고: 구역을 몰라도 출동 추천을 바로 만들고, 신고자는 진행 상황을 본다
@@ -384,7 +386,7 @@ class TestPipeline(ServerBase):
         self.assertNotEqual(o2["linked"].get("dispatch"), [aid])
         code, v = self.post("/api/volunteer/requests", {"text": "마당 토사 치워 주세요", "address": "장평동 주택가"})
         self.assertEqual(code, 200, v)
-        self.assertEqual((v["tasks"][0]["zone"], v["tasks"][0]["address"]), ("미상", "장평동 주택가"))
+        self.assertEqual((v["tasks"][0]["zone"], v["tasks"][0]["address"]), ("Z8", "장평동 주택가"))   # 거제 동 이름 → 시연용 구역
 
     def test_reporter_can_edit_and_cancel(self):
         """신고자는 그 기기에 받은 비밀 값으로만 고치기·취소. 담당자가 조치를 승인한 뒤에는 고칠 수 없다."""
@@ -518,7 +520,15 @@ class TestPipeline(ServerBase):
         # 없는 가구 코드를 붙여 보내면 무시(로그인 없이 보낸 신고와 같음)
         _, d2 = anon.post("/api/incidents", {"text": "위치: 옥포동 다리 밑 · 길이 막혔어요 (로그인 시험)", "household": "H-0000000000"})
         self.assertNotIn("household", self.staff_view(d2["output"]["id"]))
-        # 보완해도 가구·신고자 권한이 남는다
+        # 위치를 안 적은 우리 집 신고: 등록한 집의 구역으로(텔레그램에서 우리 집을 연결한 사람도 같다)
+        _, dz = anon.post("/api/incidents", {"text": "물이 차고 있어요 (우리 집 구역 시험)", "household": hid})
+        dzo = self.staff_view(dz["output"]["id"])
+        home_zone = anon.get(f"/api/public/households/{hid}")[1]["household"]["zone"]
+        self.assertNotEqual(home_zone, "미상")
+        self.assertEqual((dzo["zone"], dzo["zone_source"], dzo["state"]), (home_zone, "우리 집 등록 정보", "접수"))
+        # 보완해도 가구·신고자 권한이 남는다(구역을 모르는 집: 위치를 다시 묻는다)
+        _, nz = anon.post("/api/public/households", {"address": "거제중학교 뒤 주택", "floor": "1층"})
+        hid = nz["id"]
         _, d3 = anon.post("/api/incidents", {"text": "물이 차고 있어요 (보완 시험)", "household": hid})
         self.assertEqual(d3["output"]["state"], "보완 필요")
         self.assertEqual(anon.post(f"/api/incidents/{d3['output']['id']}/supplement", {"text": "옥포동 시장 뒤예요"})[0], 200)

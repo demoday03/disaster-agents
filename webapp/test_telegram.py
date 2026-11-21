@@ -273,7 +273,7 @@ class TestTelegramBot(ServerBase):
         """실제 주소로 보낸 텔레그램 신고 → 담당자가 구역을 정함 → 대피소 배정 승인·안부 확인이 신고자에게,
         물품 요청 승인·출고 승인이 우리 집과 연결된 대화방에 간다."""
         secret, anon = self.secret(), Client(self.base)
-        self.update(self.msg(556, "옥포동 시장 뒤 골목에 물이 무릎까지 찼어요"), secret)
+        self.update(self.msg(556, "거제중학교 뒤 골목에 물이 무릎까지 찼어요"), secret)
         q = self.sent_to(556, lambda p: "바로 신고할까요" in p["text"], "바로 신고 묻기")
         self.press(556, q["reply_markup"]["inline_keyboard"][0][0]["callback_data"], mid=61)
         rec = self.sent_to(556, lambda p: "접수번호" in p["text"] and p["message_id"] == 61, "접수 결과", "editMessageText")

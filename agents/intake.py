@@ -18,12 +18,14 @@ def _zones(text):
 
 def _zone(text):
     """글에 적힌 구역. '2구역인지 3구역인지'처럼 서로 다른 구역이 둘 이상이면 미상(신고자에게 보완 요청).
-    구역 표기가 없으면 '위치:'에 쓴 가상 장소 이름(가람초 등)으로 추정한다(common/places.py)."""
+    구역 표기가 없으면 '위치:'에 쓴 가상 장소 이름(가람초 등), 그다음 거제 동·면 이름으로 추정한다(common/places.py)."""
     found = _zones(text)
     if found:
         return found.pop() if len(found) == 1 else "미상"
     m = _PLACE.search(text)
-    return places.infer_zone(m.group(1)) if m else "미상"
+    z = places.infer_zone(m.group(1)) if m else "미상"
+    # '위치:' 칸 없이 글로만 보낸 신고(텔레그램)·위치 칸에서 못 찾은 경우: 글 전체에서 거제 동·면 이름을 찾는다
+    return z if z != "미상" else places.real_zone(text)
 
 
 # 주민 화면의 빠른 신고는 '위치: 옥포동 ○○아파트 앞 · …'처럼 위치를 따로 적어 보낸다
@@ -110,7 +112,7 @@ def classify(rid, text, ts, cfg, client=None, max_text=MAX_TEXT):
     rule_type, raised = rule["type"], None
     if len(_zones(clean)) > 1:                            # 구역이 둘 이상 적혀 있으면 AI가 하나를 골라도 추측이다
         out = {**out, "zone": "미상"}
-    elif out["zone"] == "미상" and rule["zone"] != "미상":  # 'Z6'·'3구역'처럼 글에 적힌 구역을 AI가 놓친 경우
+    elif rule["zone"] != "미상":   # 글에 적힌 구역('Z6'·'3구역')·장소 이름·거제 동·면 연결표는 AI 추측보다 우선
         out = {**out, "zone": rule["zone"]}
     if rule["vulnerable"] and not out["vulnerable"]:      # 취약 표현(반지하·어르신 등)은 놓치는 쪽이 더 위험하다
         out = {**out, "vulnerable": True}
