@@ -115,6 +115,7 @@ details.acc.order{border-left:6px solid var(--action)}details.acc.order.prog{bor
 <section class="view" data-view="tasks" hidden>
 <h2>내 작업</h2><p class="lead">담당자가 승인한 작업과 내가 할 수 있는 일에 맞는 작업입니다. 현장에 도착하면 '도착', 끝나면 '완료'를 눌러 주세요.</p>
 <div class="box" id="canDoBox" style="margin-top:0"></div>
+<details class="acc" id="editAcc" hidden><summary>✏️ 할 수 있는 일·날짜·시간대 고치기 <span class="sum-sub">고치면 맞는 작업이 바로 바뀌어요</span></summary><div class="acc-body" id="editBody"></div></details>
 <details class="acc" id="safetyAcc"><summary>⚠️ 활동 전 안전 수칙 <span class="sum-sub">4가지 · 꼭 읽어 주세요</span></summary><div class="acc-body"><ul id="safety" class="safety"></ul></div></details>
 <h3>승인된 내 작업</h3><div id="myTasks" class="muted" data-fold="3"></div>
 <h3>도움이 필요한 작업</h3><div id="openTasks" class="muted" data-fold="3"></div>
@@ -128,7 +129,7 @@ details.acc.order{border-left:6px solid var(--action)}details.acc.order.prog{bor
 <section class="view" data-view="me" hidden>
 <h2>내 정보</h2>
 <dl class="dl" id="meInfo"></dl>
-<details class="acc" id="editAcc" hidden><summary>✏️ 내 정보 고치기 <span class="sum-sub">활동할 곳·할 수 있는 일·날짜·시간대·장비</span></summary><div class="acc-body" id="editBody"></div></details>
+<p id="editLinkWrap" hidden style="margin:10px 0 0"><button type="button" class="sub" id="editLink" style="margin:0">✏️ 내 정보 고치기 (내 작업 화면에서)</button></p>
 <h3>활동 기록</h3><p class="muted">완료한 작업과 기부를 1365 자원봉사 포털 입력용 형식을 흉내 낸 파일로 내려받습니다(모의, 실제 전송 없음).</p><a id="csvLink" href="#">활동 기록 내려받기 (CSV)</a>
 <div id="sosResult" class="box" hidden aria-live="polite"></div>
 <p style="margin:24px 0 0"><button type="button" class="sub" id="logoutBtn" style="margin:0">로그아웃</button></p>
@@ -195,6 +196,7 @@ $('loginForm').addEventListener('submit',async e=>{e.preventDefault();$('loginEr
 $('vList').addEventListener('change',()=>{$('vEnter').disabled=!document.querySelector('input[name=vpick]:checked')});
 $('vEnter').addEventListener('click',()=>{const v=document.querySelector('input[name=vpick]:checked');if(v)enter(v.value)});
 async function enter(id){VID=id;store.set(id);$('jPw').value='';$('lPw').value='';await load();go('tasks')}
+$('editLink').addEventListener('click',()=>{go('tasks');const a=$('editAcc');a.open=true;setTimeout(()=>a.scrollIntoView({block:'start',behavior:'smooth'}),50)});
 $('logoutBtn').addEventListener('click',()=>{store.set('');location.replace(location.pathname)});   // 이 기기에서 나가기(다시 처음 화면으로)
 
 // ---- 작업 카드: 요약 줄에 '무엇 · 어디 · 상태'. 내가 할 일이 있는 카드는 펼쳐 둔다
@@ -203,9 +205,9 @@ return `<details class="acc order ${cls}" data-tid="${esc(t.id)}"${act?' open':'
 const MODE_TXT={'작업':'현장 작업','기부':'물품 기부만','둘 다':'현장 작업과 기부'};
 async function load(){if(!VID)return;try{const d=await api('/api/public/volunteers/'+encodeURIComponent(VID));DATA=d;const v=d.volunteer;
 $('whoText').textContent=`${v.name} · ${v.place}${v.busy?' · 지금 투입 중':''}`;
-$('canDoBox').innerHTML=v.mode==='기부'?'물품 기부로 참여하고 있어요. 현장 작업도 하려면 \'내 정보\'에서 참여 방식을 바꿔 주세요.':`<b>내가 할 수 있는 일</b> <span class="chips">${d.can_do.map(t=>`<span class="can">${esc(t)}</span>`).join('')||'<span>아직 없음</span>'}</span>`;
+$('canDoBox').innerHTML=v.mode==='기부'?'물품 기부로 참여하고 있어요. 현장 작업도 하려면 \'내 정보\'에서 참여 방식을 바꿔 주세요.':`<b>내가 할 수 있는 일</b> <span class="chips">${d.can_do.map(t=>`<span class="can">${esc(t)}</span>`).join('')||'<span>아직 없음</span>'}</span>`+`<div class="muted" style="margin-top:6px">활동 날짜: ${esc((v.dates||[]).map(DAYTXT).join(', ')||'정하지 않음')} · 시간대: ${esc((v.slots||[]).join(', ')||'정하지 않음')}</div>`;
 $('meInfo').innerHTML=`<dt>별명</dt><dd>${esc(v.name)}</dd><dt>활동할 곳</dt><dd>${esc(v.place)}</dd><dt>할 수 있는 일</dt><dd class="chips">${v.skills.map(s=>`<span>${esc(d.skill_labels[s]||s)}</span>`).join('')||'-'}</dd><dt>장비</dt><dd>${esc(v.equipment.join(', ')||'없음')}</dd><dt>시간</dt><dd>한 번에 ${esc(Math.round(v.available_min/60))}시간</dd><dt>활동 날짜</dt><dd>${esc((v.dates||[]).map(DAYTXT).join(', ')||'정하지 않음')}</dd><dt>시간대</dt><dd>${esc((v.slots||[]).join(', ')||'정하지 않음')}</dd><dt>참여</dt><dd>${esc(MODE_TXT[v.mode]||v.mode)}</dd>`;
-$('editAcc').hidden=!v.registered;if(v.registered&&!$('editBody').firstChild){$('editBody').append($('profileFields'));const sv=document.createElement('button');sv.type='submit';sv.id='saveProfile';sv.textContent='고친 내용 저장하기';const msg=document.createElement('p');msg.className='muted';msg.id='saveMsg';const f=document.createElement('form');f.id='editForm';f.append($('profileFields'),sv,msg);$('editBody').append(f);$('extraFields').hidden=false;
+$('editAcc').hidden=!v.registered;$('editLinkWrap').hidden=!v.registered;if(v.registered&&!$('editBody').firstChild){$('editBody').append($('profileFields'));const sv=document.createElement('button');sv.type='submit';sv.id='saveProfile';sv.textContent='고친 내용 저장하기';const msg=document.createElement('p');msg.className='muted';msg.id='saveMsg';const f=document.createElement('form');f.id='editForm';f.append($('profileFields'),sv,msg);$('editBody').append(f);$('extraFields').hidden=false;
  f.addEventListener('submit',async e=>{e.preventDefault();try{await post(`/api/public/volunteers/${encodeURIComponent(VID)}/update`,readProfile());$('saveMsg').textContent='저장했습니다.';load()}catch(err){$('saveMsg').textContent='저장하지 못했습니다: '+err.message}})}
 if(v.registered&&!$('editAcc').open)fillProfile(v);
 const opened=new Set([...document.querySelectorAll('#myTasks details[open],#openTasks details[open]')].map(x=>x.dataset.tid));
