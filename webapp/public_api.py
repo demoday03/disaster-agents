@@ -14,10 +14,11 @@
 이 모듈의 기능은 AI를 부르지 않는다. 부르는 쪽(server.py)이 FEATURES.lock 안에서 실행하고 접속 IP당 요청 수를 제한한다.
 """
 import csv, io, re, secrets, time
+from datetime import datetime
 
 from agents import supply
 from common import places
-from common.clock import kst_text
+from common.clock import kst_text, now_kst
 from database import db as DB
 from webapp import features as F
 
@@ -39,6 +40,8 @@ SKILL_LABEL = {"토사": "흙·토사 치우기", "청소": "청소·가재도�
 EQUIPMENT = ("삽", "고무장갑", "장화", "손수레", "마스크")
 TIMES = {60: "1시간", 120: "2시간", 240: "반나절(4시간)", 480: "하루(8시간)"}
 MODES = {"작업": "현장 작업", "기부": "물품 기부만", "둘 다": "현장 작업과 기부"}
+SLOTS = {"오전": "오전 (9~12시)", "오후": "오후 (12~18시)", "저녁": "저녁 (18~21시)", "밤": "밤 (21시 이후)"}   # 활동할 수 있는 시간대
+MAX_DATES = 14            # 활동할 수 있는 날짜는 앞으로 2주 안에서 최대 14일
 
 
 class PublicAPI:
@@ -193,7 +196,8 @@ class PublicAPI:
                            for k, lab in SKILL_LABEL.items()],
                 "task_equipment": {t: m["equipment"] for t, m in types.items()},
                 "equipment": list(EQUIPMENT), "times": [{"min": k, "label": v} for k, v in TIMES.items()],
-                "modes": [{"id": k, "label": v} for k, v in MODES.items()]}
+                "modes": [{"id": k, "label": v} for k, v in MODES.items()],
+                "slots": [{"id": k, "label": v} for k, v in SLOTS.items()], "max_dates": MAX_DATES}
 
     def _clean_volunteer(self, data):
         zone, address = places.resolve(data, "활동할 곳")
@@ -210,8 +214,30 @@ class PublicAPI:
         minutes = data.get("available_min", 120)
         if minutes not in TIMES:
             raise ValueError("가능한 시간을 골라 주세요")
+        dates, slots = self._clean_dates(data.get("dates", [])), data.get("slots", [])
+        if not isinstance(slots, list) or any(x not in SLOTS for x in slots):
+            raise ValueError("시간대는 목록에서 골라 주세요")
         return {"zone": zone, "address": address, "skills": [x for x in SKILL_LABEL if x in skills],
-                "equipment": [x for x in EQUIPMENT if x in equipment], "available_min": minutes, "mode": mode}
+                "equipment": [x for x in EQUIPMENT if x in equipment], "available_min": minutes, "mode": mode,
+                "dates": dates, "slots": [x for x in SLOTS if x in slots]}
+
+    @staticmethod
+    def _clean_dates(dates):
+        """활동할 수 있는 날짜(YYYY-MM-DD). 비우면 '날짜 미정'. 어제~2주 뒤만 받고, 지난 날짜는 저장할 때 뺀다."""
+        if not isinstance(dates, list) or len(dates) > MAX_DATES:
+            raise ValueError(f"활동할 날짜는 {MAX_DATES}일까지 고를 수 있어요")
+        today = now_kst().date()
+        out = set()
+        for d in dates:
+            try:
+                day = datetime.strptime(d, "%Y-%m-%d").date() if isinstance(d, str) and len(d) == 10 else None
+            except ValueError:
+                day = None
+            if day is None or not -1 <= (day - today).days <= MAX_DATES:
+                raise ValueError("활동할 날짜는 오늘부터 2주 안에서 골라 주세요")
+            if day >= today:
+                out.add(day.isoformat())
+        return sorted(out)
 
     @staticmethod
     def _clean_name(name):
@@ -282,6 +308,7 @@ class PublicAPI:
         types = self.f.tcfg["task_types"]
         can_do = [t for t, m in types.items() if set(m["skills"]) & set(v["skills"])] if v["mode"] != "기부" else []
         return {"volunteer": {**v, "name": v.get("name", vid), "place": v.get("address") or places.describe(v["zone"]),
+                              "dates": [d for d in v.get("dates", []) if d >= now_kst().date().isoformat()],   # 지난 날짜는 빼고
                               "busy": vid in self.f.busy_volunteers()}, "can_do": can_do,
                 "skill_labels": SKILL_LABEL, "my_tasks": mine,
                 "open_tasks": sorted(fit, key=lambda t: not t["recommended_for_me"])[:6],

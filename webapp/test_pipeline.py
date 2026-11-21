@@ -587,6 +587,30 @@ class TestPipeline(ServerBase):
         self.assertEqual(anon.get(f"/api/public/volunteers/{vid}")[1]["can_do"], ["토사 제거", "가재도구 세척"])
         self.assertEqual(anon.post("/api/public/volunteers/V01/update", body)[0], 403)            # 시연 봉사자는 못 바꿈
 
+    def test_volunteer_sets_dates_and_time_slots(self):
+        """봉사자가 활동할 날짜(2주 안)와 시간대를 고르면 내 정보와 담당자 봉사자 목록에 보인다."""
+        from datetime import timedelta
+        from common.clock import now_kst
+        anon = Client(self.base)
+        _, opt = anon.get("/api/public/volunteer-options")
+        self.assertEqual([s["id"] for s in opt["slots"]], ["오전", "오후", "저녁", "밤"])
+        today = now_kst().date()
+        day = lambda n: (today + timedelta(days=n)).isoformat()
+        body = {"name": "주말일손", "password": "secret12", "address": "하천 하류 쪽 마을", "skills": ["청소"],
+                "available_min": 240, "mode": "작업", "dates": [day(1), day(0), day(1)], "slots": ["오후", "오전"]}
+        for bad in ({**body, "slots": ["새벽"]}, {**body, "dates": [day(20)]}, {**body, "dates": ["11월 22일"]},
+                    {**body, "dates": [day(i) for i in range(15)]}):
+            self.assertEqual(anon.post("/api/public/volunteers", bad)[0], 400, bad)
+        code, r = anon.post("/api/public/volunteers", body)
+        self.assertEqual(code, 201, r)
+        me = anon.get(f"/api/public/volunteers/{r['id']}")[1]["volunteer"]
+        self.assertEqual((me["dates"], me["slots"]), ([day(0), day(1)], ["오전", "오후"]))   # 중복 없이 날짜순·시간대순
+        staff = next(v for v in self.get("/api/volunteer")[1]["volunteers"] if v["id"] == r["id"])
+        self.assertEqual((staff["dates"], staff["slots"]), ([day(0), day(1)], ["오전", "오후"]))
+        self.assertEqual(anon.post(f"/api/public/volunteers/{r['id']}/update", {**body, "dates": [], "slots": []})[0], 201)
+        me = anon.get(f"/api/public/volunteers/{r['id']}")[1]["volunteer"]
+        self.assertEqual((me["dates"], me["slots"]), ([], []))                                  # 비우면 '정하지 않음'
+
     def test_labor_request_chains_to_volunteer(self):
         o = self.report("Z3 집 안 진흙 퍼낼 일손이 필요해요")
         self.assertEqual(o["type"], "대민지원")
