@@ -804,7 +804,7 @@ FLOOD_LOCK = threading.Lock()
 
 
 def flood_alert(res):
-    """노드 A 수위를 담당자 텔레그램 단체방에 알린다(사람 승인 없이 담당자에게만. 주민 알림은 단계 확정 때).
+    """노드 A 수위를 담당자 텔레그램 단체방과 봇에 /start 한 개인 텔레그램에 바로 알린다(사람 승인 없이).
     - ⚠️ 주의: 수심이 주의 기준(310)을 넘음(노란불)
     - 🚨 위험: 수심이 위험 기준(340)을 넘음, 노드 A의 FLOOD 신호(배수 모터 켬), 또는 감시 판정 침수 확정 후보
       (무선 신호가 유실돼도 알리게). 위험이 이어지면 FLOOD_REMIND_S마다 한 번 더
@@ -846,9 +846,14 @@ def flood_alert(res):
             FLOOD_ALERT.update(level=new, **({"last": now} if lines else {}))
         if not lines:
             return None
-    sent = TELEGRAM.staff.sensor_alert("\n".join(lines + [now_kst().strftime("%H:%M:%S")]))
-    database.log_audit("flood_alert", "node", "A", {"text": lines[0], "telegram": sent})
-    return "담당자 텔레그램 방에 알림" if sent else "텔레그램 담당자 방이 연결돼 있지 않아 못 보냄(📨 텔레그램 연결 관리에서 연결)"
+    at = now_kst().strftime("%H:%M:%S")
+    sent = TELEGRAM.staff.sensor_alert("\n".join(lines + [at]))
+    # 개인(봇과 1:1 대화하는 사람)에게도: 관리자 화면 안내 줄은 빼고, 위험하면 119
+    personal = [x for x in lines if "관리자 화면" not in x] + (["다치거나 갇혔다면 119·112에 바로 전화하세요."] if lines[0].startswith("🚨") else [])
+    people = TELEGRAM.staff.sensor_personal("\n".join(personal + [at]))
+    database.log_audit("flood_alert", "node", "A", {"text": lines[0], "telegram": sent, "personal": people})
+    where = (["담당자 텔레그램 방"] if sent else []) + ([f"개인 텔레그램 {people}명"] if people else [])
+    return (" · ".join(where) + "에 알림") if where else "텔레그램으로 받을 사람이 없어 못 보냄(봇에 /start 하거나 담당자 방 연결)"
 
 
 def ingest_sensor_batch(data):
