@@ -302,6 +302,22 @@ class StaffDesk:
             time.sleep(0.05)
         return sent
 
+    def sensor_personal(self, text):
+        """침수 센서 알림을 봇과 1:1로 대화하는 개인(구독자: /start 한 사람)에게도 보낸다. 보낼 사람 수를 돌려준다.
+        (2026-11-22 팀 결정: 담당자 단체방이 없어도 개인 텔레그램으로 바로 받게. /stop 하면 더 받지 않는다)"""
+        chats = [s["chat_id"] for s in self.db.list_records("tg_sub") if s.get("chat_id") is not None]
+        if not self.bot.enabled or not chats:
+            return 0
+        self._run(self._post_personal, chats, text)
+        return len(chats)
+
+    def _post_personal(self, chats, text):
+        for cid in chats:
+            r = self.bot.call("sendMessage", {"chat_id": cid, "text": text[:4000], "disable_web_page_preview": True})
+            if not r.get("ok") and r.get("error_code") == 403:   # 봇을 차단한 사람은 구독에서 뺀다
+                self.db.delete_record("tg_sub", str(cid))
+            time.sleep(0.05)
+
     def sensor_alert(self, text):
         """현장 센서 위험(침수 노드 A 등)을 담당자 단체방에 바로 알린다. 보낼 방이 있으면 True.
         주민에게는 보내지 않는다(주민 알림은 담당자가 위기 단계를 확정할 때 event('stage')로 간다)."""

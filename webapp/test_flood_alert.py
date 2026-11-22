@@ -98,3 +98,35 @@ class TestCautionAlert(unittest.TestCase):
         self.assertTrue(got[325].startswith("⬇️ 침수 센서: 위험 기준 아래로"))
         self.assertIsNone(got[305])                                          # 300 위: 아직 주의
         self.assertTrue(got[280].startswith("✅ 침수 센서: 수위가 내려갔어요"))
+
+
+PERSONAL = r"""
+import json, time
+from webapp import server as s
+
+sent = []
+s.TELEGRAM.token = "TEST"
+s.TELEGRAM.call = lambda method, payload=None, timeout=15: (sent.append([payload["chat_id"], payload["text"]]), {"ok": True, "result": {"message_id": len(sent)}})[1]
+s.TELEGRAM.staff._run = lambda fn, *a: fn(*a)
+s.database.put_record("tg_sub", "777", {"chat_id": 777, "since": time.time()})   # 담당자 방 없이 봇에 /start 한 개인만
+t = time.time()
+r1 = s.ingest_sensor_batch({"readings": [{"node": "A", "sensor": "depth", "value": 315, "ts": t}], "events": []})
+r2 = s.ingest_sensor_batch({"readings": [{"node": "A", "sensor": "depth", "value": 350, "ts": t + 1}], "events": []})
+print(json.dumps({"sent": sent, "notes": [r1.get("flood_alert"), r2.get("flood_alert")]}, ensure_ascii=False))
+"""
+
+
+class TestPersonalAlert(unittest.TestCase):
+    def test_personal_chat_gets_caution_and_danger(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {**os.environ, "DISASTER_DB_PATH": str(Path(tmp) / "t.db"), "LLM_MODE": "mock",
+                   "PYTHONIOENCODING": "utf-8", "TELEGRAM_BOT_TOKEN": ""}
+            p = subprocess.run([sys.executable, "-c", PERSONAL], cwd=ROOT, env=env, capture_output=True, timeout=60,
+                               encoding="utf-8", errors="replace")
+            self.assertEqual(p.returncode, 0, p.stderr)
+            r = json.loads(p.stdout.strip().splitlines()[-1])
+        self.assertEqual([c for c, _ in r["sent"]], [777, 777])
+        self.assertTrue(r["sent"][0][1].startswith("⚠️ 침수 센서 주의"))
+        self.assertTrue(r["sent"][1][1].startswith("🚨 침수 센서 위험"))
+        self.assertIn("119", r["sent"][1][1]); self.assertNotIn("관리자 화면", r["sent"][1][1])   # 개인에게는 관리자 안내 대신 119
+        self.assertEqual(r["notes"], ["개인 텔레그램 1명에 알림"] * 2)
