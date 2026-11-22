@@ -3,8 +3,9 @@
 화면에서는 구역을 고르지 않고 위치를 글로 쓴다. 배치·물품·봉사 추천 규칙은 여전히 시연용 관리 구역(zones.json)으로
 거리를 계산하므로, 글에서 관리 구역을 추정해 함께 저장한다.
 - 'Z3'·'3구역'처럼 구역이 적혀 있거나, 가상 장소 이름(zones.json의 places)이 하나의 구역만 가리키면 그 구역.
-- 그 밖에는 '미상'. 실제 지명(동·도로명)은 가상 구역에 연결하지 않는다(가상 위험 정보를 실제 동네에 붙이지 않게).
-  미상인 위치는 담당자가 확인해 분류를 고친다.
+- 거제시 실제 동·면 이름(옥포동·고현동 등)은 시연용 연결표(config/real_zones.json)로 가상 구역에 연결한다
+  (실제 주소로 들어온 텔레그램 신고도 담당자가 구역을 고르지 않게. 구역의 위험 정보는 가상이다).
+- 그 밖에는 '미상'. 미상인 위치는 담당자가 확인해 분류를 고친다.
 """
 import json, re
 
@@ -39,6 +40,36 @@ def infer_zone(text):
     if found:
         return UNKNOWN
     hits = {z["id"] for z in zones() if any(p in text for p in z.get("places", []))}
+    if hits:
+        return hits.pop() if len(hits) == 1 else UNKNOWN
+    return real_zone(text)
+
+
+_REAL = None
+
+
+def _real(path="config/real_zones.json"):
+    global _REAL
+    if _REAL is None:
+        try:
+            with open(path, encoding="utf-8") as f:
+                cfg = json.load(f)
+        except FileNotFoundError:
+            cfg = {}
+        names = {n: z for z, ns in (cfg.get("zones") or {}).items() for n in ns}
+        names.update({n: z for n, z in (cfg.get("landmarks") or {}).items() if not n.startswith("_")})
+        bare = {n: z for n, z in (cfg.get("bare") or {}).items() if not n.startswith("_")}
+        _REAL = (names, bare)
+    return _REAL
+
+
+def real_zone(text):
+    """거제 실제 동·면 이름(또는 등록한 건물 이름)이 가리키는 가상 구역. 서로 다른 구역이 둘 이상이면 '미상'."""
+    text = re.sub(r"\s+", "", text or "")   # '옥포 2동'·'고현 동'처럼 띄어 써도
+    names, bare = _real()
+    ids = {z["id"] for z in zones()}
+    hits = {z for n, z in names.items() if n in text} | {z for n, z in bare.items() if n in text}
+    hits &= ids
     return hits.pop() if len(hits) == 1 else UNKNOWN
 
 

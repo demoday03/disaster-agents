@@ -798,39 +798,57 @@ def apply_field_event(ev):
 
 
 FLOOD_REMIND_S = 600   # 위험이 계속되면 이 간격으로 담당자 방에 한 번 더 알린다
-FLOOD_ALERT = {"active": False, "last": 0.0}
+FLOOD_HYST = 10        # 내려갈 때는 기준보다 이만큼 더 내려가야 단계를 낮춘다(기준 근처에서 값이 흔들려 알림이 반복되지 않게)
+FLOOD_ALERT = {"level": 0, "last": 0.0}   # 0 정상 · 1 주의(노란불) · 2 위험(빨간불)
 FLOOD_LOCK = threading.Lock()
 
 
 def flood_alert(res):
-    """침수 위험을 담당자 텔레그램 단체방에 알린다(사람 승인 없이 담당자에게만. 주민 알림은 단계 확정 때).
-    - 위험 시작: 노드 A가 FLOOD 신호(위험 기준을 넘어 배수 모터를 켬)를 보냈거나, 감시 판정이 침수 확정 후보
-      (위험 기준을 연속으로 넘음. 무선 신호가 유실돼도 알리게)
-    - 한 번 알리면 FLOOD_REMIND_S 동안은 다시 보내지 않는다. DRAIN 신호가 오거나 수심이 주의 기준 아래로 내려가면
-      끝(내려갔다고 한 번 알림). 노드 B가 없으면 판정이 '정상'이 되지 않으므로 수심 값으로 본다.
-    보냈으면 설명 문자열, 아니면 None."""
+    """노드 A 수위를 담당자 텔레그램 단체방에 알린다(사람 승인 없이 담당자에게만. 주민 알림은 단계 확정 때).
+    - ⚠️ 주의: 수심이 주의 기준(330)을 넘음(노란불)
+    - 🚨 위험: 수심이 위험 기준(360)을 넘음, 노드 A의 FLOOD 신호(배수 모터 켬), 또는 감시 판정 침수 확정 후보
+      (무선 신호가 유실돼도 알리게). 위험이 이어지면 FLOOD_REMIND_S마다 한 번 더
+    - 내려갈 때: 기준보다 FLOOD_HYST만큼 더 내려가거나 DRAIN 신호가 오면 단계를 낮추고 한 번 알린다
+    단계가 오를 때마다 바로 보낸다. 보냈으면 설명 문자열, 아니면 None."""
     out = res.get("output") or {}
     codes = {(e["node"], e["code"]) for e in res.get("events", [])}
     a = next((x for x in SENSORS.status()["sensors"] if x["key"] == "A.depth"), {})
-    start = ("A", "FLOOD") in codes or (out.get("status") == "확정후보" and "침수" in (out.get("hazards") or []))
-    end = ("A", "DRAIN") in codes or (a.get("value") is not None and not a.get("over_caution"))
-    depth = f"수심 {a['value']:.0f} (위험 기준 {a['threshold']:g})" if a.get("value") is not None else "수심 값 확인 필요"
+    v, thr, cau = a.get("value"), a.get("threshold"), a.get("caution")
+    flood, drain = ("A", "FLOOD") in codes, ("A", "DRAIN") in codes
+    over = lambda limit, d=0: v is not None and limit is not None and v > limit - d
+    raw = 2 if (flood or over(thr) or (out.get("status") == "확정후보" and "침수" in (out.get("hazards") or []))) \
+        else 1 if over(cau) else 0
+    depth = (f"수심 {v:.0f} (주의 기준 {cau:g} · 위험 기준 {thr:g})" if cau is not None else f"수심 {v:.0f} (위험 기준 {thr:g})") \
+        if v is not None else "수심 값 확인 필요"
     now = time.time()
     with FLOOD_LOCK:
-        if start and (not FLOOD_ALERT["active"] or now - FLOOD_ALERT["last"] >= FLOOD_REMIND_S):
-            again = FLOOD_ALERT["active"]
-            FLOOD_ALERT.update(active=True, last=now)
-            lines = [f"🚨 침수 센서 위험{' (계속)' if again else ''} · 노드 A", depth,
-                     "현장 배수 모터가 켜졌어요. 현장을 확인해 주세요.",
+        cur = FLOOD_ALERT["level"]
+        if raw >= cur:
+            new = raw
+        elif drain or v is None:
+            new = raw
+        else:   # 내려가는 중: 지금 단계의 기준보다 FLOOD_HYST 더 내려가야 낮춘다
+            new = cur if over(thr if cur == 2 else cau, FLOOD_HYST) else (1 if cur == 2 and over(cau, FLOOD_HYST) else raw)
+        lines = None
+        if new == 2 and (cur < 2 or now - FLOOD_ALERT["last"] >= FLOOD_REMIND_S):
+            lines = [f"🚨 침수 센서 위험{' (계속)' if cur == 2 else ''} · 노드 A", depth,
+                     "빨간불 · 현장 배수 모터가 켜졌어요. 현장을 확인해 주세요.",
                      "위기 단계 확정·주민 알림은 관리자 화면 승인 대기열에서 해 주세요."]
-        elif end and not start and FLOOD_ALERT["active"]:
-            FLOOD_ALERT.update(active=False)
-            lines = ["✅ 침수 센서: 수위가 내려갔어요 · 노드 A", depth, "배수 모터가 꺼졌어요."]
-        else:
+        elif new == 1 and cur == 0:
+            lines = ["⚠️ 침수 센서 주의 · 노드 A", depth, "노란불 · 수위가 오르고 있어요. 위험 기준을 넘으면 다시 알려 드릴게요."]
+        elif new == 1 and cur == 2:
+            lines = ["⬇️ 침수 센서: 위험 기준 아래로 내려갔어요 (아직 주의) · 노드 A", depth]
+        elif new == 0 and cur > 0:
+            lines = ["✅ 침수 센서: 수위가 내려갔어요 · 노드 A", depth]
+        if lines and drain:
+            lines.append("배수 모터가 꺼졌어요.")
+        if new != cur or lines:
+            FLOOD_ALERT.update(level=new, **({"last": now} if lines else {}))
+        if not lines:
             return None
     sent = TELEGRAM.staff.sensor_alert("\n".join(lines + [now_kst().strftime("%H:%M:%S")]))
     database.log_audit("flood_alert", "node", "A", {"text": lines[0], "telegram": sent})
-    return "담당자 텔레그램 방에 알림" if sent else "텔레그램 담당자 방이 연결돼 있지 않아 못 보냄(📨 텔레그램 탭에서 연결)"
+    return "담당자 텔레그램 방에 알림" if sent else "텔레그램 담당자 방이 연결돼 있지 않아 못 보냄(📨 텔레그램 연결 관리에서 연결)"
 
 
 def ingest_sensor_batch(data):
@@ -1013,6 +1031,10 @@ def submit_report(text, rate_key, channel=None, household=None, reporter=None, d
         # 인원을 고르지 않은 우리 집 신고: 등록한 식구 수로 본다(1명으로 잡혀 대피소 자리가 1개만 배정되던 문제)
         if isinstance(members, int) and members > (row["output"].get("people") or 0) and not re.search(r"\d+\s*명", text):
             row["output"].update(people=members, people_source="우리 집 등록 정보")
+        # 글에서 구역을 못 찾은 우리 집 신고(텔레그램에서 우리 집을 연결한 사람 등): 등록한 집의 구역으로 본다
+        if row["output"].get("zone") in (None, places.UNKNOWN) and h.get("zone") in {z["id"] for z in SCENARIO["zones"]}:
+            row["output"].update(zone=h["zone"], zone_source="우리 집 등록 정보")
+            row["output"]["missing"] = [m for m in (row["output"].get("missing") or []) if not str(m).startswith("위치")]
     if isinstance(reporter, str) and reporter:
         row["output"]["reporter"] = reporter[:20]
     if isinstance(device, dict):
