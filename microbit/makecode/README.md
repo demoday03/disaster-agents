@@ -14,7 +14,7 @@ disaster-agents 서버(`gateway/microbit_gateway.py`)에 맞춘 MakeCode 코드.
 
 | 장치 | 파일 | 핀 | 버튼 | 지금 서버 연결 |
 |---|---|---|---|---|
-| A 침수 | `A_침수.ts` | P4 수심 센서, LED P5·P8·P9, P2 릴레이(배수 모터) | B: 수심 값 표시(설치 점검) | ✅ (360 넘으면 모터 켬 + FLOOD, 330 아래면 끔 + DRAIN) |
+| A 침수 | `A_침수.ts` | P4 수심 센서, LED P5·P8·P9, P2 릴레이(배수 모터) | B: 수심 값 표시(설치 점검) | ✅ (340 넘으면 모터 켬 + FLOOD, 310 아래면 끔 + DRAIN) |
 | A 펌프 시험 | `A_펌프시험.ts` | P2 릴레이 | – | 시험용(3초 켬·3초 끔) |
 | B 사면 | `B_사면.ts` | P0 진동, P9 기울기(S), P8 모듈 LED(L) | A: 진동 최댓값, B: 기울기 핀 값 | ✅ |
 | G 게이트웨이 | `G_게이트웨이.ts` | USB 케이블로 노트북 (블루투스 모듈은 선택) | – | ✅ (받기·내려보내기) |
@@ -36,7 +36,7 @@ disaster-agents 서버(`gateway/microbit_gateway.py`)에 맞춘 MakeCode 코드.
 이벤트 코드: A `FLOOD` `DRAIN` / C `+1` `-1` `GOT` / D `SAFE` `SOS` `NEED` `DARK` `LIGHT` / E `IN` `SOS` `DONE` `HEAT` `COOL`
 
 ## 설치 점검 때 맞출 값
-- A `CAUTION`·`DANGER`(수심 주의·위험, 지금 330·360), B `VIBRATION_THRESHOLD`: 화면 표시용. 서버 `config/monitor.json` 과 같은 값으로
+- A `CAUTION`·`DANGER`(수심 주의·위험, 지금 310·340), B `VIBRATION_THRESHOLD`: 화면 표시용. 서버 `config/monitor.json` 과 같은 값으로
 - B 기울기 모듈에 저항이 있으면 `PinPullMode.PullNone`
 - D `DARK_THRESHOLD`, E `HEAT_THRESHOLD`·`INVERTED`
 - 같은 교실 다른 팀과 그룹 23 이 겹치면 6개 파일과 서버 쪽 모두 바꾼다

@@ -24,8 +24,8 @@
 const GROUP = 23
 const NODE = "A"
 // 서버 config/monitor.json 의 A.depth caution·threshold 와 같은 값
-const CAUTION = 330
-const DANGER = 360
+const CAUTION = 310
+const DANGER = 340
 const PUMP_ON = 1     // 릴레이를 켜는 값. 반대로 동작하는 릴레이 모듈이면 0
 
 radio.setGroup(GROUP)

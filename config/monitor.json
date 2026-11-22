@@ -1,6 +1,6 @@
 {
   "calibrated": false,
-  "_note": "임계값은 임시값. 제안서 8.6의 설치 점검에서 측정해 확정하고 D14에 기록한다. A.depth 330·360은 2026-11-20 실제 장치(P4 수심 센서·배수 모터) 기준.",
+  "_note": "임계값은 임시값. 제안서 8.6의 설치 점검에서 측정해 확정하고 D14에 기록한다. A.depth 310·340은 2026-11-22 팀 결정(2026-11-20 실제 장치 330·360에서 낮춤).",
   "_depth_note": "A.depth: 노드 A의 수심 센서 1개(아날로그 0~1023, 깊을수록 큼). caution을 연속 sustain_n회 넘으면 주의(지켜봄), threshold를 연속 sustain_n회 넘으면 침수 확정 후보(담당자 승인). 한 번 튀는 값은 무시.",
   "sustain_n": 3,
   "window_sec": 10,
@@ -16,8 +16,8 @@
   ],
   "sensors": {
     "A.depth": {
-      "threshold": 360,
-      "caution": 330,
+      "threshold": 340,
+      "caution": 310,
       "label": "수심"
     },
     "B.tilt": {

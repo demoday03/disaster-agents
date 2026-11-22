@@ -1,4 +1,4 @@
-"""노드 A 수위 주의(330 초과)·위험(360 초과, FLOOD 신호·확정 후보) → 담당자 텔레그램 단체방 알림. 실제 텔레그램은 부르지 않는다(보낸 것만 모음).
+"""노드 A 수위 주의(310 초과)·위험(340 초과, FLOOD 신호·확정 후보) → 담당자 텔레그램 단체방 알림. 실제 텔레그램은 부르지 않는다(보낸 것만 모음).
 서버 모듈을 불러오면 DB를 만들기 때문에 다른 테스트처럼 별도 프로세스에서 임시 DB로 돌린다."""
 import json, os, subprocess, sys, tempfile, unittest
 from pathlib import Path
@@ -48,7 +48,7 @@ class TestFloodAlert(unittest.TestCase):
         sent = r["sent"]
         self.assertEqual(len(sent), 3, sent)   # 위험 · 내려감 · (유실 뒤) 다시 위험
         self.assertTrue(sent[0].startswith("🚨 침수 센서 위험 · 노드 A"))
-        self.assertIn("수심 372", sent[0]); self.assertIn("수심 100", sent[1]); self.assertIn("위험 기준 360", sent[0]); self.assertIn("배수 모터", sent[0])
+        self.assertIn("수심 372", sent[0]); self.assertIn("수심 100", sent[1]); self.assertIn("위험 기준 340", sent[0]); self.assertIn("배수 모터", sent[0])
         self.assertTrue(sent[1].startswith("✅ 침수 센서: 수위가 내려갔어요"))
         self.assertTrue(sent[2].startswith("🚨 침수 센서 위험 · 노드 A"))
         self.assertEqual((r["notes"]["calm"], r["notes"]["again"]), (None, None))
@@ -73,7 +73,7 @@ s.TELEGRAM.staff._run = lambda fn, *a: fn(*a)
 s.database.put_record("tg_room", "-100", {"chat_id": "-100", "kind": "staff", "title": "담당자방", "linked_at": time.time() - 60})
 clock = [time.time() - 10]
 out = []
-for d in [335, 340, 365, 355, 345, 325, 300]:
+for d in [315, 320, 345, 335, 325, 305, 280]:
     clock[0] += 0.5
     n = len(sent)
     s.ingest_sensor_batch({"readings": [{"node": "A", "sensor": "depth", "value": d, "ts": clock[0]}], "events": []})
@@ -91,10 +91,10 @@ class TestCautionAlert(unittest.TestCase):
                                encoding="utf-8", errors="replace")
             self.assertEqual(p.returncode, 0, p.stderr)
             got = dict((d, head) for d, head in json.loads(p.stdout.strip().splitlines()[-1]))
-        self.assertTrue(got[335].startswith("⚠️ 침수 센서 주의"))            # 330 넘음 → 주의
-        self.assertIsNone(got[340])                                          # 주의가 이어지면 다시 안 보냄
-        self.assertTrue(got[365].startswith("🚨 침수 센서 위험"))             # 360 넘음 → 바로 위험
-        self.assertIsNone(got[355])                                          # 기준 근처 흔들림(350 위)은 그대로
-        self.assertTrue(got[345].startswith("⬇️ 침수 센서: 위험 기준 아래로"))
-        self.assertIsNone(got[325])                                          # 320 위: 아직 주의
-        self.assertTrue(got[300].startswith("✅ 침수 센서: 수위가 내려갔어요"))
+        self.assertTrue(got[315].startswith("⚠️ 침수 센서 주의"))            # 310 넘음 → 주의
+        self.assertIsNone(got[320])                                          # 주의가 이어지면 다시 안 보냄
+        self.assertTrue(got[345].startswith("🚨 침수 센서 위험"))             # 340 넘음 → 바로 위험
+        self.assertIsNone(got[335])                                          # 기준 근처 흔들림(330 위)은 그대로
+        self.assertTrue(got[325].startswith("⬇️ 침수 센서: 위험 기준 아래로"))
+        self.assertIsNone(got[305])                                          # 300 위: 아직 주의
+        self.assertTrue(got[280].startswith("✅ 침수 센서: 수위가 내려갔어요"))
