@@ -32,14 +32,14 @@ class TestMonitor(unittest.TestCase):
 
     def test_depth_over_caution_only_is_watch(self):
         """수심이 주의 기준(310)만 연속으로 넘으면 '보류(주의)', 승인 요청은 없다."""
-        d = [x for x in calm() if x["node"] != "A"] + [r("A", "depth", 325, NOW - i) for i in range(5)]
+        d = [x for x in calm() if x["node"] != "A"] + [r("A", "depth", 315, NOW - i) for i in range(5)]
         res = mon().evaluate(d, NOW)
         self.assertEqual((res.output["status"], res.output["level"]), ("보류", "주의")); self.assertFalse(res.needs_approval)
         self.assertEqual(res.output["caution_sensors"], ["A.depth"])
         self.assertIn("주의 기준", res.output["summary"])
 
     def test_depth_caution_must_be_sustained(self):
-        d = calm() + [r("A", "depth", 325, NOW - 0.5)]   # 마지막 한 번만 주의 기준 위
+        d = calm() + [r("A", "depth", 315, NOW - 0.5)]   # 마지막 한 번만 주의 기준 위
         self.assertEqual(mon().evaluate(d, NOW).output["status"], "정상")
 
     def test_single_sensor_of_pair_is_hold(self):
